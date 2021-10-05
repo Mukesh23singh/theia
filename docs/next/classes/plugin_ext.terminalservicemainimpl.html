@@ -4,16 +4,17 @@
 	<meta charset="utf-8">
 	<meta http-equiv="X-UA-Compatible" content="IE=edge">
 	<title>TerminalServiceMainImpl | Theia TypeDoc</title>
-	<meta name="description" content="">
+	<meta name="description" content="Documentation for Theia TypeDoc">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<link rel="stylesheet" href="../assets/css/main.css">
+	<script async src="../assets/js/search.js" id="search-script"></script>
 </head>
 <body>
 <header>
 	<div class="tsd-page-toolbar">
 		<div class="container">
 			<div class="table-wrap">
-				<div class="table-cell" id="tsd-search" data-index="../assets/js/search.js" data-base="..">
+				<div class="table-cell" id="tsd-search" data-index="../assets/js/search.json" data-base="..">
 					<div class="field">
 						<label for="tsd-search-field" class="tsd-widget search no-caption">Search</label>
 						<input id="tsd-search-field" type="text" />
@@ -38,8 +39,6 @@
 							</div>
 							<input type="checkbox" id="tsd-filter-inherited" checked />
 							<label class="tsd-widget" for="tsd-filter-inherited">Inherited</label>
-							<input type="checkbox" id="tsd-filter-only-exported" />
-							<label class="tsd-widget" for="tsd-filter-only-exported">Only exported</label>
 						</div>
 					</div>
 					<a href="#" class="tsd-widget menu no-caption" data-toggle="menu">Menu</a>
@@ -51,7 +50,7 @@
 		<div class="container">
 			<ul class="tsd-breadcrumb">
 				<li>
-					<a href="../globals.html">Globals</a>
+					<a href="../modules.html">Theia TypeDoc</a>
 				</li>
 				<li>
 					<a href="../modules/plugin_ext.html">plugin-ext</a>
@@ -85,8 +84,8 @@
 			<section class="tsd-panel">
 				<h3>Implements</h3>
 				<ul class="tsd-hierarchy">
-					<li><a href="../interfaces/plugin_ext.terminalservicemain.html" class="tsd-signature-type">TerminalServiceMain</a></li>
-					<li><a href="../modules/core.disposable.html" class="tsd-signature-type">Disposable</a></li>
+					<li><a href="../interfaces/plugin_ext.terminalservicemain-1.html" class="tsd-signature-type" data-tsd-kind="Interface">TerminalServiceMain</a></li>
+					<li><span class="tsd-signature-type">Disposable</span></li>
 				</ul>
 			</section>
 			<section class="tsd-panel-group tsd-index-group">
@@ -104,6 +103,7 @@
 							<ul class="tsd-index-list">
 								<li class="tsd-kind-property tsd-parent-kind-class tsd-is-private"><a href="plugin_ext.terminalservicemainimpl.html#extproxy" class="tsd-kind-icon">ext<wbr>Proxy</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-class tsd-is-private"><a href="plugin_ext.terminalservicemainimpl.html#shell" class="tsd-kind-icon">shell</a></li>
+								<li class="tsd-kind-property tsd-parent-kind-class tsd-is-private"><a href="plugin_ext.terminalservicemainimpl.html#shellterminalserver" class="tsd-kind-icon">shell<wbr>Terminal<wbr>Server</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-class tsd-is-private"><a href="plugin_ext.terminalservicemainimpl.html#terminals" class="tsd-kind-icon">terminals</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-class tsd-is-private"><a href="plugin_ext.terminalservicemainimpl.html#todispose" class="tsd-kind-icon">to<wbr>Dispose</a></li>
 							</ul>
@@ -113,9 +113,18 @@
 							<ul class="tsd-index-list">
 								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_createterminal" class="tsd-kind-icon">$create<wbr>Terminal</a></li>
 								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_dispose" class="tsd-kind-icon">$dispose</a></li>
+								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_disposebyterminalid" class="tsd-kind-icon">$dispose<wbr>ByTerminal<wbr>Id</a></li>
 								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_hide" class="tsd-kind-icon">$hide</a></li>
+								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_hidebyterminalid" class="tsd-kind-icon">$hide<wbr>ByTerminal<wbr>Id</a></li>
+								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_resize" class="tsd-kind-icon">$resize</a></li>
+								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_resizebyterminalid" class="tsd-kind-icon">$resize<wbr>ByTerminal<wbr>Id</a></li>
 								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_sendtext" class="tsd-kind-icon">$send<wbr>Text</a></li>
+								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_sendtextbyterminalid" class="tsd-kind-icon">$send<wbr>Text<wbr>ByTerminal<wbr>Id</a></li>
+								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_setenvironmentvariablecollection" class="tsd-kind-icon">$set<wbr>Environment<wbr>Variable<wbr>Collection</a></li>
 								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_show" class="tsd-kind-icon">$show</a></li>
+								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_showbyterminalid" class="tsd-kind-icon">$show<wbr>ByTerminal<wbr>Id</a></li>
+								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_write" class="tsd-kind-icon">$write</a></li>
+								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#_writebyterminalid" class="tsd-kind-icon">$write<wbr>ByTerminal<wbr>Id</a></li>
 								<li class="tsd-kind-method tsd-parent-kind-class"><a href="plugin_ext.terminalservicemainimpl.html#dispose" class="tsd-kind-icon">dispose</a></li>
 								<li class="tsd-kind-method tsd-parent-kind-class tsd-is-protected"><a href="plugin_ext.terminalservicemainimpl.html#trackterminal" class="tsd-kind-icon">track<wbr>Terminal</a></li>
 								<li class="tsd-kind-method tsd-parent-kind-class tsd-is-protected"><a href="plugin_ext.terminalservicemainimpl.html#updatecurrentterminal" class="tsd-kind-icon">update<wbr>Current<wbr>Terminal</a></li>
@@ -130,25 +139,25 @@
 					<a name="constructor" class="tsd-anchor"></a>
 					<h3>constructor</h3>
 					<ul class="tsd-signatures tsd-kind-constructor tsd-parent-kind-class">
-						<li class="tsd-signature tsd-kind-icon">new <wbr>Terminal<wbr>Service<wbr>Main<wbr>Impl<span class="tsd-signature-symbol">(</span>rpc<span class="tsd-signature-symbol">: </span><a href="../interfaces/plugin_ext.rpcprotocol.html" class="tsd-signature-type">RPCProtocol</a>, container<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">Container</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="plugin_ext.terminalservicemainimpl.html" class="tsd-signature-type">TerminalServiceMainImpl</a></li>
+						<li class="tsd-signature tsd-kind-icon">new <wbr>Terminal<wbr>Service<wbr>Main<wbr>Impl<span class="tsd-signature-symbol">(</span>rpc<span class="tsd-signature-symbol">: </span><a href="../modules/plugin_ext.html#rpcprotocol-1" class="tsd-signature-type" data-tsd-kind="Variable">RPCProtocol</a>, container<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">Container</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="plugin_ext.terminalservicemainimpl.html" class="tsd-signature-type" data-tsd-kind="Class">TerminalServiceMainImpl</a></li>
 					</ul>
 					<ul class="tsd-descriptions">
 						<li class="tsd-description">
 							<aside class="tsd-sources">
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L35">packages/plugin-ext/src/main/browser/terminal-main.ts:35</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L38">packages/plugin-ext/src/main/browser/terminal-main.ts:38</a></li>
 								</ul>
 							</aside>
 							<h4 class="tsd-parameters-title">Parameters</h4>
 							<ul class="tsd-parameters">
 								<li>
-									<h5>rpc: <a href="../interfaces/plugin_ext.rpcprotocol.html" class="tsd-signature-type">RPCProtocol</a></h5>
+									<h5>rpc: <a href="../modules/plugin_ext.html#rpcprotocol-1" class="tsd-signature-type" data-tsd-kind="Variable">RPCProtocol</a></h5>
 								</li>
 								<li>
 									<h5>container: <span class="tsd-signature-type">Container</span></h5>
 								</li>
 							</ul>
-							<h4 class="tsd-returns-title">Returns <a href="plugin_ext.terminalservicemainimpl.html" class="tsd-signature-type">TerminalServiceMainImpl</a></h4>
+							<h4 class="tsd-returns-title">Returns <a href="plugin_ext.terminalservicemainimpl.html" class="tsd-signature-type" data-tsd-kind="Class">TerminalServiceMainImpl</a></h4>
 						</li>
 					</ul>
 				</section>
@@ -157,41 +166,51 @@
 				<h2>Properties</h2>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-class tsd-is-private">
 					<a name="extproxy" class="tsd-anchor"></a>
-					<h3><span class="tsd-flag ts-flagPrivate">Private</span> ext<wbr>Proxy</h3>
-					<div class="tsd-signature tsd-kind-icon">ext<wbr>Proxy<span class="tsd-signature-symbol">:</span> <a href="../interfaces/plugin_ext.terminalserviceext.html" class="tsd-signature-type">TerminalServiceExt</a></div>
+					<h3><span class="tsd-flag ts-flagPrivate">Private</span> <span class="tsd-flag ts-flagReadonly">Readonly</span> ext<wbr>Proxy</h3>
+					<div class="tsd-signature tsd-kind-icon">ext<wbr>Proxy<span class="tsd-signature-symbol">:</span> <a href="../interfaces/plugin_ext.terminalserviceext-1.html" class="tsd-signature-type" data-tsd-kind="Interface">TerminalServiceExt</a></div>
 					<aside class="tsd-sources">
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L33">packages/plugin-ext/src/main/browser/terminal-main.ts:33</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L35">packages/plugin-ext/src/main/browser/terminal-main.ts:35</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-class tsd-is-private">
 					<a name="shell" class="tsd-anchor"></a>
-					<h3><span class="tsd-flag ts-flagPrivate">Private</span> shell</h3>
-					<div class="tsd-signature tsd-kind-icon">shell<span class="tsd-signature-symbol">:</span> <a href="core.applicationshell.html" class="tsd-signature-type">ApplicationShell</a></div>
+					<h3><span class="tsd-flag ts-flagPrivate">Private</span> <span class="tsd-flag ts-flagReadonly">Readonly</span> shell</h3>
+					<div class="tsd-signature tsd-kind-icon">shell<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">ApplicationShell</span></div>
 					<aside class="tsd-sources">
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L32">packages/plugin-ext/src/main/browser/terminal-main.ts:32</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L34">packages/plugin-ext/src/main/browser/terminal-main.ts:34</a></li>
+						</ul>
+					</aside>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-class tsd-is-private">
+					<a name="shellterminalserver" class="tsd-anchor"></a>
+					<h3><span class="tsd-flag ts-flagPrivate">Private</span> <span class="tsd-flag ts-flagReadonly">Readonly</span> shell<wbr>Terminal<wbr>Server</h3>
+					<div class="tsd-signature tsd-kind-icon">shell<wbr>Terminal<wbr>Server<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">JsonRpcProxy</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">IShellTerminalServer</span><span class="tsd-signature-symbol">&gt;</span></div>
+					<aside class="tsd-sources">
+						<ul>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L36">packages/plugin-ext/src/main/browser/terminal-main.ts:36</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-class tsd-is-private">
 					<a name="terminals" class="tsd-anchor"></a>
-					<h3><span class="tsd-flag ts-flagPrivate">Private</span> terminals</h3>
-					<div class="tsd-signature tsd-kind-icon">terminals<span class="tsd-signature-symbol">:</span> <a href="../interfaces/terminal.terminalservice.html" class="tsd-signature-type">TerminalService</a></div>
+					<h3><span class="tsd-flag ts-flagPrivate">Private</span> <span class="tsd-flag ts-flagReadonly">Readonly</span> terminals</h3>
+					<div class="tsd-signature tsd-kind-icon">terminals<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">TerminalService</span></div>
 					<aside class="tsd-sources">
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L31">packages/plugin-ext/src/main/browser/terminal-main.ts:31</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L33">packages/plugin-ext/src/main/browser/terminal-main.ts:33</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-class tsd-is-private">
 					<a name="todispose" class="tsd-anchor"></a>
-					<h3><span class="tsd-flag ts-flagPrivate">Private</span> to<wbr>Dispose</h3>
-					<div class="tsd-signature tsd-kind-icon">to<wbr>Dispose<span class="tsd-signature-symbol">:</span> <a href="core.disposablecollection.html" class="tsd-signature-type">DisposableCollection</a><span class="tsd-signature-symbol"> =&nbsp;new DisposableCollection()</span></div>
+					<h3><span class="tsd-flag ts-flagPrivate">Private</span> <span class="tsd-flag ts-flagReadonly">Readonly</span> to<wbr>Dispose</h3>
+					<div class="tsd-signature tsd-kind-icon">to<wbr>Dispose<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">DisposableCollection</span><span class="tsd-signature-symbol"> = ...</span></div>
 					<aside class="tsd-sources">
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L35">packages/plugin-ext/src/main/browser/terminal-main.ts:35</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L38">packages/plugin-ext/src/main/browser/terminal-main.ts:38</a></li>
 						</ul>
 					</aside>
 				</section>
@@ -202,23 +221,31 @@
 					<a name="_createterminal" class="tsd-anchor"></a>
 					<h3>$create<wbr>Terminal</h3>
 					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class">
-						<li class="tsd-signature tsd-kind-icon">$create<wbr>Terminal<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span>, options<span class="tsd-signature-symbol">: </span><a href="../interfaces/plugin.__theia_plugin_-1.terminaloptions.html" class="tsd-signature-type">TerminalOptions</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span></li>
+						<li class="tsd-signature tsd-kind-icon">$create<wbr>Terminal<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span>, options<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">TerminalOptions</span>, isPseudoTerminal<span class="tsd-signature-symbol">?: </span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span></li>
 					</ul>
 					<ul class="tsd-descriptions">
 						<li class="tsd-description">
 							<aside class="tsd-sources">
-								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain.html#_createterminal">$createTerminal</a></p>
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_createterminal">$createTerminal</a></p>
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L79">packages/plugin-ext/src/main/browser/terminal-main.ts:79</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L118">packages/plugin-ext/src/main/browser/terminal-main.ts:118</a></li>
 								</ul>
 							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Create new Terminal with Terminal options.</p>
+								</div>
+							</div>
 							<h4 class="tsd-parameters-title">Parameters</h4>
 							<ul class="tsd-parameters">
 								<li>
 									<h5>id: <span class="tsd-signature-type">string</span></h5>
 								</li>
 								<li>
-									<h5>options: <a href="../interfaces/plugin.__theia_plugin_-1.terminaloptions.html" class="tsd-signature-type">TerminalOptions</a></h5>
+									<h5>options: <span class="tsd-signature-type">TerminalOptions</span></h5>
+								</li>
+								<li>
+									<h5><span class="tsd-flag ts-flagOptional">Optional</span> isPseudoTerminal: <span class="tsd-signature-type">boolean</span></h5>
 								</li>
 							</ul>
 							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span></h4>
@@ -234,15 +261,52 @@
 					<ul class="tsd-descriptions">
 						<li class="tsd-description">
 							<aside class="tsd-sources">
-								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain.html#_dispose">$dispose</a></p>
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_dispose">$dispose</a></p>
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L131">packages/plugin-ext/src/main/browser/terminal-main.ts:131</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L171">packages/plugin-ext/src/main/browser/terminal-main.ts:171</a></li>
 								</ul>
 							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Destroy terminal.</p>
+								</div>
+							</div>
 							<h4 class="tsd-parameters-title">Parameters</h4>
 							<ul class="tsd-parameters">
 								<li>
 									<h5>id: <span class="tsd-signature-type">string</span></h5>
+								</li>
+							</ul>
+							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+						</li>
+					</ul>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-method tsd-parent-kind-class">
+					<a name="_disposebyterminalid" class="tsd-anchor"></a>
+					<h3>$dispose<wbr>ByTerminal<wbr>Id</h3>
+					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class">
+						<li class="tsd-signature tsd-kind-icon">$dispose<wbr>ByTerminal<wbr>Id<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span>, waitOnExit<span class="tsd-signature-symbol">?: </span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
+					</ul>
+					<ul class="tsd-descriptions">
+						<li class="tsd-description">
+							<aside class="tsd-sources">
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_disposebyterminalid">$disposeByTerminalId</a></p>
+								<ul>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L221">packages/plugin-ext/src/main/browser/terminal-main.ts:221</a></li>
+								</ul>
+							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Destroy terminal.</p>
+								</div>
+							</div>
+							<h4 class="tsd-parameters-title">Parameters</h4>
+							<ul class="tsd-parameters">
+								<li>
+									<h5>id: <span class="tsd-signature-type">number</span></h5>
+								</li>
+								<li>
+									<h5><span class="tsd-flag ts-flagOptional">Optional</span> waitOnExit: <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">boolean</span></h5>
 								</li>
 							</ul>
 							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
@@ -258,15 +322,119 @@
 					<ul class="tsd-descriptions">
 						<li class="tsd-description">
 							<aside class="tsd-sources">
-								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain.html#_hide">$hide</a></p>
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_hide">$hide</a></p>
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L121">packages/plugin-ext/src/main/browser/terminal-main.ts:121</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L161">packages/plugin-ext/src/main/browser/terminal-main.ts:161</a></li>
 								</ul>
 							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Hide UI panel where is located terminal widget.</p>
+								</div>
+							</div>
 							<h4 class="tsd-parameters-title">Parameters</h4>
 							<ul class="tsd-parameters">
 								<li>
 									<h5>id: <span class="tsd-signature-type">string</span></h5>
+								</li>
+							</ul>
+							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+						</li>
+					</ul>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-method tsd-parent-kind-class">
+					<a name="_hidebyterminalid" class="tsd-anchor"></a>
+					<h3>$hide<wbr>ByTerminal<wbr>Id</h3>
+					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class">
+						<li class="tsd-signature tsd-kind-icon">$hide<wbr>ByTerminal<wbr>Id<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
+					</ul>
+					<ul class="tsd-descriptions">
+						<li class="tsd-description">
+							<aside class="tsd-sources">
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_hidebyterminalid">$hideByTerminalId</a></p>
+								<ul>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L212">packages/plugin-ext/src/main/browser/terminal-main.ts:212</a></li>
+								</ul>
+							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Hide UI panel where is located terminal widget.</p>
+								</div>
+							</div>
+							<h4 class="tsd-parameters-title">Parameters</h4>
+							<ul class="tsd-parameters">
+								<li>
+									<h5>id: <span class="tsd-signature-type">number</span></h5>
+								</li>
+							</ul>
+							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+						</li>
+					</ul>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-method tsd-parent-kind-class">
+					<a name="_resize" class="tsd-anchor"></a>
+					<h3>$resize</h3>
+					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class">
+						<li class="tsd-signature tsd-kind-icon">$resize<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span>, cols<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span>, rows<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
+					</ul>
+					<ul class="tsd-descriptions">
+						<li class="tsd-description">
+							<aside class="tsd-sources">
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_resize">$resize</a></p>
+								<ul>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L110">packages/plugin-ext/src/main/browser/terminal-main.ts:110</a></li>
+								</ul>
+							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Resize the terminal by id.</p>
+								</div>
+							</div>
+							<h4 class="tsd-parameters-title">Parameters</h4>
+							<ul class="tsd-parameters">
+								<li>
+									<h5>id: <span class="tsd-signature-type">string</span></h5>
+								</li>
+								<li>
+									<h5>cols: <span class="tsd-signature-type">number</span></h5>
+								</li>
+								<li>
+									<h5>rows: <span class="tsd-signature-type">number</span></h5>
+								</li>
+							</ul>
+							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+						</li>
+					</ul>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-method tsd-parent-kind-class">
+					<a name="_resizebyterminalid" class="tsd-anchor"></a>
+					<h3>$resize<wbr>ByTerminal<wbr>Id</h3>
+					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class">
+						<li class="tsd-signature tsd-kind-icon">$resize<wbr>ByTerminal<wbr>Id<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span>, cols<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span>, rows<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
+					</ul>
+					<ul class="tsd-descriptions">
+						<li class="tsd-description">
+							<aside class="tsd-sources">
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_resizebyterminalid">$resizeByTerminalId</a></p>
+								<ul>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L195">packages/plugin-ext/src/main/browser/terminal-main.ts:195</a></li>
+								</ul>
+							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Resize the terminal by id.</p>
+								</div>
+							</div>
+							<h4 class="tsd-parameters-title">Parameters</h4>
+							<ul class="tsd-parameters">
+								<li>
+									<h5>id: <span class="tsd-signature-type">number</span></h5>
+								</li>
+								<li>
+									<h5>cols: <span class="tsd-signature-type">number</span></h5>
+								</li>
+								<li>
+									<h5>rows: <span class="tsd-signature-type">number</span></h5>
 								</li>
 							</ul>
 							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
@@ -277,16 +445,21 @@
 					<a name="_sendtext" class="tsd-anchor"></a>
 					<h3>$send<wbr>Text</h3>
 					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class">
-						<li class="tsd-signature tsd-kind-icon">$send<wbr>Text<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span>, text<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span>, addNewLine<span class="tsd-signature-symbol">?: </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">false</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">true</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
+						<li class="tsd-signature tsd-kind-icon">$send<wbr>Text<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span>, text<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span>, addNewLine<span class="tsd-signature-symbol">?: </span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
 					</ul>
 					<ul class="tsd-descriptions">
 						<li class="tsd-description">
 							<aside class="tsd-sources">
-								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain.html#_sendtext">$sendText</a></p>
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_sendtext">$sendText</a></p>
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L99">packages/plugin-ext/src/main/browser/terminal-main.ts:99</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L139">packages/plugin-ext/src/main/browser/terminal-main.ts:139</a></li>
 								</ul>
 							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Send text to the terminal by id.</p>
+								</div>
+							</div>
 							<h4 class="tsd-parameters-title">Parameters</h4>
 							<ul class="tsd-parameters">
 								<li>
@@ -296,7 +469,72 @@
 									<h5>text: <span class="tsd-signature-type">string</span></h5>
 								</li>
 								<li>
-									<h5><span class="tsd-flag ts-flagOptional">Optional</span> addNewLine: <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">false</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">true</span></h5>
+									<h5><span class="tsd-flag ts-flagOptional">Optional</span> addNewLine: <span class="tsd-signature-type">boolean</span></h5>
+								</li>
+							</ul>
+							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+						</li>
+					</ul>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-method tsd-parent-kind-class">
+					<a name="_sendtextbyterminalid" class="tsd-anchor"></a>
+					<h3>$send<wbr>Text<wbr>ByTerminal<wbr>Id</h3>
+					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class">
+						<li class="tsd-signature tsd-kind-icon">$send<wbr>Text<wbr>ByTerminal<wbr>Id<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span>, text<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span>, addNewLine<span class="tsd-signature-symbol">?: </span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
+					</ul>
+					<ul class="tsd-descriptions">
+						<li class="tsd-description">
+							<aside class="tsd-sources">
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_sendtextbyterminalid">$sendTextByTerminalId</a></p>
+								<ul>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L178">packages/plugin-ext/src/main/browser/terminal-main.ts:178</a></li>
+								</ul>
+							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Send text to the terminal by id.</p>
+								</div>
+							</div>
+							<h4 class="tsd-parameters-title">Parameters</h4>
+							<ul class="tsd-parameters">
+								<li>
+									<h5>id: <span class="tsd-signature-type">number</span></h5>
+								</li>
+								<li>
+									<h5>text: <span class="tsd-signature-type">string</span></h5>
+								</li>
+								<li>
+									<h5><span class="tsd-flag ts-flagOptional">Optional</span> addNewLine: <span class="tsd-signature-type">boolean</span></h5>
+								</li>
+							</ul>
+							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+						</li>
+					</ul>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-method tsd-parent-kind-class">
+					<a name="_setenvironmentvariablecollection" class="tsd-anchor"></a>
+					<h3>$set<wbr>Environment<wbr>Variable<wbr>Collection</h3>
+					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class">
+						<li class="tsd-signature tsd-kind-icon">$set<wbr>Environment<wbr>Variable<wbr>Collection<span class="tsd-signature-symbol">(</span>extensionIdentifier<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span>, persistent<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">boolean</span>, collection<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">SerializableEnvironmentVariableCollection</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
+					</ul>
+					<ul class="tsd-descriptions">
+						<li class="tsd-description">
+							<aside class="tsd-sources">
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_setenvironmentvariablecollection">$setEnvironmentVariableCollection</a></p>
+								<ul>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L58">packages/plugin-ext/src/main/browser/terminal-main.ts:58</a></li>
+								</ul>
+							</aside>
+							<h4 class="tsd-parameters-title">Parameters</h4>
+							<ul class="tsd-parameters">
+								<li>
+									<h5>extensionIdentifier: <span class="tsd-signature-type">string</span></h5>
+								</li>
+								<li>
+									<h5>persistent: <span class="tsd-signature-type">boolean</span></h5>
+								</li>
+								<li>
+									<h5>collection: <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">SerializableEnvironmentVariableCollection</span></h5>
 								</li>
 							</ul>
 							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
@@ -307,23 +545,124 @@
 					<a name="_show" class="tsd-anchor"></a>
 					<h3>$show</h3>
 					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class">
-						<li class="tsd-signature tsd-kind-icon">$show<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span>, preserveFocus<span class="tsd-signature-symbol">?: </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">false</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">true</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
+						<li class="tsd-signature tsd-kind-icon">$show<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span>, preserveFocus<span class="tsd-signature-symbol">?: </span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
 					</ul>
 					<ul class="tsd-descriptions">
 						<li class="tsd-description">
 							<aside class="tsd-sources">
-								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain.html#_show">$show</a></p>
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_show">$show</a></p>
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L110">packages/plugin-ext/src/main/browser/terminal-main.ts:110</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L150">packages/plugin-ext/src/main/browser/terminal-main.ts:150</a></li>
 								</ul>
 							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Show terminal on the UI panel.</p>
+								</div>
+							</div>
 							<h4 class="tsd-parameters-title">Parameters</h4>
 							<ul class="tsd-parameters">
 								<li>
 									<h5>id: <span class="tsd-signature-type">string</span></h5>
 								</li>
 								<li>
-									<h5><span class="tsd-flag ts-flagOptional">Optional</span> preserveFocus: <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">false</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">true</span></h5>
+									<h5><span class="tsd-flag ts-flagOptional">Optional</span> preserveFocus: <span class="tsd-signature-type">boolean</span></h5>
+								</li>
+							</ul>
+							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+						</li>
+					</ul>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-method tsd-parent-kind-class">
+					<a name="_showbyterminalid" class="tsd-anchor"></a>
+					<h3>$show<wbr>ByTerminal<wbr>Id</h3>
+					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class">
+						<li class="tsd-signature tsd-kind-icon">$show<wbr>ByTerminal<wbr>Id<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span>, preserveFocus<span class="tsd-signature-symbol">?: </span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
+					</ul>
+					<ul class="tsd-descriptions">
+						<li class="tsd-description">
+							<aside class="tsd-sources">
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_showbyterminalid">$showByTerminalId</a></p>
+								<ul>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L202">packages/plugin-ext/src/main/browser/terminal-main.ts:202</a></li>
+								</ul>
+							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Show terminal on the UI panel.</p>
+								</div>
+							</div>
+							<h4 class="tsd-parameters-title">Parameters</h4>
+							<ul class="tsd-parameters">
+								<li>
+									<h5>id: <span class="tsd-signature-type">number</span></h5>
+								</li>
+								<li>
+									<h5><span class="tsd-flag ts-flagOptional">Optional</span> preserveFocus: <span class="tsd-signature-type">boolean</span></h5>
+								</li>
+							</ul>
+							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+						</li>
+					</ul>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-method tsd-parent-kind-class">
+					<a name="_write" class="tsd-anchor"></a>
+					<h3>$write</h3>
+					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class">
+						<li class="tsd-signature tsd-kind-icon">$write<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span>, data<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
+					</ul>
+					<ul class="tsd-descriptions">
+						<li class="tsd-description">
+							<aside class="tsd-sources">
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_write">$write</a></p>
+								<ul>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L102">packages/plugin-ext/src/main/browser/terminal-main.ts:102</a></li>
+								</ul>
+							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Write data to the terminal by id.</p>
+								</div>
+							</div>
+							<h4 class="tsd-parameters-title">Parameters</h4>
+							<ul class="tsd-parameters">
+								<li>
+									<h5>id: <span class="tsd-signature-type">string</span></h5>
+								</li>
+								<li>
+									<h5>data: <span class="tsd-signature-type">string</span></h5>
+								</li>
+							</ul>
+							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
+						</li>
+					</ul>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-method tsd-parent-kind-class">
+					<a name="_writebyterminalid" class="tsd-anchor"></a>
+					<h3>$write<wbr>ByTerminal<wbr>Id</h3>
+					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class">
+						<li class="tsd-signature tsd-kind-icon">$write<wbr>ByTerminal<wbr>Id<span class="tsd-signature-symbol">(</span>id<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span>, data<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
+					</ul>
+					<ul class="tsd-descriptions">
+						<li class="tsd-description">
+							<aside class="tsd-sources">
+								<p>Implementation of <a href="../interfaces/plugin_ext.terminalservicemain-1.html">TerminalServiceMain</a>.<a href="../interfaces/plugin_ext.terminalservicemain-1.html#_writebyterminalid">$writeByTerminalId</a></p>
+								<ul>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L188">packages/plugin-ext/src/main/browser/terminal-main.ts:188</a></li>
+								</ul>
+							</aside>
+							<div class="tsd-comment tsd-typography">
+								<div class="lead">
+									<p>Write data to the terminal by id.</p>
+								</div>
+							</div>
+							<h4 class="tsd-parameters-title">Parameters</h4>
+							<ul class="tsd-parameters">
+								<li>
+									<h5>id: <span class="tsd-signature-type">number</span></h5>
+								</li>
+								<li>
+									<h5>data: <span class="tsd-signature-type">string</span></h5>
 								</li>
 							</ul>
 							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
@@ -339,8 +678,9 @@
 					<ul class="tsd-descriptions">
 						<li class="tsd-description">
 							<aside class="tsd-sources">
+								<p>Implementation of Disposable.dispose</p>
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L49">packages/plugin-ext/src/main/browser/terminal-main.ts:49</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L66">packages/plugin-ext/src/main/browser/terminal-main.ts:66</a></li>
 								</ul>
 							</aside>
 							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
@@ -351,19 +691,19 @@
 					<a name="trackterminal" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagProtected">Protected</span> track<wbr>Terminal</h3>
 					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class tsd-is-protected">
-						<li class="tsd-signature tsd-kind-icon">track<wbr>Terminal<span class="tsd-signature-symbol">(</span>terminal<span class="tsd-signature-symbol">: </span><a href="terminal.terminalwidget.html" class="tsd-signature-type">TerminalWidget</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></li>
+						<li class="tsd-signature tsd-kind-icon">track<wbr>Terminal<span class="tsd-signature-symbol">(</span>terminal<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">TerminalWidget</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></li>
 					</ul>
 					<ul class="tsd-descriptions">
 						<li class="tsd-description">
 							<aside class="tsd-sources">
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L58">packages/plugin-ext/src/main/browser/terminal-main.ts:58</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L75">packages/plugin-ext/src/main/browser/terminal-main.ts:75</a></li>
 								</ul>
 							</aside>
 							<h4 class="tsd-parameters-title">Parameters</h4>
 							<ul class="tsd-parameters">
 								<li>
-									<h5>terminal: <a href="terminal.terminalwidget.html" class="tsd-signature-type">TerminalWidget</a></h5>
+									<h5>terminal: <span class="tsd-signature-type">TerminalWidget</span></h5>
 								</li>
 							</ul>
 							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4>
@@ -380,7 +720,7 @@
 						<li class="tsd-description">
 							<aside class="tsd-sources">
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/main/browser/terminal-main.ts#L53">packages/plugin-ext/src/main/browser/terminal-main.ts:53</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/main/browser/terminal-main.ts#L70">packages/plugin-ext/src/main/browser/terminal-main.ts:70</a></li>
 								</ul>
 							</aside>
 							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
@@ -392,95 +732,125 @@
 		<div class="col-4 col-menu menu-sticky-wrap menu-highlight">
 			<nav class="tsd-navigation primary">
 				<ul>
-					<li class="globals  ">
-						<a href="../globals.html"><em>Globals</em></a>
+					<li class=" ">
+						<a href="../modules.html">Exports</a>
 					</li>
-					<li class="current tsd-kind-external-module">
+					<li class="current tsd-kind-module">
 						<a href="../modules/plugin_ext.html">plugin-<wbr>ext</a>
 						<ul>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module tsd-is-not-exported">
-								<a href="../modules/plugin_ext.codeeditorwidget.html">Code<wbr>Editor<wbr>Widget</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.commentscommandarg-1.html">Comments<wbr>Command<wbr>Arg</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.commentscontextcommandarg-1.html">Comments<wbr>Context<wbr>Command<wbr>Arg</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.commentseditcommandarg-1.html">Comments<wbr>Edit<wbr>Command<wbr>Arg</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.compositetreeviewnode.html">Composite<wbr>Tree<wbr>View<wbr>Node</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.connectionclosederror.html">Connection<wbr>Closed<wbr>Error</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.customeditorwidget.html">Custom<wbr>Editor<wbr>Widget</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.decorationrangebehavior.html">Decoration<wbr>Range<wbr>Behavior</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
-								<a href="../modules/plugin_ext.decorationrenderoptions.html">Decoration<wbr>Render<wbr>Options</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.decorationrenderoptions-1.html">Decoration<wbr>Render<wbr>Options</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module tsd-is-not-exported">
-								<a href="../modules/plugin_ext.delta.html">Delta</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.documentlink.html">Document<wbr>Link</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.knowncommands.html">Known<wbr>Commands</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
-								<a href="../modules/plugin_ext.notificationmain.html">Notification<wbr>Main</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.notificationmain-1.html">Notification<wbr>Main</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.objectidentifier.html">Object<wbr>Identifier</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module tsd-is-not-exported">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.objectstransferrer.html">Objects<wbr>Transferrer</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.parameterinformation.html">Parameter<wbr>Information</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.plugincontributions.html">Plugin<wbr>Contributions</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.pluginiconpath.html">Plugin<wbr>Icon<wbr>Path</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
-								<a href="../modules/plugin_ext.pluginpackage.html">Plugin<wbr>Package</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.pluginpackage-1.html">Plugin<wbr>Package</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.pluginpaths.html">Plugin<wbr>Paths</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
-								<a href="../modules/plugin_ext.resourcetexteditdto.html">Resource<wbr>Text<wbr>Edit<wbr>Dto</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.pluginviewregistry.html">Plugin<wbr>View<wbr>Registry</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.pluginviewwidget.html">Plugin<wbr>View<wbr>Widget</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.schemes.html">Schemes</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
-								<a href="../modules/plugin_ext.scmcommandarg.html">Scm<wbr>Command<wbr>Arg</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.scmcommandarg-1.html">Scm<wbr>Command<wbr>Arg</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.selectionprovidercommands.html">Selection<wbr>Provider<wbr>Commands</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.signaturehelp.html">Signature<wbr>Help</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.signatureinformation.html">Signature<wbr>Information</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.symbolkind.html">Symbol<wbr>Kind</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.symbolkindconverter.html">Symbol<wbr>Kind<wbr>Converter</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.textdocumentshowoptions.html">Text<wbr>Document<wbr>Show<wbr>Options</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.texteditorselectionchangekind.html">Text<wbr>Editor<wbr>Selection<wbr>Change<wbr>Kind</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.themabledecorationattachmentrenderoptions.html">Themable<wbr>Decoration<wbr>Attachment<wbr>Render<wbr>Options</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.themabledecorationrenderoptions.html">Themable<wbr>Decoration<wbr>Render<wbr>Options</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.themeicon.html">Theme<wbr>Icon</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.timelinecommandarg-1.html">Timeline<wbr>Command<wbr>Arg</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.treeviewnode.html">Tree<wbr>View<wbr>Node</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
-								<a href="../modules/plugin_ext.treeviewselection.html">Tree<wbr>View<wbr>Selection</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.treeviewselection-1.html">Tree<wbr>View<wbr>Selection</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.webviewexternalendpoint.html">Webview<wbr>External<wbr>Endpoint</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module tsd-is-not-exported">
-								<a href="../modules/plugin_ext.nls.html">nls</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.webviewwidget.html">Webview<wbr>Widget</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.workspacetexteditdto-1.html">Workspace<wbr>Text<wbr>Edit<wbr>Dto</a>
 							</li>
 						</ul>
 					</li>
@@ -490,7 +860,7 @@
 				<ul class="before-current">
 				</ul>
 				<ul class="current">
-					<li class="current tsd-kind-class tsd-parent-kind-external-module">
+					<li class="current tsd-kind-class tsd-parent-kind-module">
 						<a href="plugin_ext.terminalservicemainimpl.html" class="tsd-kind-icon">Terminal<wbr>Service<wbr>Main<wbr>Impl</a>
 						<ul>
 							<li class=" tsd-kind-constructor tsd-parent-kind-class">
@@ -501,6 +871,9 @@
 							</li>
 							<li class=" tsd-kind-property tsd-parent-kind-class tsd-is-private">
 								<a href="plugin_ext.terminalservicemainimpl.html#shell" class="tsd-kind-icon">shell</a>
+							</li>
+							<li class=" tsd-kind-property tsd-parent-kind-class tsd-is-private">
+								<a href="plugin_ext.terminalservicemainimpl.html#shellterminalserver" class="tsd-kind-icon">shell<wbr>Terminal<wbr>Server</a>
 							</li>
 							<li class=" tsd-kind-property tsd-parent-kind-class tsd-is-private">
 								<a href="plugin_ext.terminalservicemainimpl.html#terminals" class="tsd-kind-icon">terminals</a>
@@ -515,13 +888,40 @@
 								<a href="plugin_ext.terminalservicemainimpl.html#_dispose" class="tsd-kind-icon">$dispose</a>
 							</li>
 							<li class=" tsd-kind-method tsd-parent-kind-class">
+								<a href="plugin_ext.terminalservicemainimpl.html#_disposebyterminalid" class="tsd-kind-icon">$dispose<wbr>ByTerminal<wbr>Id</a>
+							</li>
+							<li class=" tsd-kind-method tsd-parent-kind-class">
 								<a href="plugin_ext.terminalservicemainimpl.html#_hide" class="tsd-kind-icon">$hide</a>
+							</li>
+							<li class=" tsd-kind-method tsd-parent-kind-class">
+								<a href="plugin_ext.terminalservicemainimpl.html#_hidebyterminalid" class="tsd-kind-icon">$hide<wbr>ByTerminal<wbr>Id</a>
+							</li>
+							<li class=" tsd-kind-method tsd-parent-kind-class">
+								<a href="plugin_ext.terminalservicemainimpl.html#_resize" class="tsd-kind-icon">$resize</a>
+							</li>
+							<li class=" tsd-kind-method tsd-parent-kind-class">
+								<a href="plugin_ext.terminalservicemainimpl.html#_resizebyterminalid" class="tsd-kind-icon">$resize<wbr>ByTerminal<wbr>Id</a>
 							</li>
 							<li class=" tsd-kind-method tsd-parent-kind-class">
 								<a href="plugin_ext.terminalservicemainimpl.html#_sendtext" class="tsd-kind-icon">$send<wbr>Text</a>
 							</li>
 							<li class=" tsd-kind-method tsd-parent-kind-class">
+								<a href="plugin_ext.terminalservicemainimpl.html#_sendtextbyterminalid" class="tsd-kind-icon">$send<wbr>Text<wbr>ByTerminal<wbr>Id</a>
+							</li>
+							<li class=" tsd-kind-method tsd-parent-kind-class">
+								<a href="plugin_ext.terminalservicemainimpl.html#_setenvironmentvariablecollection" class="tsd-kind-icon">$set<wbr>Environment<wbr>Variable<wbr>Collection</a>
+							</li>
+							<li class=" tsd-kind-method tsd-parent-kind-class">
 								<a href="plugin_ext.terminalservicemainimpl.html#_show" class="tsd-kind-icon">$show</a>
+							</li>
+							<li class=" tsd-kind-method tsd-parent-kind-class">
+								<a href="plugin_ext.terminalservicemainimpl.html#_showbyterminalid" class="tsd-kind-icon">$show<wbr>ByTerminal<wbr>Id</a>
+							</li>
+							<li class=" tsd-kind-method tsd-parent-kind-class">
+								<a href="plugin_ext.terminalservicemainimpl.html#_write" class="tsd-kind-icon">$write</a>
+							</li>
+							<li class=" tsd-kind-method tsd-parent-kind-class">
+								<a href="plugin_ext.terminalservicemainimpl.html#_writebyterminalid" class="tsd-kind-icon">$write<wbr>ByTerminal<wbr>Id</a>
 							</li>
 							<li class=" tsd-kind-method tsd-parent-kind-class">
 								<a href="plugin_ext.terminalservicemainimpl.html#dispose" class="tsd-kind-icon">dispose</a>
@@ -546,63 +946,36 @@
 		<h2>Legend</h2>
 		<div class="tsd-legend-group">
 			<ul class="tsd-legend">
-				<li class="tsd-kind-module"><span class="tsd-kind-icon">Module</span></li>
-				<li class="tsd-kind-object-literal"><span class="tsd-kind-icon">Object literal</span></li>
+				<li class="tsd-kind-namespace"><span class="tsd-kind-icon">Namespace</span></li>
 				<li class="tsd-kind-variable"><span class="tsd-kind-icon">Variable</span></li>
 				<li class="tsd-kind-function"><span class="tsd-kind-icon">Function</span></li>
 				<li class="tsd-kind-function tsd-has-type-parameter"><span class="tsd-kind-icon">Function with type parameter</span></li>
-				<li class="tsd-kind-index-signature"><span class="tsd-kind-icon">Index signature</span></li>
 				<li class="tsd-kind-type-alias"><span class="tsd-kind-icon">Type alias</span></li>
 				<li class="tsd-kind-type-alias tsd-has-type-parameter"><span class="tsd-kind-icon">Type alias with type parameter</span></li>
-			</ul>
-			<ul class="tsd-legend">
-				<li class="tsd-kind-enum"><span class="tsd-kind-icon">Enumeration</span></li>
-				<li class="tsd-kind-enum-member"><span class="tsd-kind-icon">Enumeration member</span></li>
-				<li class="tsd-kind-property tsd-parent-kind-enum"><span class="tsd-kind-icon">Property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-enum"><span class="tsd-kind-icon">Method</span></li>
-			</ul>
-			<ul class="tsd-legend">
-				<li class="tsd-kind-interface"><span class="tsd-kind-icon">Interface</span></li>
-				<li class="tsd-kind-interface tsd-has-type-parameter"><span class="tsd-kind-icon">Interface with type parameter</span></li>
-				<li class="tsd-kind-constructor tsd-parent-kind-interface"><span class="tsd-kind-icon">Constructor</span></li>
-				<li class="tsd-kind-property tsd-parent-kind-interface"><span class="tsd-kind-icon">Property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-interface"><span class="tsd-kind-icon">Method</span></li>
-				<li class="tsd-kind-index-signature tsd-parent-kind-interface"><span class="tsd-kind-icon">Index signature</span></li>
 			</ul>
 			<ul class="tsd-legend">
 				<li class="tsd-kind-class"><span class="tsd-kind-icon">Class</span></li>
 				<li class="tsd-kind-class tsd-has-type-parameter"><span class="tsd-kind-icon">Class with type parameter</span></li>
 				<li class="tsd-kind-constructor tsd-parent-kind-class"><span class="tsd-kind-icon">Constructor</span></li>
-				<li class="tsd-kind-property tsd-parent-kind-class"><span class="tsd-kind-icon">Property</span></li>
 				<li class="tsd-kind-method tsd-parent-kind-class"><span class="tsd-kind-icon">Method</span></li>
-				<li class="tsd-kind-accessor tsd-parent-kind-class"><span class="tsd-kind-icon">Accessor</span></li>
-				<li class="tsd-kind-index-signature tsd-parent-kind-class"><span class="tsd-kind-icon">Index signature</span></li>
 			</ul>
 			<ul class="tsd-legend">
-				<li class="tsd-kind-constructor tsd-parent-kind-class tsd-is-inherited"><span class="tsd-kind-icon">Inherited constructor</span></li>
-				<li class="tsd-kind-property tsd-parent-kind-class tsd-is-inherited"><span class="tsd-kind-icon">Inherited property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-class tsd-is-inherited"><span class="tsd-kind-icon">Inherited method</span></li>
-				<li class="tsd-kind-accessor tsd-parent-kind-class tsd-is-inherited"><span class="tsd-kind-icon">Inherited accessor</span></li>
+				<li class="tsd-kind-interface"><span class="tsd-kind-icon">Interface</span></li>
+				<li class="tsd-kind-interface tsd-has-type-parameter"><span class="tsd-kind-icon">Interface with type parameter</span></li>
 			</ul>
 			<ul class="tsd-legend">
-				<li class="tsd-kind-property tsd-parent-kind-class tsd-is-protected"><span class="tsd-kind-icon">Protected property</span></li>
+				<li class="tsd-kind-enum"><span class="tsd-kind-icon">Enumeration</span></li>
+			</ul>
+			<ul class="tsd-legend">
 				<li class="tsd-kind-method tsd-parent-kind-class tsd-is-protected"><span class="tsd-kind-icon">Protected method</span></li>
-				<li class="tsd-kind-accessor tsd-parent-kind-class tsd-is-protected"><span class="tsd-kind-icon">Protected accessor</span></li>
 			</ul>
 			<ul class="tsd-legend">
 				<li class="tsd-kind-property tsd-parent-kind-class tsd-is-private"><span class="tsd-kind-icon">Private property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-class tsd-is-private"><span class="tsd-kind-icon">Private method</span></li>
-				<li class="tsd-kind-accessor tsd-parent-kind-class tsd-is-private"><span class="tsd-kind-icon">Private accessor</span></li>
-			</ul>
-			<ul class="tsd-legend">
-				<li class="tsd-kind-property tsd-parent-kind-class tsd-is-static"><span class="tsd-kind-icon">Static property</span></li>
-				<li class="tsd-kind-call-signature tsd-parent-kind-class tsd-is-static"><span class="tsd-kind-icon">Static method</span></li>
 			</ul>
 		</div>
 	</div>
 </footer>
 <div class="overlay"></div>
 <script src="../assets/js/main.js"></script>
-<script>if (location.protocol == 'file:') document.write('<script src="../assets/js/search.js"><' + '/script>');</script>
 </body>
 </html>

@@ -4,16 +4,17 @@
 	<meta charset="utf-8">
 	<meta http-equiv="X-UA-Compatible" content="IE=edge">
 	<title>CompletionDto | Theia TypeDoc</title>
-	<meta name="description" content="">
+	<meta name="description" content="Documentation for Theia TypeDoc">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<link rel="stylesheet" href="../assets/css/main.css">
+	<script async src="../assets/js/search.js" id="search-script"></script>
 </head>
 <body>
 <header>
 	<div class="tsd-page-toolbar">
 		<div class="container">
 			<div class="table-wrap">
-				<div class="table-cell" id="tsd-search" data-index="../assets/js/search.js" data-base="..">
+				<div class="table-cell" id="tsd-search" data-index="../assets/js/search.json" data-base="..">
 					<div class="field">
 						<label for="tsd-search-field" class="tsd-widget search no-caption">Search</label>
 						<input id="tsd-search-field" type="text" />
@@ -38,8 +39,6 @@
 							</div>
 							<input type="checkbox" id="tsd-filter-inherited" checked />
 							<label class="tsd-widget" for="tsd-filter-inherited">Inherited</label>
-							<input type="checkbox" id="tsd-filter-only-exported" />
-							<label class="tsd-widget" for="tsd-filter-only-exported">Only exported</label>
 						</div>
 					</div>
 					<a href="#" class="tsd-widget menu no-caption" data-toggle="menu">Menu</a>
@@ -51,7 +50,7 @@
 		<div class="container">
 			<ul class="tsd-breadcrumb">
 				<li>
-					<a href="../globals.html">Globals</a>
+					<a href="../modules.html">Theia TypeDoc</a>
 				</li>
 				<li>
 					<a href="../modules/plugin_ext.html">plugin-ext</a>
@@ -71,7 +70,7 @@
 				<h3>Hierarchy</h3>
 				<ul class="tsd-hierarchy">
 					<li>
-						<a href="plugin_ext.completion.html" class="tsd-signature-type">Completion</a>
+						<a href="plugin_ext.completion.html" class="tsd-signature-type" data-tsd-kind="Interface">Completion</a>
 						<ul class="tsd-hierarchy">
 							<li>
 								<span class="target">CompletionDto</span>
@@ -90,6 +89,7 @@
 								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#additionaltextedits" class="tsd-kind-icon">additional<wbr>Text<wbr>Edits</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#command" class="tsd-kind-icon">command</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#commitcharacters" class="tsd-kind-icon">commit<wbr>Characters</a></li>
+								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#deprecated" class="tsd-kind-icon">deprecated</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#detail" class="tsd-kind-icon">detail</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#documentation" class="tsd-kind-icon">documentation</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#filtertext" class="tsd-kind-icon">filter<wbr>Text</a></li>
@@ -98,10 +98,12 @@
 								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#inserttextrules" class="tsd-kind-icon">insert<wbr>Text<wbr>Rules</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#kind" class="tsd-kind-icon">kind</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#label" class="tsd-kind-icon">label</a></li>
+								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#label2" class="tsd-kind-icon">label2</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-interface"><a href="plugin_ext.completiondto.html#parentid" class="tsd-kind-icon">parent<wbr>Id</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#preselect" class="tsd-kind-icon">preselect</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#range" class="tsd-kind-icon">range</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#sorttext" class="tsd-kind-icon">sort<wbr>Text</a></li>
+								<li class="tsd-kind-property tsd-parent-kind-interface tsd-is-inherited"><a href="plugin_ext.completiondto.html#tags" class="tsd-kind-icon">tags</a></li>
 							</ul>
 						</section>
 					</div>
@@ -112,22 +114,22 @@
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 					<a name="additionaltextedits" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagOptional">Optional</span> additional<wbr>Text<wbr>Edits</h3>
-					<div class="tsd-signature tsd-kind-icon">additional<wbr>Text<wbr>Edits<span class="tsd-signature-symbol">:</span> <a href="plugin_ext.singleeditoperation.html" class="tsd-signature-type">SingleEditOperation</a><span class="tsd-signature-symbol">[]</span></div>
+					<div class="tsd-signature tsd-kind-icon">additional<wbr>Text<wbr>Edits<span class="tsd-signature-symbol">:</span> <a href="plugin_ext.singleeditoperation-1.html" class="tsd-signature-type" data-tsd-kind="Interface">SingleEditOperation</a><span class="tsd-signature-symbol">[]</span></div>
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#additionaltextedits">additionalTextEdits</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L143">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:143</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L119">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:119</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 					<a name="command" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagOptional">Optional</span> command</h3>
-					<div class="tsd-signature tsd-kind-icon">command<span class="tsd-signature-symbol">:</span> <a href="plugin_ext.command.html" class="tsd-signature-type">Command</a></div>
+					<div class="tsd-signature tsd-kind-icon">command<span class="tsd-signature-symbol">:</span> <a href="plugin_ext.command.html" class="tsd-signature-type" data-tsd-kind="Interface">Command</a></div>
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#command">command</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L144">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:144</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L120">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:120</a></li>
 						</ul>
 					</aside>
 				</section>
@@ -138,40 +140,58 @@
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#commitcharacters">commitCharacters</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L142">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:142</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L118">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:118</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
+					<a name="deprecated" class="tsd-anchor"></a>
+					<h3><span class="tsd-flag ts-flagOptional">Optional</span> deprecated</h3>
+					<div class="tsd-signature tsd-kind-icon">deprecated<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div>
+					<aside class="tsd-sources">
+						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#deprecated">deprecated</a></p>
+						<ul>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L123">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:123</a></li>
+						</ul>
+					</aside>
+					<div class="tsd-comment tsd-typography">
+						<dl class="tsd-comment-tags">
+							<dt>deprecated</dt>
+							<dd><p>use tags instead.</p>
+							</dd>
+						</dl>
+					</div>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 					<a name="detail" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagOptional">Optional</span> detail</h3>
-					<div class="tsd-signature tsd-kind-icon">detail<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">string</span></div>
+					<div class="tsd-signature tsd-kind-icon">detail<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#detail">detail</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L131">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:131</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L107">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:107</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 					<a name="documentation" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagOptional">Optional</span> documentation</h3>
-					<div class="tsd-signature tsd-kind-icon">documentation<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol"> | </span><a href="plugin_ext.markdownstring-1.html" class="tsd-signature-type">MarkdownString</a></div>
+					<div class="tsd-signature tsd-kind-icon">documentation<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol"> | </span><a href="plugin_ext.markdownstring-1.html" class="tsd-signature-type" data-tsd-kind="Interface">MarkdownString</a></div>
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#documentation">documentation</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L132">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:132</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L108">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:108</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 					<a name="filtertext" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagOptional">Optional</span> filter<wbr>Text</h3>
-					<div class="tsd-signature tsd-kind-icon">filter<wbr>Text<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">string</span></div>
+					<div class="tsd-signature tsd-kind-icon">filter<wbr>Text<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#filtertext">filterText</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L134">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:134</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L110">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:110</a></li>
 						</ul>
 					</aside>
 				</section>
@@ -181,7 +201,7 @@
 					<div class="tsd-signature tsd-kind-icon">id<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 					<aside class="tsd-sources">
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L198">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:198</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L179">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:179</a></li>
 						</ul>
 					</aside>
 				</section>
@@ -192,29 +212,29 @@
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#inserttext">insertText</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L136">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:136</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L112">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:112</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 					<a name="inserttextrules" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagOptional">Optional</span> insert<wbr>Text<wbr>Rules</h3>
-					<div class="tsd-signature tsd-kind-icon">insert<wbr>Text<wbr>Rules<span class="tsd-signature-symbol">:</span> <a href="../enums/plugin_ext.completioniteminserttextrule.html" class="tsd-signature-type">CompletionItemInsertTextRule</a></div>
+					<div class="tsd-signature tsd-kind-icon">insert<wbr>Text<wbr>Rules<span class="tsd-signature-symbol">:</span> <a href="../enums/plugin_ext.completioniteminserttextrule.html#keepwhitespace" class="tsd-signature-type" data-tsd-kind="Enumeration member">KeepWhitespace</a><span class="tsd-signature-symbol"> | </span><a href="../enums/plugin_ext.completioniteminserttextrule.html#insertassnippet" class="tsd-signature-type" data-tsd-kind="Enumeration member">InsertAsSnippet</a></div>
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#inserttextrules">insertTextRules</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L137">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:137</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L113">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:113</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 					<a name="kind" class="tsd-anchor"></a>
 					<h3>kind</h3>
-					<div class="tsd-signature tsd-kind-icon">kind<span class="tsd-signature-symbol">:</span> <a href="../enums/plugin_ext.completionitemkind.html" class="tsd-signature-type">CompletionItemKind</a></div>
+					<div class="tsd-signature tsd-kind-icon">kind<span class="tsd-signature-symbol">:</span> <a href="../enums/plugin_ext.completionitemkind.html" class="tsd-signature-type" data-tsd-kind="Enumeration">CompletionItemKind</a></div>
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#kind">kind</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L130">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:130</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L106">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:106</a></li>
 						</ul>
 					</aside>
 				</section>
@@ -225,7 +245,18 @@
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#label">label</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L129">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:129</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L104">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:104</a></li>
+						</ul>
+					</aside>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
+					<a name="label2" class="tsd-anchor"></a>
+					<h3><span class="tsd-flag ts-flagOptional">Optional</span> label2</h3>
+					<div class="tsd-signature tsd-kind-icon">label2<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
+					<aside class="tsd-sources">
+						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#label2">label2</a></p>
+						<ul>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L105">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:105</a></li>
 						</ul>
 					</aside>
 				</section>
@@ -235,40 +266,51 @@
 					<div class="tsd-signature tsd-kind-icon">parent<wbr>Id<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 					<aside class="tsd-sources">
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L199">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:199</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L180">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:180</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 					<a name="preselect" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagOptional">Optional</span> preselect</h3>
-					<div class="tsd-signature tsd-kind-icon">preselect<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">false</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">true</span></div>
+					<div class="tsd-signature tsd-kind-icon">preselect<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div>
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#preselect">preselect</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L135">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:135</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L111">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:111</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 					<a name="range" class="tsd-anchor"></a>
-					<h3>range</h3>
-					<div class="tsd-signature tsd-kind-icon">range<span class="tsd-signature-symbol">:</span> <a href="plugin_ext.range-1.html" class="tsd-signature-type">Range</a><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">object</span></div>
+					<h3><span class="tsd-flag ts-flagOptional">Optional</span> range</h3>
+					<div class="tsd-signature tsd-kind-icon">range<span class="tsd-signature-symbol">:</span> <a href="plugin_ext.range-1.html" class="tsd-signature-type" data-tsd-kind="Interface">Range</a><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-symbol">{ </span>insert<span class="tsd-signature-symbol">: </span><a href="plugin_ext.range-1.html" class="tsd-signature-type" data-tsd-kind="Interface">Range</a><span class="tsd-signature-symbol">; </span>replace<span class="tsd-signature-symbol">: </span><a href="plugin_ext.range-1.html" class="tsd-signature-type" data-tsd-kind="Interface">Range</a><span class="tsd-signature-symbol"> }</span></div>
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#range">range</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L138">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:138</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L114">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:114</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 					<a name="sorttext" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagOptional">Optional</span> sort<wbr>Text</h3>
-					<div class="tsd-signature tsd-kind-icon">sort<wbr>Text<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">string</span></div>
+					<div class="tsd-signature tsd-kind-icon">sort<wbr>Text<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 					<aside class="tsd-sources">
 						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#sorttext">sortText</a></p>
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L133">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:133</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L109">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:109</a></li>
+						</ul>
+					</aside>
+				</section>
+				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
+					<a name="tags" class="tsd-anchor"></a>
+					<h3><span class="tsd-flag ts-flagOptional">Optional</span> tags</h3>
+					<div class="tsd-signature tsd-kind-icon">tags<span class="tsd-signature-symbol">:</span> <a href="../enums/plugin_ext.completionitemtag.html#deprecated" class="tsd-signature-type" data-tsd-kind="Enumeration member">Deprecated</a><span class="tsd-signature-symbol">[]</span></div>
+					<aside class="tsd-sources">
+						<p>Inherited from <a href="plugin_ext.completion.html">Completion</a>.<a href="plugin_ext.completion.html#tags">tags</a></p>
+						<ul>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/plugin-ext/src/common/plugin-api-rpc-model.ts#L121">packages/plugin-ext/src/common/plugin-api-rpc-model.ts:121</a></li>
 						</ul>
 					</aside>
 				</section>
@@ -277,95 +319,125 @@
 		<div class="col-4 col-menu menu-sticky-wrap menu-highlight">
 			<nav class="tsd-navigation primary">
 				<ul>
-					<li class="globals  ">
-						<a href="../globals.html"><em>Globals</em></a>
+					<li class=" ">
+						<a href="../modules.html">Exports</a>
 					</li>
-					<li class="current tsd-kind-external-module">
+					<li class="current tsd-kind-module">
 						<a href="../modules/plugin_ext.html">plugin-<wbr>ext</a>
 						<ul>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module tsd-is-not-exported">
-								<a href="../modules/plugin_ext.codeeditorwidget.html">Code<wbr>Editor<wbr>Widget</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.commentscommandarg-1.html">Comments<wbr>Command<wbr>Arg</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.commentscontextcommandarg-1.html">Comments<wbr>Context<wbr>Command<wbr>Arg</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.commentseditcommandarg-1.html">Comments<wbr>Edit<wbr>Command<wbr>Arg</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.compositetreeviewnode.html">Composite<wbr>Tree<wbr>View<wbr>Node</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.connectionclosederror.html">Connection<wbr>Closed<wbr>Error</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.customeditorwidget.html">Custom<wbr>Editor<wbr>Widget</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.decorationrangebehavior.html">Decoration<wbr>Range<wbr>Behavior</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
-								<a href="../modules/plugin_ext.decorationrenderoptions.html">Decoration<wbr>Render<wbr>Options</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.decorationrenderoptions-1.html">Decoration<wbr>Render<wbr>Options</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module tsd-is-not-exported">
-								<a href="../modules/plugin_ext.delta.html">Delta</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.documentlink.html">Document<wbr>Link</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.knowncommands.html">Known<wbr>Commands</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
-								<a href="../modules/plugin_ext.notificationmain.html">Notification<wbr>Main</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.notificationmain-1.html">Notification<wbr>Main</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.objectidentifier.html">Object<wbr>Identifier</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module tsd-is-not-exported">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.objectstransferrer.html">Objects<wbr>Transferrer</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.parameterinformation.html">Parameter<wbr>Information</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.plugincontributions.html">Plugin<wbr>Contributions</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.pluginiconpath.html">Plugin<wbr>Icon<wbr>Path</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
-								<a href="../modules/plugin_ext.pluginpackage.html">Plugin<wbr>Package</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.pluginpackage-1.html">Plugin<wbr>Package</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.pluginpaths.html">Plugin<wbr>Paths</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
-								<a href="../modules/plugin_ext.resourcetexteditdto.html">Resource<wbr>Text<wbr>Edit<wbr>Dto</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.pluginviewregistry.html">Plugin<wbr>View<wbr>Registry</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.pluginviewwidget.html">Plugin<wbr>View<wbr>Widget</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.schemes.html">Schemes</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
-								<a href="../modules/plugin_ext.scmcommandarg.html">Scm<wbr>Command<wbr>Arg</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.scmcommandarg-1.html">Scm<wbr>Command<wbr>Arg</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.selectionprovidercommands.html">Selection<wbr>Provider<wbr>Commands</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.signaturehelp.html">Signature<wbr>Help</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.signatureinformation.html">Signature<wbr>Information</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.symbolkind.html">Symbol<wbr>Kind</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.symbolkindconverter.html">Symbol<wbr>Kind<wbr>Converter</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.textdocumentshowoptions.html">Text<wbr>Document<wbr>Show<wbr>Options</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.texteditorselectionchangekind.html">Text<wbr>Editor<wbr>Selection<wbr>Change<wbr>Kind</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.themabledecorationattachmentrenderoptions.html">Themable<wbr>Decoration<wbr>Attachment<wbr>Render<wbr>Options</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.themabledecorationrenderoptions.html">Themable<wbr>Decoration<wbr>Render<wbr>Options</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.themeicon.html">Theme<wbr>Icon</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.timelinecommandarg-1.html">Timeline<wbr>Command<wbr>Arg</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.treeviewnode.html">Tree<wbr>View<wbr>Node</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
-								<a href="../modules/plugin_ext.treeviewselection.html">Tree<wbr>View<wbr>Selection</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.treeviewselection-1.html">Tree<wbr>View<wbr>Selection</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/plugin_ext.webviewexternalendpoint.html">Webview<wbr>External<wbr>Endpoint</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module tsd-is-not-exported">
-								<a href="../modules/plugin_ext.nls.html">nls</a>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.webviewwidget.html">Webview<wbr>Widget</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/plugin_ext.workspacetexteditdto-1.html">Workspace<wbr>Text<wbr>Edit<wbr>Dto</a>
 							</li>
 						</ul>
 					</li>
@@ -375,7 +447,7 @@
 				<ul class="before-current">
 				</ul>
 				<ul class="current">
-					<li class="current tsd-kind-interface tsd-parent-kind-external-module">
+					<li class="current tsd-kind-interface tsd-parent-kind-module">
 						<a href="plugin_ext.completiondto.html" class="tsd-kind-icon">Completion<wbr>Dto</a>
 						<ul>
 							<li class=" tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
@@ -386,6 +458,9 @@
 							</li>
 							<li class=" tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 								<a href="plugin_ext.completiondto.html#commitcharacters" class="tsd-kind-icon">commit<wbr>Characters</a>
+							</li>
+							<li class=" tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
+								<a href="plugin_ext.completiondto.html#deprecated" class="tsd-kind-icon">deprecated</a>
 							</li>
 							<li class=" tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 								<a href="plugin_ext.completiondto.html#detail" class="tsd-kind-icon">detail</a>
@@ -411,6 +486,9 @@
 							<li class=" tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 								<a href="plugin_ext.completiondto.html#label" class="tsd-kind-icon">label</a>
 							</li>
+							<li class=" tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
+								<a href="plugin_ext.completiondto.html#label2" class="tsd-kind-icon">label2</a>
+							</li>
 							<li class=" tsd-kind-property tsd-parent-kind-interface">
 								<a href="plugin_ext.completiondto.html#parentid" class="tsd-kind-icon">parent<wbr>Id</a>
 							</li>
@@ -422,6 +500,9 @@
 							</li>
 							<li class=" tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
 								<a href="plugin_ext.completiondto.html#sorttext" class="tsd-kind-icon">sort<wbr>Text</a>
+							</li>
+							<li class=" tsd-kind-property tsd-parent-kind-interface tsd-is-inherited">
+								<a href="plugin_ext.completiondto.html#tags" class="tsd-kind-icon">tags</a>
 							</li>
 						</ul>
 					</li>
@@ -437,63 +518,29 @@
 		<h2>Legend</h2>
 		<div class="tsd-legend-group">
 			<ul class="tsd-legend">
-				<li class="tsd-kind-module"><span class="tsd-kind-icon">Module</span></li>
-				<li class="tsd-kind-object-literal"><span class="tsd-kind-icon">Object literal</span></li>
+				<li class="tsd-kind-namespace"><span class="tsd-kind-icon">Namespace</span></li>
 				<li class="tsd-kind-variable"><span class="tsd-kind-icon">Variable</span></li>
 				<li class="tsd-kind-function"><span class="tsd-kind-icon">Function</span></li>
 				<li class="tsd-kind-function tsd-has-type-parameter"><span class="tsd-kind-icon">Function with type parameter</span></li>
-				<li class="tsd-kind-index-signature"><span class="tsd-kind-icon">Index signature</span></li>
 				<li class="tsd-kind-type-alias"><span class="tsd-kind-icon">Type alias</span></li>
 				<li class="tsd-kind-type-alias tsd-has-type-parameter"><span class="tsd-kind-icon">Type alias with type parameter</span></li>
 			</ul>
 			<ul class="tsd-legend">
-				<li class="tsd-kind-enum"><span class="tsd-kind-icon">Enumeration</span></li>
-				<li class="tsd-kind-enum-member"><span class="tsd-kind-icon">Enumeration member</span></li>
-				<li class="tsd-kind-property tsd-parent-kind-enum"><span class="tsd-kind-icon">Property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-enum"><span class="tsd-kind-icon">Method</span></li>
-			</ul>
-			<ul class="tsd-legend">
 				<li class="tsd-kind-interface"><span class="tsd-kind-icon">Interface</span></li>
 				<li class="tsd-kind-interface tsd-has-type-parameter"><span class="tsd-kind-icon">Interface with type parameter</span></li>
-				<li class="tsd-kind-constructor tsd-parent-kind-interface"><span class="tsd-kind-icon">Constructor</span></li>
 				<li class="tsd-kind-property tsd-parent-kind-interface"><span class="tsd-kind-icon">Property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-interface"><span class="tsd-kind-icon">Method</span></li>
-				<li class="tsd-kind-index-signature tsd-parent-kind-interface"><span class="tsd-kind-icon">Index signature</span></li>
 			</ul>
 			<ul class="tsd-legend">
 				<li class="tsd-kind-class"><span class="tsd-kind-icon">Class</span></li>
 				<li class="tsd-kind-class tsd-has-type-parameter"><span class="tsd-kind-icon">Class with type parameter</span></li>
-				<li class="tsd-kind-constructor tsd-parent-kind-class"><span class="tsd-kind-icon">Constructor</span></li>
-				<li class="tsd-kind-property tsd-parent-kind-class"><span class="tsd-kind-icon">Property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-class"><span class="tsd-kind-icon">Method</span></li>
-				<li class="tsd-kind-accessor tsd-parent-kind-class"><span class="tsd-kind-icon">Accessor</span></li>
-				<li class="tsd-kind-index-signature tsd-parent-kind-class"><span class="tsd-kind-icon">Index signature</span></li>
 			</ul>
 			<ul class="tsd-legend">
-				<li class="tsd-kind-constructor tsd-parent-kind-class tsd-is-inherited"><span class="tsd-kind-icon">Inherited constructor</span></li>
-				<li class="tsd-kind-property tsd-parent-kind-class tsd-is-inherited"><span class="tsd-kind-icon">Inherited property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-class tsd-is-inherited"><span class="tsd-kind-icon">Inherited method</span></li>
-				<li class="tsd-kind-accessor tsd-parent-kind-class tsd-is-inherited"><span class="tsd-kind-icon">Inherited accessor</span></li>
-			</ul>
-			<ul class="tsd-legend">
-				<li class="tsd-kind-property tsd-parent-kind-class tsd-is-protected"><span class="tsd-kind-icon">Protected property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-class tsd-is-protected"><span class="tsd-kind-icon">Protected method</span></li>
-				<li class="tsd-kind-accessor tsd-parent-kind-class tsd-is-protected"><span class="tsd-kind-icon">Protected accessor</span></li>
-			</ul>
-			<ul class="tsd-legend">
-				<li class="tsd-kind-property tsd-parent-kind-class tsd-is-private"><span class="tsd-kind-icon">Private property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-class tsd-is-private"><span class="tsd-kind-icon">Private method</span></li>
-				<li class="tsd-kind-accessor tsd-parent-kind-class tsd-is-private"><span class="tsd-kind-icon">Private accessor</span></li>
-			</ul>
-			<ul class="tsd-legend">
-				<li class="tsd-kind-property tsd-parent-kind-class tsd-is-static"><span class="tsd-kind-icon">Static property</span></li>
-				<li class="tsd-kind-call-signature tsd-parent-kind-class tsd-is-static"><span class="tsd-kind-icon">Static method</span></li>
+				<li class="tsd-kind-enum"><span class="tsd-kind-icon">Enumeration</span></li>
 			</ul>
 		</div>
 	</div>
 </footer>
 <div class="overlay"></div>
 <script src="../assets/js/main.js"></script>
-<script>if (location.protocol == 'file:') document.write('<script src="../assets/js/search.js"><' + '/script>');</script>
 </body>
 </html>

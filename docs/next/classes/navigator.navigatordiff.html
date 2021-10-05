@@ -4,16 +4,17 @@
 	<meta charset="utf-8">
 	<meta http-equiv="X-UA-Compatible" content="IE=edge">
 	<title>NavigatorDiff | Theia TypeDoc</title>
-	<meta name="description" content="">
+	<meta name="description" content="Documentation for Theia TypeDoc">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<link rel="stylesheet" href="../assets/css/main.css">
+	<script async src="../assets/js/search.js" id="search-script"></script>
 </head>
 <body>
 <header>
 	<div class="tsd-page-toolbar">
 		<div class="container">
 			<div class="table-wrap">
-				<div class="table-cell" id="tsd-search" data-index="../assets/js/search.js" data-base="..">
+				<div class="table-cell" id="tsd-search" data-index="../assets/js/search.json" data-base="..">
 					<div class="field">
 						<label for="tsd-search-field" class="tsd-widget search no-caption">Search</label>
 						<input id="tsd-search-field" type="text" />
@@ -38,8 +39,6 @@
 							</div>
 							<input type="checkbox" id="tsd-filter-inherited" checked />
 							<label class="tsd-widget" for="tsd-filter-inherited">Inherited</label>
-							<input type="checkbox" id="tsd-filter-only-exported" />
-							<label class="tsd-widget" for="tsd-filter-only-exported">Only exported</label>
 						</div>
 					</div>
 					<a href="#" class="tsd-widget menu no-caption" data-toggle="menu">Menu</a>
@@ -51,7 +50,7 @@
 		<div class="container">
 			<ul class="tsd-breadcrumb">
 				<li>
-					<a href="../globals.html">Globals</a>
+					<a href="../modules.html">Theia TypeDoc</a>
 				</li>
 				<li>
 					<a href="../modules/navigator.html">navigator</a>
@@ -90,7 +89,7 @@
 							<ul class="tsd-index-list">
 								<li class="tsd-kind-property tsd-parent-kind-class tsd-is-protected"><a href="navigator.navigatordiff.html#_firstcomparefile" class="tsd-kind-icon">_first<wbr>Compare<wbr>File</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-class tsd-is-protected"><a href="navigator.navigatordiff.html#_isfirstfileselected" class="tsd-kind-icon">_is<wbr>First<wbr>File<wbr>Selected</a></li>
-								<li class="tsd-kind-property tsd-parent-kind-class tsd-is-protected"><a href="navigator.navigatordiff.html#filesystem" class="tsd-kind-icon">file<wbr>System</a></li>
+								<li class="tsd-kind-property tsd-parent-kind-class tsd-is-protected"><a href="navigator.navigatordiff.html#fileservice" class="tsd-kind-icon">file<wbr>Service</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-class tsd-is-protected"><a href="navigator.navigatordiff.html#notifications" class="tsd-kind-icon">notifications</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-class tsd-is-protected"><a href="navigator.navigatordiff.html#openerservice" class="tsd-kind-icon">opener<wbr>Service</a></li>
 								<li class="tsd-kind-property tsd-parent-kind-class tsd-is-protected"><a href="navigator.navigatordiff.html#selectionservice" class="tsd-kind-icon">selection<wbr>Service</a></li>
@@ -121,16 +120,16 @@
 					<a name="constructor" class="tsd-anchor"></a>
 					<h3>constructor</h3>
 					<ul class="tsd-signatures tsd-kind-constructor tsd-parent-kind-class">
-						<li class="tsd-signature tsd-kind-icon">new <wbr>Navigator<wbr>Diff<span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="navigator.navigatordiff.html" class="tsd-signature-type">NavigatorDiff</a></li>
+						<li class="tsd-signature tsd-kind-icon">new <wbr>Navigator<wbr>Diff<span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="navigator.navigatordiff.html" class="tsd-signature-type" data-tsd-kind="Class">NavigatorDiff</a></li>
 					</ul>
 					<ul class="tsd-descriptions">
 						<li class="tsd-description">
 							<aside class="tsd-sources">
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L52">packages/navigator/src/browser/navigator-diff.ts:52</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L53">packages/navigator/src/browser/navigator-diff.ts:53</a></li>
 								</ul>
 							</aside>
-							<h4 class="tsd-returns-title">Returns <a href="navigator.navigatordiff.html" class="tsd-signature-type">NavigatorDiff</a></h4>
+							<h4 class="tsd-returns-title">Returns <a href="navigator.navigatordiff.html" class="tsd-signature-type" data-tsd-kind="Class">NavigatorDiff</a></h4>
 						</li>
 					</ul>
 				</section>
@@ -140,10 +139,10 @@
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-class tsd-is-protected">
 					<a name="_firstcomparefile" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagProtected">Protected</span> _first<wbr>Compare<wbr>File</h3>
-					<div class="tsd-signature tsd-kind-icon">_first<wbr>Compare<wbr>File<span class="tsd-signature-symbol">:</span> <a href="core.uri.html" class="tsd-signature-type">URI</a><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> =&nbsp;undefined</span></div>
+					<div class="tsd-signature tsd-kind-icon">_first<wbr>Compare<wbr>File<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">default</span><span class="tsd-signature-symbol"> = ...</span></div>
 					<aside class="tsd-sources">
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L58">packages/navigator/src/browser/navigator-diff.ts:58</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L59">packages/navigator/src/browser/navigator-diff.ts:59</a></li>
 						</ul>
 					</aside>
 				</section>
@@ -153,47 +152,47 @@
 					<div class="tsd-signature tsd-kind-icon">_is<wbr>First<wbr>File<wbr>Selected<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div>
 					<aside class="tsd-sources">
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L67">packages/navigator/src/browser/navigator-diff.ts:67</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L68">packages/navigator/src/browser/navigator-diff.ts:68</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-class tsd-is-protected">
-					<a name="filesystem" class="tsd-anchor"></a>
-					<h3><span class="tsd-flag ts-flagProtected">Protected</span> file<wbr>System</h3>
-					<div class="tsd-signature tsd-kind-icon">file<wbr>System<span class="tsd-signature-symbol">:</span> <a href="../interfaces/filesystem.filesystem-1.html" class="tsd-signature-type">FileSystem</a></div>
+					<a name="fileservice" class="tsd-anchor"></a>
+					<h3><span class="tsd-flag ts-flagProtected">Protected</span> <span class="tsd-flag ts-flagReadonly">Readonly</span> file<wbr>Service</h3>
+					<div class="tsd-signature tsd-kind-icon">file<wbr>Service<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">FileService</span></div>
 					<aside class="tsd-sources">
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L43">packages/navigator/src/browser/navigator-diff.ts:43</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L44">packages/navigator/src/browser/navigator-diff.ts:44</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-class tsd-is-protected">
 					<a name="notifications" class="tsd-anchor"></a>
-					<h3><span class="tsd-flag ts-flagProtected">Protected</span> notifications</h3>
-					<div class="tsd-signature tsd-kind-icon">notifications<span class="tsd-signature-symbol">:</span> <a href="core.messageservice.html" class="tsd-signature-type">MessageService</a></div>
+					<h3><span class="tsd-flag ts-flagProtected">Protected</span> <span class="tsd-flag ts-flagReadonly">Readonly</span> notifications</h3>
+					<div class="tsd-signature tsd-kind-icon">notifications<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">MessageService</span></div>
 					<aside class="tsd-sources">
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L49">packages/navigator/src/browser/navigator-diff.ts:49</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L50">packages/navigator/src/browser/navigator-diff.ts:50</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-class tsd-is-protected">
 					<a name="openerservice" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagProtected">Protected</span> opener<wbr>Service</h3>
-					<div class="tsd-signature tsd-kind-icon">opener<wbr>Service<span class="tsd-signature-symbol">:</span> <a href="../interfaces/core.openerservice.html" class="tsd-signature-type">OpenerService</a></div>
+					<div class="tsd-signature tsd-kind-icon">opener<wbr>Service<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">OpenerService</span></div>
 					<aside class="tsd-sources">
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L46">packages/navigator/src/browser/navigator-diff.ts:46</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L47">packages/navigator/src/browser/navigator-diff.ts:47</a></li>
 						</ul>
 					</aside>
 				</section>
 				<section class="tsd-panel tsd-member tsd-kind-property tsd-parent-kind-class tsd-is-protected">
 					<a name="selectionservice" class="tsd-anchor"></a>
-					<h3><span class="tsd-flag ts-flagProtected">Protected</span> selection<wbr>Service</h3>
-					<div class="tsd-signature tsd-kind-icon">selection<wbr>Service<span class="tsd-signature-symbol">:</span> <a href="core.selectionservice.html" class="tsd-signature-type">SelectionService</a></div>
+					<h3><span class="tsd-flag ts-flagProtected">Protected</span> <span class="tsd-flag ts-flagReadonly">Readonly</span> selection<wbr>Service</h3>
+					<div class="tsd-signature tsd-kind-icon">selection<wbr>Service<span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">SelectionService</span></div>
 					<aside class="tsd-sources">
 						<ul>
-							<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L52">packages/navigator/src/browser/navigator-diff.ts:52</a></li>
+							<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L53">packages/navigator/src/browser/navigator-diff.ts:53</a></li>
 						</ul>
 					</aside>
 				</section>
@@ -204,31 +203,28 @@
 					<a name="firstcomparefile" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagProtected">Protected</span> first<wbr>Compare<wbr>File</h3>
 					<ul class="tsd-signatures tsd-kind-accessor tsd-parent-kind-class tsd-is-protected">
-						<li class="tsd-signature tsd-kind-icon"><span class="tsd-signature-symbol">get</span> firstCompareFile<span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><a href="core.uri.html" class="tsd-signature-type">URI</a><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">undefined</span></li>
-						<li class="tsd-signature tsd-kind-icon"><span class="tsd-signature-symbol">set</span> firstCompareFile<span class="tsd-signature-symbol">(</span>uri<span class="tsd-signature-symbol">: </span><a href="core.uri.html" class="tsd-signature-type">URI</a><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
+						<li class="tsd-signature tsd-kind-icon"><span class="tsd-signature-symbol">get</span> firstCompareFile<span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">default</span></li>
+						<li class="tsd-signature tsd-kind-icon"><span class="tsd-signature-symbol">set</span> firstCompareFile<span class="tsd-signature-symbol">(</span>uri<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">default</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">void</span></li>
 					</ul>
 					<ul class="tsd-descriptions">
 						<li class="tsd-description">
 							<aside class="tsd-sources">
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L59">packages/navigator/src/browser/navigator-diff.ts:59</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L60">packages/navigator/src/browser/navigator-diff.ts:60</a></li>
 								</ul>
 							</aside>
-							<h4 class="tsd-returns-title">Returns <a href="core.uri.html" class="tsd-signature-type">URI</a>
-								<span class="tsd-signature-symbol"> | </span>
-								<span class="tsd-signature-type">undefined</span>
-							</h4>
+							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">default</span></h4>
 						</li>
 						<li class="tsd-description">
 							<aside class="tsd-sources">
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L62">packages/navigator/src/browser/navigator-diff.ts:62</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L63">packages/navigator/src/browser/navigator-diff.ts:63</a></li>
 								</ul>
 							</aside>
 							<h4 class="tsd-parameters-title">Parameters</h4>
 							<ul class="tsd-parameters">
 								<li>
-									<h5>uri: <a href="core.uri.html" class="tsd-signature-type">URI</a><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">undefined</span></h5>
+									<h5>uri: <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">default</span></h5>
 								</li>
 							</ul>
 							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4>
@@ -245,7 +241,7 @@
 						<li class="tsd-description">
 							<aside class="tsd-sources">
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L68">packages/navigator/src/browser/navigator-diff.ts:68</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L69">packages/navigator/src/browser/navigator-diff.ts:69</a></li>
 								</ul>
 							</aside>
 							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4>
@@ -265,7 +261,7 @@
 						<li class="tsd-description">
 							<aside class="tsd-sources">
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L103">packages/navigator/src/browser/navigator-diff.ts:103</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L105">packages/navigator/src/browser/navigator-diff.ts:105</a></li>
 								</ul>
 							</aside>
 							<div class="tsd-comment tsd-typography">
@@ -296,7 +292,7 @@
 						<li class="tsd-description">
 							<aside class="tsd-sources">
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L121">packages/navigator/src/browser/navigator-diff.ts:121</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L123">packages/navigator/src/browser/navigator-diff.ts:123</a></li>
 								</ul>
 							</aside>
 							<div class="tsd-comment tsd-typography">
@@ -321,16 +317,16 @@
 					<a name="geturiselection" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagProtected">Protected</span> getURISelection</h3>
 					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class tsd-is-protected">
-						<li class="tsd-signature tsd-kind-icon">getURISelection<span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="core.uri.html" class="tsd-signature-type">URI</a><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span></li>
+						<li class="tsd-signature tsd-kind-icon">getURISelection<span class="tsd-signature-symbol">(</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">default</span><span class="tsd-signature-symbol">&gt;</span></li>
 					</ul>
 					<ul class="tsd-descriptions">
 						<li class="tsd-description">
 							<aside class="tsd-sources">
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L84">packages/navigator/src/browser/navigator-diff.ts:84</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L86">packages/navigator/src/browser/navigator-diff.ts:86</a></li>
 								</ul>
 							</aside>
-							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="core.uri.html" class="tsd-signature-type">URI</a><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span></h4>
+							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> | </span><span class="tsd-signature-type">default</span><span class="tsd-signature-symbol">&gt;</span></h4>
 						</li>
 					</ul>
 				</section>
@@ -338,19 +334,19 @@
 					<a name="isdirectory" class="tsd-anchor"></a>
 					<h3><span class="tsd-flag ts-flagProtected">Protected</span> is<wbr>Directory</h3>
 					<ul class="tsd-signatures tsd-kind-method tsd-parent-kind-class tsd-is-protected">
-						<li class="tsd-signature tsd-kind-icon">is<wbr>Directory<span class="tsd-signature-symbol">(</span>uri<span class="tsd-signature-symbol">: </span><a href="core.uri.html" class="tsd-signature-type">URI</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span></li>
+						<li class="tsd-signature tsd-kind-icon">is<wbr>Directory<span class="tsd-signature-symbol">(</span>uri<span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">default</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span></li>
 					</ul>
 					<ul class="tsd-descriptions">
 						<li class="tsd-description">
 							<aside class="tsd-sources">
 								<ul>
-									<li>Defined in <a href="https://github.com/eclipse-theia/theia/blob/d96e6f1/packages/navigator/src/browser/navigator-diff.ts#L72">packages/navigator/src/browser/navigator-diff.ts:72</a></li>
+									<li>Defined in <a href="https://github.com/Mukesh23singh/theia/blob/1738469b0/packages/navigator/src/browser/navigator-diff.ts#L73">packages/navigator/src/browser/navigator-diff.ts:73</a></li>
 								</ul>
 							</aside>
 							<h4 class="tsd-parameters-title">Parameters</h4>
 							<ul class="tsd-parameters">
 								<li>
-									<h5>uri: <a href="core.uri.html" class="tsd-signature-type">URI</a></h5>
+									<h5>uri: <span class="tsd-signature-type">default</span></h5>
 								</li>
 							</ul>
 							<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span></h4>
@@ -362,31 +358,43 @@
 		<div class="col-4 col-menu menu-sticky-wrap menu-highlight">
 			<nav class="tsd-navigation primary">
 				<ul>
-					<li class="globals  ">
-						<a href="../globals.html"><em>Globals</em></a>
+					<li class=" ">
+						<a href="../modules.html">Exports</a>
 					</li>
-					<li class="current tsd-kind-external-module">
+					<li class="current tsd-kind-module">
 						<a href="../modules/navigator.html">navigator</a>
 						<ul>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/navigator.filenavigatorcommands.html">File<wbr>Navigator<wbr>Commands</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/navigator.filenavigatorfilter.html">File<wbr>Navigator<wbr>Filter</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/navigator.navigatorcontextmenu.html">Navigator<wbr>Context<wbr>Menu</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/navigator.navigatordiffcommands.html">Navigator<wbr>Diff<wbr>Commands</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/navigator.navigatorkeybindingcontexts.html">Navigator<wbr>Keybinding<wbr>Contexts</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/navigator.navigatormoretoolbargroups.html">Navigator<wbr>More<wbr>Toolbar<wbr>Groups</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/navigator.openeditornode.html">Open<wbr>Editor<wbr>Node</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/navigator.openeditorscommands.html">Open<wbr>Editors<wbr>Commands</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
+								<a href="../modules/navigator.openeditorscontextmenu.html">Open<wbr>Editors<wbr>Context<wbr>Menu</a>
+							</li>
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/navigator.workspacenode.html">Workspace<wbr>Node</a>
 							</li>
-							<li class=" tsd-kind-module tsd-parent-kind-external-module">
+							<li class=" tsd-kind-namespace tsd-parent-kind-module">
 								<a href="../modules/navigator.workspacerootnode.html">Workspace<wbr>Root<wbr>Node</a>
 							</li>
 						</ul>
@@ -395,36 +403,9 @@
 			</nav>
 			<nav class="tsd-navigation secondary menu-sticky">
 				<ul class="before-current">
-					<li class=" tsd-kind-class tsd-parent-kind-external-module">
-						<a href="navigator.filenavigatorcontribution.html" class="tsd-kind-icon">File<wbr>Navigator<wbr>Contribution</a>
-					</li>
-					<li class=" tsd-kind-class tsd-parent-kind-external-module">
-						<a href="navigator.filenavigatorfilter.html" class="tsd-kind-icon">File<wbr>Navigator<wbr>Filter</a>
-					</li>
-					<li class=" tsd-kind-class tsd-parent-kind-external-module">
-						<a href="navigator.filenavigatorfilterpredicate.html" class="tsd-kind-icon">File<wbr>Navigator<wbr>Filter<wbr>Predicate</a>
-					</li>
-					<li class=" tsd-kind-class tsd-parent-kind-external-module">
-						<a href="navigator.filenavigatormodel.html" class="tsd-kind-icon">File<wbr>Navigator<wbr>Model</a>
-					</li>
-					<li class=" tsd-kind-class tsd-parent-kind-external-module">
-						<a href="navigator.filenavigatortree.html" class="tsd-kind-icon">File<wbr>Navigator<wbr>Tree</a>
-					</li>
-					<li class=" tsd-kind-class tsd-parent-kind-external-module">
-						<a href="navigator.filenavigatorwidget.html" class="tsd-kind-icon">File<wbr>Navigator<wbr>Widget</a>
-					</li>
-					<li class=" tsd-kind-class tsd-parent-kind-external-module">
-						<a href="navigator.navigatoractivecontext.html" class="tsd-kind-icon">Navigator<wbr>Active<wbr>Context</a>
-					</li>
-					<li class=" tsd-kind-class tsd-parent-kind-external-module">
-						<a href="navigator.navigatorcontextkeyservice.html" class="tsd-kind-icon">Navigator<wbr>Context<wbr>Key<wbr>Service</a>
-					</li>
-					<li class=" tsd-kind-class tsd-parent-kind-external-module">
-						<a href="navigator.navigatordecoratorservice.html" class="tsd-kind-icon">Navigator<wbr>Decorator<wbr>Service</a>
-					</li>
 				</ul>
 				<ul class="current">
-					<li class="current tsd-kind-class tsd-parent-kind-external-module">
+					<li class="current tsd-kind-class tsd-parent-kind-module">
 						<a href="navigator.navigatordiff.html" class="tsd-kind-icon">Navigator<wbr>Diff</a>
 						<ul>
 							<li class=" tsd-kind-constructor tsd-parent-kind-class">
@@ -437,7 +418,7 @@
 								<a href="navigator.navigatordiff.html#_isfirstfileselected" class="tsd-kind-icon">_is<wbr>First<wbr>File<wbr>Selected</a>
 							</li>
 							<li class=" tsd-kind-property tsd-parent-kind-class tsd-is-protected">
-								<a href="navigator.navigatordiff.html#filesystem" class="tsd-kind-icon">file<wbr>System</a>
+								<a href="navigator.navigatordiff.html#fileservice" class="tsd-kind-icon">file<wbr>Service</a>
 							</li>
 							<li class=" tsd-kind-property tsd-parent-kind-class tsd-is-protected">
 								<a href="navigator.navigatordiff.html#notifications" class="tsd-kind-icon">notifications</a>
@@ -470,57 +451,6 @@
 					</li>
 				</ul>
 				<ul class="after-current">
-					<li class=" tsd-kind-class tsd-parent-kind-external-module">
-						<a href="navigator.navigatorlayoutversion3migration.html" class="tsd-kind-icon">Navigator<wbr>Layout<wbr>Version3<wbr>Migration</a>
-					</li>
-					<li class=" tsd-kind-interface tsd-parent-kind-external-module">
-						<a href="../interfaces/navigator.filenavigatorconfiguration.html" class="tsd-kind-icon">File<wbr>Navigator<wbr>Configuration</a>
-					</li>
-					<li class=" tsd-kind-type-alias tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#filenavigatorpreferences" class="tsd-kind-icon">File<wbr>Navigator<wbr>Preferences</a>
-					</li>
-					<li class=" tsd-kind-variable tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#class" class="tsd-kind-icon">CLASS</a>
-					</li>
-					<li class=" tsd-kind-variable tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#explorer_view_container_id" class="tsd-kind-icon">EXPLORER_<wbr>VIEW_<wbr>CONTAINER_<wbr>ID</a>
-					</li>
-					<li class=" tsd-kind-variable tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#file_navigator_id" class="tsd-kind-icon">FILE_<wbr>NAVIGATOR_<wbr>ID</a>
-					</li>
-					<li class=" tsd-kind-variable tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#file_navigator_props" class="tsd-kind-icon">FILE_<wbr>NAVIGATOR_<wbr>PROPS</a>
-					</li>
-					<li class=" tsd-kind-variable tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#filenavigatorpreferences-1" class="tsd-kind-icon">File<wbr>Navigator<wbr>Preferences</a>
-					</li>
-					<li class=" tsd-kind-variable tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#label" class="tsd-kind-icon">LABEL</a>
-					</li>
-					<li class=" tsd-kind-variable tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#navigator_context_menu" class="tsd-kind-icon">NAVIGATOR_<wbr>CONTEXT_<wbr>MENU</a>
-					</li>
-					<li class=" tsd-kind-variable tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#navigatortreedecorator" class="tsd-kind-icon">Navigator<wbr>Tree<wbr>Decorator</a>
-					</li>
-					<li class=" tsd-kind-function tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#bindfilenavigatorpreferences" class="tsd-kind-icon">bind<wbr>File<wbr>Navigator<wbr>Preferences</a>
-					</li>
-					<li class=" tsd-kind-function tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#createfilenavigatorcontainer" class="tsd-kind-icon">create<wbr>File<wbr>Navigator<wbr>Container</a>
-					</li>
-					<li class=" tsd-kind-function tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#createfilenavigatorwidget" class="tsd-kind-icon">create<wbr>File<wbr>Navigator<wbr>Widget</a>
-					</li>
-					<li class=" tsd-kind-function tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#createnavigatorpreferences" class="tsd-kind-icon">create<wbr>Navigator<wbr>Preferences</a>
-					</li>
-					<li class=" tsd-kind-object-literal tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#explorer_view_container_title_options" class="tsd-kind-icon">EXPLORER_<wbr>VIEW_<wbr>CONTAINER_<wbr>TITLE_<wbr>OPTIONS</a>
-					</li>
-					<li class=" tsd-kind-object-literal tsd-parent-kind-external-module">
-						<a href="../modules/navigator.html#filenavigatorconfigschema" class="tsd-kind-icon">File<wbr>Navigator<wbr>Config<wbr>Schema</a>
-					</li>
 				</ul>
 			</nav>
 		</div>
@@ -531,43 +461,18 @@
 		<h2>Legend</h2>
 		<div class="tsd-legend-group">
 			<ul class="tsd-legend">
-				<li class="tsd-kind-module"><span class="tsd-kind-icon">Module</span></li>
-				<li class="tsd-kind-object-literal"><span class="tsd-kind-icon">Object literal</span></li>
+				<li class="tsd-kind-namespace"><span class="tsd-kind-icon">Namespace</span></li>
 				<li class="tsd-kind-variable"><span class="tsd-kind-icon">Variable</span></li>
 				<li class="tsd-kind-function"><span class="tsd-kind-icon">Function</span></li>
 				<li class="tsd-kind-function tsd-has-type-parameter"><span class="tsd-kind-icon">Function with type parameter</span></li>
-				<li class="tsd-kind-index-signature"><span class="tsd-kind-icon">Index signature</span></li>
 				<li class="tsd-kind-type-alias"><span class="tsd-kind-icon">Type alias</span></li>
 				<li class="tsd-kind-type-alias tsd-has-type-parameter"><span class="tsd-kind-icon">Type alias with type parameter</span></li>
-			</ul>
-			<ul class="tsd-legend">
-				<li class="tsd-kind-enum"><span class="tsd-kind-icon">Enumeration</span></li>
-				<li class="tsd-kind-enum-member"><span class="tsd-kind-icon">Enumeration member</span></li>
-				<li class="tsd-kind-property tsd-parent-kind-enum"><span class="tsd-kind-icon">Property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-enum"><span class="tsd-kind-icon">Method</span></li>
-			</ul>
-			<ul class="tsd-legend">
-				<li class="tsd-kind-interface"><span class="tsd-kind-icon">Interface</span></li>
-				<li class="tsd-kind-interface tsd-has-type-parameter"><span class="tsd-kind-icon">Interface with type parameter</span></li>
-				<li class="tsd-kind-constructor tsd-parent-kind-interface"><span class="tsd-kind-icon">Constructor</span></li>
-				<li class="tsd-kind-property tsd-parent-kind-interface"><span class="tsd-kind-icon">Property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-interface"><span class="tsd-kind-icon">Method</span></li>
-				<li class="tsd-kind-index-signature tsd-parent-kind-interface"><span class="tsd-kind-icon">Index signature</span></li>
 			</ul>
 			<ul class="tsd-legend">
 				<li class="tsd-kind-class"><span class="tsd-kind-icon">Class</span></li>
 				<li class="tsd-kind-class tsd-has-type-parameter"><span class="tsd-kind-icon">Class with type parameter</span></li>
 				<li class="tsd-kind-constructor tsd-parent-kind-class"><span class="tsd-kind-icon">Constructor</span></li>
-				<li class="tsd-kind-property tsd-parent-kind-class"><span class="tsd-kind-icon">Property</span></li>
 				<li class="tsd-kind-method tsd-parent-kind-class"><span class="tsd-kind-icon">Method</span></li>
-				<li class="tsd-kind-accessor tsd-parent-kind-class"><span class="tsd-kind-icon">Accessor</span></li>
-				<li class="tsd-kind-index-signature tsd-parent-kind-class"><span class="tsd-kind-icon">Index signature</span></li>
-			</ul>
-			<ul class="tsd-legend">
-				<li class="tsd-kind-constructor tsd-parent-kind-class tsd-is-inherited"><span class="tsd-kind-icon">Inherited constructor</span></li>
-				<li class="tsd-kind-property tsd-parent-kind-class tsd-is-inherited"><span class="tsd-kind-icon">Inherited property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-class tsd-is-inherited"><span class="tsd-kind-icon">Inherited method</span></li>
-				<li class="tsd-kind-accessor tsd-parent-kind-class tsd-is-inherited"><span class="tsd-kind-icon">Inherited accessor</span></li>
 			</ul>
 			<ul class="tsd-legend">
 				<li class="tsd-kind-property tsd-parent-kind-class tsd-is-protected"><span class="tsd-kind-icon">Protected property</span></li>
@@ -575,19 +480,16 @@
 				<li class="tsd-kind-accessor tsd-parent-kind-class tsd-is-protected"><span class="tsd-kind-icon">Protected accessor</span></li>
 			</ul>
 			<ul class="tsd-legend">
-				<li class="tsd-kind-property tsd-parent-kind-class tsd-is-private"><span class="tsd-kind-icon">Private property</span></li>
-				<li class="tsd-kind-method tsd-parent-kind-class tsd-is-private"><span class="tsd-kind-icon">Private method</span></li>
-				<li class="tsd-kind-accessor tsd-parent-kind-class tsd-is-private"><span class="tsd-kind-icon">Private accessor</span></li>
+				<li class="tsd-kind-interface"><span class="tsd-kind-icon">Interface</span></li>
+				<li class="tsd-kind-interface tsd-has-type-parameter"><span class="tsd-kind-icon">Interface with type parameter</span></li>
 			</ul>
 			<ul class="tsd-legend">
-				<li class="tsd-kind-property tsd-parent-kind-class tsd-is-static"><span class="tsd-kind-icon">Static property</span></li>
-				<li class="tsd-kind-call-signature tsd-parent-kind-class tsd-is-static"><span class="tsd-kind-icon">Static method</span></li>
+				<li class="tsd-kind-enum"><span class="tsd-kind-icon">Enumeration</span></li>
 			</ul>
 		</div>
 	</div>
 </footer>
 <div class="overlay"></div>
 <script src="../assets/js/main.js"></script>
-<script>if (location.protocol == 'file:') document.write('<script src="../assets/js/search.js"><' + '/script>');</script>
 </body>
 </html>
