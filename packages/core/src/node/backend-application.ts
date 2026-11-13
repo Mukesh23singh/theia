@@ -1,42 +1,67 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
+import * as dns from 'dns';
 import * as path from 'path';
 import * as http from 'http';
 import * as https from 'https';
-import * as express from 'express';
-import * as yargs from 'yargs';
-import * as fs from 'fs-extra';
-import { performance, PerformanceObserver } from 'perf_hooks';
-import { inject, named, injectable, postConstruct } from 'inversify';
-import { ContributionProvider, MaybePromise } from '../common';
-import { CliContribution } from './cli';
-import { Deferred } from '../common/promise-util';
-import { environment } from '../common/index';
+import express from '../../shared/express/index.cjs';
+import yargs from '../../shared/yargs/index.cjs';
+import * as fs from '../../shared/fs-extra/index.cjs';
+import { inject, named, injectable, type interfaces, postConstruct } from 'inversify';
+import { ContributionProvider, LogLevel, MaybePromise, MeasurementContext, Stopwatch, environment } from '../common/index.js';
+import { CliContribution } from './cli.js';
+import { Deferred, timeoutReject } from '../common/promise-util.js';
 import { AddressInfo } from 'net';
-import { ApplicationPackage } from '@theia/application-package';
-import { ProcessUtils } from './process-utils';
+import { ProcessUtils } from './process-utils.js';
+import { ILogger } from '../common/logger.js';
+
+/**
+ * The path to the application project directory. This is the directory where the application code is located.
+ * Mostly contains the `package.json` file and the `lib` directory.
+ */
+export const BackendApplicationPath = process.env.THEIA_APP_PROJECT_PATH || process.cwd();
+
+/**
+ * Private injection token for the backend's root Inversify {@link Container}.
+ */
+export const RootContainer = Symbol('RootContainer');
+
+export type DnsResultOrder = 'ipv4first' | 'verbatim' | 'nodeDefault';
 
 const APP_PROJECT_PATH = 'app-project-path';
 
 const TIMER_WARNING_THRESHOLD = 50;
 
+const SHUTDOWN_TIMEOUT_MS = 5000;
+
 const DEFAULT_PORT = environment.electron.is() ? 0 : 3000;
 const DEFAULT_HOST = 'localhost';
 const DEFAULT_SSL = false;
+const DEFAULT_DNS_DEFAULT_RESULT_ORDER: DnsResultOrder = 'ipv4first';
+
+/**
+ * Shared registry for Express middleware that must run before static file handlers.
+ * Contributions push handlers during `initialize()`, and `BackendApplication`
+ * applies them at the start of `configure()`, before gzipped handlers and `express.static()`.
+ */
+@injectable()
+export class EarlyExpressMiddleware {
+    readonly handlers: express.Handler[] = [];
+}
 
 export const BackendApplicationServer = Symbol('BackendApplicationServer');
 /**
@@ -48,7 +73,12 @@ export interface BackendApplicationServer extends BackendApplicationContribution
 
 export const BackendApplicationContribution = Symbol('BackendApplicationContribution');
 /**
- * Contribution for hooking into the backend lifecycle.
+ * Contribution for hooking into the backend lifecycle:
+ *
+ * - `initialize()`
+ * - `configure(expressApp)`
+ * - `onStart(httpServer)`
+ * - `onStop()`
  */
 export interface BackendApplicationContribution {
     /**
@@ -90,12 +120,23 @@ export interface BackendApplicationContribution {
     onStart?(server: http.Server | https.Server): MaybePromise<void>;
 
     /**
-     * Called when the backend application shuts down. Contributions must perform only synchronous operations.
-     * Any kind of additional asynchronous work queued in the event loop will be ignored and abandoned.
+     * Called when the backend application shuts down.
+     *
+     * When shutdown is initiated via `SIGINT`/`SIGTERM`, contributions are dispatched
+     * in parallel and any returned promise is awaited up to `SHUTDOWN_TIMEOUT_MS`
+     * milliseconds while injected services from the root container are still
+     * resolvable.
+     *
+     * On synchronous-exit fallback paths (uncaught exceptions, server bind failures,
+     * or normal process exit), the hook is invoked synchronously and any returned
+     * promise is discarded. Implementations should be resilient to either path.
+     *
+     * Contributions must be independent of one another during stop because they are
+     * dispatched in parallel.
      *
      * @param app the express application.
      */
-    onStop?(app?: express.Application): void;
+    onStop?(app?: express.Application): MaybePromise<void>;
 }
 
 @injectable()
@@ -103,10 +144,12 @@ export class BackendApplicationCliContribution implements CliContribution {
 
     port: number;
     hostname: string | undefined;
+    dnsDefaultResultOrder: DnsResultOrder = DEFAULT_DNS_DEFAULT_RESULT_ORDER;
     ssl: boolean | undefined;
     cert: string | undefined;
     certkey: string | undefined;
-    projectPath: string;
+    /** @deprecated Use the `BackendApplicationPath` constant or `process.env.THEIA_APP_PROJECT_PATH` environment variable instead */
+    projectPath = BackendApplicationPath;
 
     configure(conf: yargs.Argv): void {
         conf.option('port', { alias: 'p', description: 'The port the backend server listens on.', type: 'number', default: DEFAULT_PORT });
@@ -114,7 +157,13 @@ export class BackendApplicationCliContribution implements CliContribution {
         conf.option('ssl', { description: 'Use SSL (HTTPS), cert and certkey must also be set', type: 'boolean', default: DEFAULT_SSL });
         conf.option('cert', { description: 'Path to SSL certificate.', type: 'string' });
         conf.option('certkey', { description: 'Path to SSL certificate key.', type: 'string' });
-        conf.option(APP_PROJECT_PATH, { description: 'Sets the application project directory', default: this.appProjectPath() });
+        conf.option(APP_PROJECT_PATH, { description: 'Sets the application project directory', deprecated: true });
+        conf.option('dnsDefaultResultOrder', {
+            type: 'string',
+            description: 'Configure Node\'s DNS resolver default behavior, see https://nodejs.org/docs/latest-v24.x/api/dns.html#dnssetdefaultresultorderorder',
+            choices: ['ipv4first', 'verbatim', 'nodeDefault'],
+            default: DEFAULT_DNS_DEFAULT_RESULT_ORDER
+        });
     }
 
     setArguments(args: yargs.Arguments): void {
@@ -123,19 +172,8 @@ export class BackendApplicationCliContribution implements CliContribution {
         this.ssl = args.ssl as boolean;
         this.cert = args.cert as string;
         this.certkey = args.certkey as string;
-        this.projectPath = args[APP_PROJECT_PATH] as string;
+        this.dnsDefaultResultOrder = args.dnsDefaultResultOrder as DnsResultOrder;
     }
-
-    protected appProjectPath(): string {
-        if (environment.electron.is()) {
-            if (process.env.THEIA_APP_PROJECT_PATH) {
-                return process.env.THEIA_APP_PROJECT_PATH;
-            }
-            throw new Error('The \'THEIA_APP_PROJECT_PATH\' environment variable must be set when running in electron.');
-        }
-        return process.cwd();
-    }
-
 }
 
 /**
@@ -146,80 +184,84 @@ export class BackendApplication {
 
     protected readonly app: express.Application = express();
 
-    @inject(ApplicationPackage)
-    protected readonly applicationPackage: ApplicationPackage;
+    @inject(EarlyExpressMiddleware)
+    protected readonly earlyMiddleware: EarlyExpressMiddleware;
 
     @inject(ProcessUtils)
     protected readonly processUtils: ProcessUtils;
 
-    private readonly _performanceObserver: PerformanceObserver;
+    @inject(Stopwatch)
+    protected readonly stopwatch: Stopwatch;
+
+    @inject(ILogger) @named('core:BackendApplication')
+    protected readonly logger: ILogger;
+
+    @inject(RootContainer)
+    protected readonly rootContainer: interfaces.Container;
+
+    private _configured: Promise<void>;
+
+    private stoppedContributions = false;
+    private shuttingDown = false;
+    private terminatedChildProcesses = false;
+
+    private settlementContext?: MeasurementContext<BackendApplicationContribution>;
 
     constructor(
         @inject(ContributionProvider) @named(BackendApplicationContribution)
         protected readonly contributionsProvider: ContributionProvider<BackendApplicationContribution>,
-        @inject(BackendApplicationCliContribution) protected readonly cliParams: BackendApplicationCliContribution
-    ) {
+        @inject(BackendApplicationCliContribution) protected readonly cliParams: BackendApplicationCliContribution) {
         process.on('uncaughtException', error => {
-            if (error) {
-                console.error('Uncaught Exception: ', error.toString());
-                if (error.stack) {
-                    console.error(error.stack);
-                }
-            }
+            this.handleUncaughtError(error);
         });
 
         // Workaround for Electron not installing a handler to ignore SIGPIPE error
         // (https://github.com/electron/electron/issues/13254)
         process.on('SIGPIPE', () => {
-            console.error(new Error('Unexpected SIGPIPE'));
+            this.logger.error(new Error('Unexpected SIGPIPE'));
         });
-        /**
-         * Kill the current process tree on exit.
-         */
-        function signalHandler(signal: NodeJS.Signals): never {
-            process.exit(1);
-        }
+
         // Handles normal process termination.
         process.on('exit', () => this.onStop());
-        // Handles `Ctrl+C`.
-        process.on('SIGINT', signalHandler);
-        // Handles `kill pid`.
-        process.on('SIGTERM', signalHandler);
 
-        // Create performance observer
-        this._performanceObserver = new PerformanceObserver(list => {
-            for (const item of list.getEntries()) {
-                const contribution = `Backend ${item.name}`;
-                if (item.duration > TIMER_WARNING_THRESHOLD) {
-                    console.warn(`${contribution} is slow, took: ${item.duration.toFixed(1)} ms`);
-                } else {
-                    console.debug(`${contribution} took: ${item.duration.toFixed(1)} ms`);
-                }
-            }
-        });
-        this._performanceObserver.observe({
-            entryTypes: ['measure']
-        });
-
-        this.initialize();
+        // Handles `Ctrl+C` and `kill pid`. Delegates to gracefulShutdown so that
+        // root-scoped singletons get their @preDestroy hooks invoked before exit.
+        const onSignal = () => { this.gracefulShutdown().catch(err => this.logger.error(err)); };
+        process.on('SIGINT', onSignal);
+        process.on('SIGTERM', onSignal);
     }
 
     protected async initialize(): Promise<void> {
-        for (const contribution of this.contributionsProvider.getContributions()) {
+        await Promise.all(this.contributionsProvider.getContributions().map(async contribution => {
             if (contribution.initialize) {
                 try {
-                    await this.measure(contribution.constructor.name + '.initialize',
-                        () => contribution.initialize!()
-                    );
+                    await this.measureContribution(contribution, 'initialize',
+                        () => contribution.initialize!());
                 } catch (error) {
-                    console.error('Could not initialize contribution', error);
+                    this.logger.error('Could not initialize contribution', error);
                 }
             }
-        }
+        }));
+    }
+
+    get configured(): Promise<void> {
+        return this._configured;
     }
 
     @postConstruct()
+    protected init(): void {
+        this.settlementContext = new MeasurementContext(this.stopwatch, 'Backend', TIMER_WARNING_THRESHOLD);
+        this._configured = this.configure();
+    }
+
     protected async configure(): Promise<void> {
+        await this.initialize();
+
+        // Apply early middleware before static file handlers.
+        for (const handler of this.earlyMiddleware.handlers) {
+            this.app.use(handler);
+        }
+
         this.app.get('*.js', this.serveGzipped.bind(this, 'text/javascript'));
         this.app.get('*.js.map', this.serveGzipped.bind(this, 'application/json'));
         this.app.get('*.css', this.serveGzipped.bind(this, 'text/css'));
@@ -227,27 +269,37 @@ export class BackendApplication {
         this.app.get('*.gif', this.serveGzipped.bind(this, 'image/gif'));
         this.app.get('*.png', this.serveGzipped.bind(this, 'image/png'));
         this.app.get('*.svg', this.serveGzipped.bind(this, 'image/svg+xml'));
+        this.app.get('*.eot', this.serveGzipped.bind(this, 'application/vnd.ms-fontobject'));
+        this.app.get('*.ttf', this.serveGzipped.bind(this, 'font/ttf'));
+        this.app.get('*.woff', this.serveGzipped.bind(this, 'font/woff'));
+        this.app.get('*.woff2', this.serveGzipped.bind(this, 'font/woff2'));
 
-        for (const contribution of this.contributionsProvider.getContributions()) {
+        await Promise.all(this.contributionsProvider.getContributions().map(async contribution => {
             if (contribution.configure) {
                 try {
-                    await this.measure(contribution.constructor.name + '.configure',
-                        () => contribution.configure!(this.app)
-                    );
+                    await this.measureContribution(contribution, 'configure',
+                        () => contribution.configure!(this.app));
                 } catch (error) {
-                    console.error('Could not configure contribution', error);
+                    this.logger.error('Could not configure contribution', error);
                 }
             }
-        }
+        }));
+        this.logger.info('configured all backend app contributions');
     }
 
     use(...handlers: express.Handler[]): void {
         this.app.use(...handlers);
     }
 
-    async start(aPort?: number, aHostname?: string): Promise<http.Server | https.Server> {
-        const hostname = aHostname !== undefined ? aHostname : this.cliParams.hostname;
-        const port = aPort !== undefined ? aPort : this.cliParams.port;
+    async start(port?: number, hostname?: string): Promise<http.Server | https.Server> {
+        const startupMeasurement = this.stopwatch.start('backend-startup');
+
+        hostname ??= this.cliParams.hostname;
+        port ??= this.cliParams.port;
+
+        if (this.cliParams.dnsDefaultResultOrder !== 'nodeDefault') {
+            dns.setDefaultResultOrder(this.cliParams.dnsDefaultResultOrder);
+        }
 
         const deferred = new Deferred<http.Server | https.Server>();
         let server: http.Server | https.Server;
@@ -267,14 +319,14 @@ export class BackendApplication {
             try {
                 key = await fs.readFile(this.cliParams.certkey as string);
             } catch (err) {
-                console.error("Can't read certificate key");
+                this.logger.error("Can't read certificate key");
                 throw err;
             }
 
             try {
                 cert = await fs.readFile(this.cliParams.cert as string);
             } catch (err) {
-                console.error("Can't read certificate");
+                this.logger.error("Can't read certificate");
                 throw err;
             }
             server = https.createServer({ key, cert }, this.app);
@@ -290,8 +342,10 @@ export class BackendApplication {
         });
 
         server.listen(port, hostname, () => {
-            const scheme = this.cliParams.ssl ? 'https' : 'http';
-            console.info(`Theia app listening on ${scheme}://${hostname || 'localhost'}:${(server.address() as AddressInfo).port}.`);
+            // address should be defined at this point
+            const address = server.address()!;
+            const url = typeof address === 'string' ? address : this.getHttpUrl(address, this.cliParams.ssl);
+            this.logger.info(`Theia app listening on ${url}.`);
             deferred.resolve(server);
         });
 
@@ -301,38 +355,131 @@ export class BackendApplication {
         for (const contribution of this.contributionsProvider.getContributions()) {
             if (contribution.onStart) {
                 try {
-                    await this.measure(contribution.constructor.name + '.onStart',
-                        () => contribution.onStart!(server)
-                    );
+                    await this.measureContribution(contribution, 'onStart',
+                        () => contribution.onStart!(server));
                 } catch (error) {
-                    console.error('Could not start contribution', error);
+                    this.logger.error('Could not start contribution', error);
                 }
             }
         }
-        return deferred.promise;
+        await deferred.promise;
+        startupMeasurement.info('Backend application startup sequence completed (async work may still be pending)');
+        this.settlementContext?.armAllSettled();
+        return server;
+    }
+
+    protected getHttpUrl({ address, port, family }: AddressInfo, ssl?: boolean): string {
+        const scheme = ssl ? 'https' : 'http';
+        return family.toLowerCase() === 'ipv6'
+            ? `${scheme}://[${address}]:${port}`
+            : `${scheme}://${address}:${port}`;
+    }
+
+    /**
+     * Performs an asynchronous shutdown of the backend in two phases:
+     *
+     * 1. Contributions' {@link BackendApplicationContribution.onStop onStop} hooks are
+     *    dispatched in parallel and awaited so that they can still resolve services
+     *    from the root Inversify container while it is bound.
+     * 2. All services in the root container are unbound, running their `@preDestroy`
+     *    hooks.
+     *
+     * Each phase has its own {@link SHUTDOWN_TIMEOUT_MS} budget to avoid hanging on a
+     * misbehaving hook. Late-resolving promises from a timed-out phase may still
+     * settle in the background and could log noisily or interact with a partly
+     * unbound container; this is accepted because the process is exiting.
+     *
+     * Child processes that are still running after both phases are then killed, see
+     * {@link ProcessUtils.terminateChildProcessTrees}, while the event loop is still
+     * available, so that the `process.on('exit')` handler does not have to do it
+     * synchronously.
+     *
+     * Idempotent: a second invocation is a no-op. Exits the process with code 1, so
+     * the `process.on('exit')` handler runs; it does not re-invoke contribution
+     * `onStop()` hooks that this method already dispatched, nor the termination of
+     * child processes.
+     */
+    protected async gracefulShutdown(): Promise<void> {
+        if (this.shuttingDown) {
+            return;
+        }
+        this.shuttingDown = true;
+
+        try {
+            await Promise.race([
+                this.stopContributions(),
+                timeoutReject<void>(SHUTDOWN_TIMEOUT_MS, `Stopping backend contributions timed out after ${SHUTDOWN_TIMEOUT_MS}ms`)
+            ]);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.logger.warn(`Backend contributions cleanup failed: ${message}`);
+        }
+
+        try {
+            await Promise.race([
+                this.rootContainer.unbindAllAsync(),
+                timeoutReject<void>(SHUTDOWN_TIMEOUT_MS, `Container unbind timed out after ${SHUTDOWN_TIMEOUT_MS}ms`)
+            ]);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.logger.warn(`Backend root container cleanup failed: ${message}`);
+        }
+
+        try {
+            await Promise.race([
+                this.processUtils.terminateChildProcessTrees(process.pid),
+                timeoutReject<void>(SHUTDOWN_TIMEOUT_MS, `Terminating child processes timed out after ${SHUTDOWN_TIMEOUT_MS}ms`)
+            ]);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.logger.warn(`Terminating child processes failed: ${message}`);
+        }
+        // Even if it failed: the synchronous fallback in `onStop` would fail the same way, only slower.
+        this.terminatedChildProcesses = true;
+
+        process.exit(1);
+    }
+
+    protected async stopContributions(): Promise<void> {
+        if (this.stoppedContributions) {
+            return;
+        }
+        this.stoppedContributions = true;
+        this.logger.info('>>> Stopping backend contributions...');
+        // The `async` wrapper converts a synchronous throw inside a non-async
+        // contribution's `onStop` into a rejected promise so the per-contribution
+        // try/catch can handle it; otherwise `Promise.all` would abort.
+        await Promise.all(this.contributionsProvider.getContributions().map(async contrib => {
+            if (contrib.onStop) {
+                try {
+                    await contrib.onStop(this.app);
+                } catch (error) {
+                    this.logger.error('Could not stop contribution', error);
+                }
+            }
+        }));
+        this.logger.info('<<< All backend contributions have been stopped.');
     }
 
     protected onStop(): void {
-        console.info('>>> Stopping backend contributions...');
-        for (const contrib of this.contributionsProvider.getContributions()) {
-            if (contrib.onStop) {
-                try {
-                    contrib.onStop(this.app);
-                } catch (error) {
-                    console.error('Could not stop contribution', error);
-                }
-            }
+        // Deliberate fire-and-forget of an async `stopContributions`()` call.
+        // It invokes each contribution's `onStop` synchronously up to its
+        // first `await`, so any synchronous cleanup runs before
+        // `terminateProcessTree`. Any returned promises are abandoned because
+        // the `'exit'` event does not yield back to the event loop.
+        this.stopContributions();
+        // Fallback for an abrupt exit, e.g. `process.exit()`, that bypasses `gracefulShutdown`:
+        // listing the children blocks the event loop and can be slow, in particular on Windows.
+        if (!this.terminatedChildProcesses) {
+            this.processUtils.terminateProcessTree(process.pid);
         }
-        console.info('<<< All backend contributions have been stopped.');
-        this._performanceObserver.disconnect();
-        this.processUtils.terminateProcessTree(process.pid);
     }
 
     protected async serveGzipped(contentType: string, req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
         const acceptedEncodings = req.acceptsEncodings();
 
         const gzUrl = `${req.url}.gz`;
-        const gzPath = path.join(this.applicationPackage.projectPath, 'lib', gzUrl);
+        const gzPath = path.join(BackendApplicationPath, 'lib', 'frontend', gzUrl);
         if (acceptedEncodings.indexOf('gzip') === -1 || !(await fs.pathExists(gzPath))) {
             next();
             return;
@@ -346,16 +493,27 @@ export class BackendApplication {
         next();
     }
 
-    protected async measure<T>(name: string, fn: () => MaybePromise<T>): Promise<T> {
-        const startMark = name + '-start';
-        const endMark = name + '-end';
-        performance.mark(startMark);
-        const result = await fn();
-        performance.mark(endMark);
-        performance.measure(name, startMark, endMark);
-        // Observer should immediately log the measurement, so we can clear it
-        performance.clearMarks(name);
+    protected async measureContribution<T>(contribution: BackendApplicationContribution, hook: string, fn: () => MaybePromise<T>): Promise<T> {
+        let innerResult: MaybePromise<T>;
+        this.settlementContext?.ensureEntry(contribution);
+        const result = await this.measure(contribution.constructor.name + '.' + hook,
+            () => (innerResult = fn())
+        );
+        this.settlementContext?.trackSettlement(contribution, innerResult!);
         return result;
+    }
+
+    protected async measure<T>(name: string, fn: () => MaybePromise<T>): Promise<T> {
+        return this.stopwatch.startAsync(name, `Backend ${name}`, fn, { thresholdMillis: TIMER_WARNING_THRESHOLD, defaultLogLevel: LogLevel.DEBUG });
+    }
+
+    protected handleUncaughtError(error: Error): void {
+        if (error) {
+            this.logger.error('Uncaught Exception: ', error.toString());
+            if (error.stack) {
+                this.logger.error(error.stack);
+            }
+        }
     }
 
 }

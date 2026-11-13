@@ -1,30 +1,31 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable, inject, named } from 'inversify';
+import { injectable, inject, named, postConstruct } from 'inversify';
 import { TextDocumentContentChangeEvent } from 'vscode-languageserver-protocol';
-import URI from '../common/uri';
-import { ContributionProvider } from './contribution-provider';
-import { Event, Emitter } from './event';
-import { Disposable } from './disposable';
-import { MaybePromise } from './types';
-import { CancellationToken } from './cancellation';
-import { ApplicationError } from './application-error';
-import { ReadableStream, Readable } from './stream';
-import { SyncReferenceCollection, Reference } from './reference';
+import URI from '../common/uri.js';
+import { ContributionProvider } from './contribution-provider.js';
+import { Event, Emitter } from './event.js';
+import { Disposable } from './disposable.js';
+import { MaybePromise } from './types.js';
+import { CancellationToken } from './cancellation.js';
+import { ApplicationError } from './application-error.js';
+import { ReadableStream, Readable } from './stream.js';
+import { SyncReferenceCollection, Reference } from './reference.js';
+import { MarkdownString } from './markdown-rendering/index.js';
 
 export interface ResourceVersion {
 }
@@ -55,6 +56,14 @@ export interface Resource extends Disposable {
      * Undefined if a resource did not read content yet.
      */
     readonly encoding?: string | undefined;
+
+    readonly onDidChangeReadOnly?: Event<boolean | MarkdownString>;
+
+    readonly readOnly?: boolean | MarkdownString;
+
+    readonly initiallyDirty?: boolean;
+    /** If false, the application should not attempt to auto-save this resource. */
+    readonly autosaveable?: boolean;
     /**
      * Reads latest content of this resource.
      *
@@ -172,6 +181,11 @@ export namespace ResourceError {
 export const ResourceResolver = Symbol('ResourceResolver');
 export interface ResourceResolver {
     /**
+     * Resolvers will be ordered by descending priority.
+     * Default: 0
+     */
+    priority?: number;
+    /**
      * Reject if a resource cannot be provided.
      */
     resolve(uri: URI): MaybePromise<Resource>;
@@ -187,6 +201,11 @@ export class DefaultResourceProvider {
         @inject(ContributionProvider) @named(ResourceResolver)
         protected readonly resolversProvider: ContributionProvider<ResourceResolver>
     ) { }
+
+    @postConstruct()
+    init(): void {
+        this.resolversProvider.getContributions().sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+    }
 
     /**
      * Reject if a resource cannot be provided.
@@ -206,7 +225,7 @@ export class DefaultResourceProvider {
 }
 
 export class MutableResource implements Resource {
-    private contents: string = '';
+    protected contents: string = '';
 
     constructor(readonly uri: URI) {
     }
@@ -271,7 +290,7 @@ export class InMemoryResources implements ResourceResolver {
         const resourceUri = uri.toString();
         const resource = this.resources.get(resourceUri);
         if (!resource) {
-            throw new Error(`Cannot update non-existed in-memory resource '${resourceUri}'`);
+            throw new Error(`Cannot update non-existent in-memory resource '${resourceUri}'`);
         }
         resource.saveContents(contents);
         return resource;
@@ -292,12 +311,18 @@ export class InMemoryResources implements ResourceResolver {
 }
 
 export const MEMORY_TEXT = 'mem-txt';
+export const MEMORY_TEXT_READONLY = 'mem-txt-readonly';
 
 /**
  * Resource implementation for 'mem-txt' URI scheme where content is saved in URI query.
  */
 export class InMemoryTextResource implements Resource {
+
     constructor(readonly uri: URI) { }
+
+    get readOnly(): boolean {
+        return this.uri.scheme === MEMORY_TEXT_READONLY;
+    }
 
     async readContents(options?: { encoding?: string | undefined; } | undefined): Promise<string> {
         return this.uri.query;
@@ -311,9 +336,116 @@ export class InMemoryTextResource implements Resource {
 @injectable()
 export class InMemoryTextResourceResolver implements ResourceResolver {
     resolve(uri: URI): MaybePromise<Resource> {
-        if (uri.scheme !== MEMORY_TEXT) {
-            throw new Error(`Expected a URI with ${MEMORY_TEXT} scheme. Was: ${uri}.`);
+        if (uri.scheme !== MEMORY_TEXT && uri.scheme !== MEMORY_TEXT_READONLY) {
+            throw new Error(`Expected a URI with ${MEMORY_TEXT} or ${MEMORY_TEXT_READONLY} scheme. Was: ${uri}.`);
         }
         return new InMemoryTextResource(uri);
     }
+}
+
+export const UNTITLED_SCHEME = 'untitled';
+
+let untitledResourceSequenceIndex = 0;
+
+@injectable()
+export class UntitledResourceResolver implements ResourceResolver {
+
+    protected readonly resources = new Map<string, UntitledResource>();
+
+    has(uri: URI): boolean {
+        if (uri.scheme !== UNTITLED_SCHEME) {
+            throw new Error('The given uri is not untitled file uri: ' + uri);
+        } else {
+            return this.resources.has(uri.toString());
+        }
+    }
+
+    async resolve(uri: URI): Promise<UntitledResource> {
+        if (uri.scheme !== UNTITLED_SCHEME) {
+            throw new Error('The given uri is not untitled file uri: ' + uri);
+        } else {
+            const untitledResource = this.resources.get(uri.toString());
+            if (!untitledResource) {
+                return this.createUntitledResource('', '', uri);
+            } else {
+                return untitledResource;
+            }
+        }
+    }
+
+    async createUntitledResource(content?: string, extension?: string, uri?: URI, encoding?: string): Promise<UntitledResource> {
+        if (!uri) {
+            uri = this.createUntitledURI(extension);
+        }
+        return new UntitledResource(this.resources, uri, content, encoding);
+    }
+
+    createUntitledURI(extension?: string, parent?: URI): URI {
+        let counter = 1; // vscode starts at 1
+        let untitledUri;
+        do {
+            const name = `Untitled-${counter}${extension ?? ''}`;
+            if (parent) {
+                untitledUri = parent.resolve(name).withScheme(UNTITLED_SCHEME);
+            }
+            untitledUri = new URI().resolve(name).withScheme(UNTITLED_SCHEME);
+            counter++;
+        } while (this.has(untitledUri));
+        return untitledUri;
+    }
+}
+
+export class UntitledResource implements Resource {
+
+    protected readonly onDidChangeContentsEmitter = new Emitter<void>();
+    readonly initiallyDirty: boolean;
+    readonly autosaveable = false;
+    readonly encoding: string | undefined;
+    get onDidChangeContents(): Event<void> {
+        return this.onDidChangeContentsEmitter.event;
+    }
+
+    constructor(private resources: Map<string, UntitledResource>, public uri: URI, private content?: string, encoding?: string) {
+        this.initiallyDirty = (content !== undefined && content.length > 0);
+        this.resources.set(this.uri.toString(), this);
+        this.encoding = encoding;
+    }
+
+    dispose(): void {
+        this.resources.delete(this.uri.toString());
+        this.onDidChangeContentsEmitter.dispose();
+    }
+
+    async readContents(options?: { encoding?: string | undefined; } | undefined): Promise<string> {
+        if (this.content) {
+            return this.content;
+        } else {
+            return '';
+        }
+    }
+
+    async saveContents(content: string, options?: { encoding?: string, overwriteEncoding?: boolean }): Promise<void> {
+        // This function must exist to ensure readOnly is false for the Monaco editor.
+        // However it should not be called because saving 'untitled' is always processed as 'Save As'.
+        throw Error('Untitled resources cannot be saved.');
+    }
+
+    protected fireDidChangeContents(): void {
+        this.onDidChangeContentsEmitter.fire(undefined);
+    }
+
+    get version(): ResourceVersion | undefined {
+        return undefined;
+    }
+}
+
+/**
+ * @deprecated Since 1.27.0. Please use `UntitledResourceResolver.createUntitledURI` instead.
+ */
+export function createUntitledURI(extension?: string, parent?: URI): URI {
+    const name = `Untitled-${untitledResourceSequenceIndex++}${extension ?? ''}`;
+    if (parent) {
+        return parent.resolve(name).withScheme(UNTITLED_SCHEME);
+    }
+    return new URI().resolve(name).withScheme(UNTITLED_SCHEME);
 }

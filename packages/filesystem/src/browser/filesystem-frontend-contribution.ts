@@ -1,46 +1,56 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable, inject } from '@theia/core/shared/inversify';
-import URI from '@theia/core/lib/common/uri';
-import { environment } from '@theia/core/shared/@theia/application-package/lib/environment';
-import { MaybePromise, SelectionService, isCancelled } from '@theia/core/lib/common';
-import { Command, CommandContribution, CommandRegistry } from '@theia/core/lib/common/command';
+import { CorePreferences, nls, ILogger } from '@theia/core';
 import {
-    FrontendApplicationContribution, ApplicationShell,
+    ApplicationShell,
+    CommonCommands,
+    ExpandableTreeNode,
+    FrontendApplication,
+    FrontendApplicationContribution,
     NavigatableWidget, NavigatableWidgetOptions,
-    Saveable, WidgetManager, StatefulWidget, FrontendApplication, ExpandableTreeNode, waitForClosed,
-    CorePreferences
+    OpenerService,
+    Saveable,
+    StatefulWidget,
+    WidgetManager,
+    open
 } from '@theia/core/lib/browser';
 import { MimeService } from '@theia/core/lib/browser/mime-service';
 import { TreeWidgetSelection } from '@theia/core/lib/browser/tree/tree-widget-selection';
-import { FileSystemPreferences } from './filesystem-preferences';
-import { FileSelection } from './file-selection';
-import { FileUploadService, FileUploadResult } from './file-upload-service';
-import { FileService, UserFileOperationEvent } from './file-service';
-import { FileChangesEvent, FileChangeType, FileOperation } from '../common/files';
+import { Emitter, MaybePromise, SelectionService, isCancelled } from '@theia/core/lib/common';
+import { Command, CommandContribution, CommandRegistry } from '@theia/core/lib/common/command';
 import { Deferred } from '@theia/core/lib/common/promise-util';
+import URI from '@theia/core/lib/common/uri';
+import { environment } from '@theia/core/shared/@theia/application-package/lib/environment';
+import { inject, injectable, named } from '@theia/core/shared/inversify';
+import { UserWorkingDirectoryProvider } from '@theia/core/lib/browser/user-working-directory-provider';
+import { FileChangeType, FileChangesEvent, FileOperation } from '../common/files.js';
+import { FileDialogService, SaveFileDialogProps } from './file-dialog/index.js';
+import { FileSelection } from './file-selection.js';
+import { FileService, UserFileOperationEvent } from './file-service.js';
+import { FileSystemPreferences } from '../common/filesystem-preferences.js';
+import { FileUploadService } from '../common/upload/file-upload.js';
 
 export namespace FileSystemCommands {
 
-    export const UPLOAD: Command = {
+    export const UPLOAD = Command.toLocalizedCommand({
         id: 'file.upload',
-        category: 'File',
+        category: CommonCommands.FILE_CATEGORY,
         label: 'Upload Files...'
-    };
+    }, 'theia/filesystem/uploadFiles', CommonCommands.FILE_CATEGORY_KEY);
 
 }
 
@@ -76,6 +86,21 @@ export class FileSystemFrontendContribution implements FrontendApplicationContri
     @inject(FileService)
     protected readonly fileService: FileService;
 
+    @inject(FileDialogService)
+    protected readonly fileDialogService: FileDialogService;
+
+    @inject(OpenerService)
+    protected readonly openerService: OpenerService;
+
+    @inject(UserWorkingDirectoryProvider)
+    protected readonly workingDirectory: UserWorkingDirectoryProvider;
+
+    @inject(ILogger) @named('filesystem:FileSystemFrontendContribution')
+    protected readonly logger: ILogger;
+
+    protected onDidChangeEditorFileEmitter = new Emitter<{ editor: NavigatableWidget, type: FileChangeType }>();
+    readonly onDidChangeEditorFile = this.onDidChangeEditorFileEmitter.event;
+
     protected readonly userOperations = new Map<number, Deferred<void>>();
     protected queueUserOperation(event: UserFileOperationEvent): void {
         const moveOperation = new Deferred<void>();
@@ -104,6 +129,9 @@ export class FileSystemFrontendContribution implements FrontendApplicationContri
             await this.runEach((uri, widget) => this.applyMove(uri, widget, event));
             this.resolveUserOperation(event);
         })()));
+        this.uploadService.onDidUpload(files => {
+            this.doHandleUpload(files);
+        });
     }
 
     onStart?(app: FrontendApplication): MaybePromise<void> {
@@ -116,31 +144,84 @@ export class FileSystemFrontendContribution implements FrontendApplicationContri
     }
 
     registerCommands(commands: CommandRegistry): void {
-        commands.registerCommand(FileSystemCommands.UPLOAD, new FileSelection.CommandHandler(this.selectionService, {
-            multi: false,
-            isEnabled: selection => this.canUpload(selection),
-            isVisible: selection => this.canUpload(selection),
-            execute: selection => this.upload(selection)
-        }));
+        commands.registerCommand(FileSystemCommands.UPLOAD, {
+            isEnabled: (...args: unknown[]) => {
+                const selection = this.getSelection(...args);
+                return !!selection && !environment.electron.is();
+            },
+            isVisible: () => !environment.electron.is(),
+            execute: (...args: unknown[]) => {
+                const selection = this.getSelection(...args);
+                if (selection) {
+                    return this.upload(selection);
+                }
+            }
+        });
+        commands.registerCommand(CommonCommands.NEW_FILE, {
+            execute: (...args: unknown[]) => {
+                this.handleNewFileCommand(args);
+            }
+        });
     }
 
-    protected canUpload({ fileStat }: FileSelection): boolean {
-        return !environment.electron.is() && fileStat.isDirectory;
-    }
-
-    protected async upload(selection: FileSelection): Promise<FileUploadResult | undefined> {
+    protected async upload(selection: FileSelection): Promise<FileUploadService.UploadResult | undefined> {
         try {
             const source = TreeWidgetSelection.getSource(this.selectionService.selection);
-            const fileUploadResult = await this.uploadService.upload(selection.fileStat.resource);
+            const fileUploadResult = await this.uploadService.upload(selection.fileStat.isDirectory ? selection.fileStat.resource : selection.fileStat.resource.parent);
             if (ExpandableTreeNode.is(selection) && source) {
                 await source.model.expandNode(selection);
             }
             return fileUploadResult;
         } catch (e) {
             if (!isCancelled(e)) {
-                console.error(e);
+                this.logger.error(e);
             }
         }
+    }
+
+    protected async doHandleUpload(uploads: string[]): Promise<void> {
+        // Only handle single file uploads
+        if (uploads.length === 1) {
+            const uri = new URI(uploads[0]);
+            // Close all existing widgets for this URI
+            const widgets = this.shell.widgets.filter(widget => NavigatableWidget.getUri(widget)?.isEqual(uri));
+            await this.shell.closeMany(widgets, {
+                // Don't ask to save the file if it's dirty
+                // The user has already confirmed the file overwrite
+                save: false
+            });
+            // Open a new editor for this URI
+            open(this.openerService, uri);
+        }
+    }
+
+    /**
+     * Opens a save dialog to create a new file.
+     *
+     * @param args The first argument is the name of the new file. The second argument is the parent directory URI.
+     */
+    protected async handleNewFileCommand(args: unknown[]): Promise<void> {
+        const fileName = (args !== undefined && typeof args[0] === 'string') ? args[0] : undefined;
+        const title = nls.localizeByDefault('Create File');
+        const props: SaveFileDialogProps = { title, saveLabel: title, inputValue: fileName };
+
+        const dirUri = (args[1] instanceof URI) ? args[1] : await this.workingDirectory.getUserWorkingDir();
+        const directory = await this.fileService.resolve(dirUri);
+
+        const filePath = await this.fileDialogService.showSaveDialog(props, directory.isDirectory ? directory : undefined);
+        if (filePath) {
+            const file = await this.fileService.createFile(filePath);
+            open(this.openerService, file.resource);
+        }
+    }
+
+    protected getSelection(...args: unknown[]): FileSelection | undefined {
+        const { selection } = this.selectionService;
+        return this.toSelection(args[0]) ?? (Array.isArray(selection) ? selection.find(FileSelection.is) : this.toSelection(selection));
+    };
+
+    protected toSelection(arg: unknown): FileSelection | undefined {
+        return FileSelection.is(arg) ? arg : undefined;
     }
 
     protected pendingOperation = Promise.resolve();
@@ -149,7 +230,7 @@ export class FileSystemFrontendContribution implements FrontendApplicationContri
             try {
                 await operation();
             } catch (e) {
-                console.error(e);
+                this.logger.error(e);
             }
         });
     }
@@ -263,29 +344,25 @@ export class FileSystemFrontendContribution implements FrontendApplicationContri
         return targetUri && widget.createMoveToUri(targetUri);
     }
 
-    protected readonly deletedSuffix = ' (deleted)';
+    protected readonly deletedSuffix = `(${nls.localizeByDefault('Deleted')})`;
     protected async updateWidgets(event: FileChangesEvent): Promise<void> {
         if (!event.gotDeleted() && !event.gotAdded()) {
             return;
         }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const pending: Promise<any>[] = [];
-
         const dirty = new Set<string>();
         const toClose = new Map<string, NavigatableWidget[]>();
         for (const [uri, widget] of NavigatableWidget.get(this.shell.widgets)) {
-            this.updateWidget(uri, widget, event, { dirty, toClose });
+            this.updateWidget(uri, widget, event, { dirty, toClose: toClose });
         }
-        for (const [uriString, widgets] of toClose.entries()) {
-            if (!dirty.has(uriString) && this.corePreferences['workbench.editor.closeOnFileDelete']) {
-                for (const widget of widgets) {
-                    widget.close();
-                    pending.push(waitForClosed(widget));
+        if (this.corePreferences['workbench.editor.closeOnFileDelete']) {
+            const doClose = [];
+            for (const [uri, widgets] of toClose.entries()) {
+                if (!dirty.has(uri)) {
+                    doClose.push(...widgets);
                 }
             }
+            await this.shell.closeMany(doClose);
         }
-
-        await Promise.all(pending);
     }
     protected updateWidget(uri: URI, widget: NavigatableWidget, event: FileChangesEvent, { dirty, toClose }: {
         dirty: Set<string>;
@@ -300,13 +377,15 @@ export class FileSystemFrontendContribution implements FrontendApplicationContri
             }
             if (!deleted) {
                 widget.title.label += this.deletedSuffix;
+                this.onDidChangeEditorFileEmitter.fire({ editor: widget, type: FileChangeType.DELETED });
             }
             const widgets = toClose.get(uriString) || [];
             widgets.push(widget);
             toClose.set(uriString, widgets);
         } else if (event.contains(uri, FileChangeType.ADDED)) {
             if (deleted) {
-                widget.title.label = widget.title.label.substr(0, label.length - this.deletedSuffix.length);
+                widget.title.label = widget.title.label.substring(0, label.length - this.deletedSuffix.length);
+                this.onDidChangeEditorFileEmitter.fire({ editor: widget, type: FileChangeType.ADDED });
             }
         }
     }

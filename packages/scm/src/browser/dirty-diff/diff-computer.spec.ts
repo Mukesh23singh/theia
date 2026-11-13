@@ -1,33 +1,32 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as chai from 'chai';
 import { expect } from 'chai';
-chai.use(require('chai-string'));
+chai.use(chaiString);
 
-import { DiffComputer, DirtyDiff } from './diff-computer';
-import { ContentLines } from './content-lines';
+import { DiffComputer, DirtyDiff } from './diff-computer.js';
+import { ContentLines } from './content-lines.js';
+import chaiString from 'chai-string';
 
 let diffComputer: DiffComputer;
 
 before(() => {
     diffComputer = new DiffComputer();
 });
-
-/* eslint-disable no-unused-expressions */
 
 describe('dirty-diff-computer', () => {
 
@@ -44,9 +43,12 @@ describe('dirty-diff-computer', () => {
             ],
         );
         expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-            added: [],
-            modified: [],
-            removed: [0],
+            changes: [
+                {
+                    previousRange: { start: 1, end: 2 },
+                    currentRange: { start: 1, end: 1 },
+                },
+            ],
         });
     });
 
@@ -58,22 +60,29 @@ describe('dirty-diff-computer', () => {
                 sequenceOfN(2),
             );
             expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-                modified: [],
-                removed: [1],
-                added: [],
+                changes: [
+                    {
+                        previousRange: { start: 2, end: 2 + lines },
+                        currentRange: { start: 2, end: 2 },
+                    },
+                ],
             });
         });
     });
 
     it('remove all lines', () => {
+        const numberOfLines = 10;
         const dirtyDiff = computeDirtyDiff(
-            sequenceOfN(10, () => 'TO-BE-REMOVED'),
+            sequenceOfN(numberOfLines, () => 'TO-BE-REMOVED'),
             ['']
         );
         expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-            added: [],
-            modified: [],
-            removed: [0],
+            changes: [
+                {
+                    previousRange: { start: 0, end: numberOfLines },
+                    currentRange: { start: 0, end: 0 },
+                },
+            ],
         });
     });
 
@@ -85,9 +94,12 @@ describe('dirty-diff-computer', () => {
                 sequenceOfN(2),
             );
             expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-                modified: [],
-                removed: [0],
-                added: [],
+                changes: [
+                    {
+                        previousRange: { start: 0, end: lines },
+                        currentRange: { start: 0, end: 0 },
+                    },
+                ],
             });
         });
     });
@@ -98,9 +110,12 @@ describe('dirty-diff-computer', () => {
             const modified = insertIntoArray(previous, 2, ...sequenceOfN(lines, () => 'ADDED LINE'));
             const dirtyDiff = computeDirtyDiff(previous, modified);
             expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-                modified: [],
-                removed: [],
-                added: [{ start: 2, end: 2 + lines - 1 }],
+                changes: [
+                    {
+                        previousRange: { start: 2, end: 2 },
+                        currentRange: { start: 2, end: 2 + lines },
+                    },
+                ],
             });
         });
     });
@@ -113,9 +128,12 @@ describe('dirty-diff-computer', () => {
                     .concat(sequenceOfN(2))
             );
             expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-                modified: [],
-                removed: [],
-                added: [{ start: 0, end: lines - 1 }],
+                changes: [
+                    {
+                        previousRange: { start: 0, end: 0 },
+                        currentRange: { start: 0, end: lines },
+                    },
+                ],
             });
         });
     });
@@ -127,9 +145,12 @@ describe('dirty-diff-computer', () => {
             sequenceOfN(numberOfLines, () => 'ADDED LINE')
         );
         expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-            modified: [],
-            removed: [],
-            added: [{ start: 0, end: numberOfLines - 1 }],
+            changes: [
+                {
+                    previousRange: { start: 0, end: 0 },
+                    currentRange: { start: 0, end: numberOfLines },
+                },
+            ],
         });
     });
 
@@ -147,9 +168,12 @@ describe('dirty-diff-computer', () => {
             ]
         );
         expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-            modified: [],
-            removed: [],
-            added: [{ start: 1, end: 2 }],
+            changes: [
+                {
+                    previousRange: { start: 1, end: 1 },
+                    currentRange: { start: 1, end: 3 },
+                },
+            ],
         });
     });
 
@@ -164,9 +188,12 @@ describe('dirty-diff-computer', () => {
             ]
         );
         expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-            modified: [],
-            removed: [],
-            added: [{ start: 1, end: 1 }],
+            changes: [
+                {
+                    previousRange: { start: 1, end: 1 },
+                    currentRange: { start: 1, end: 2 },
+                },
+            ],
         });
     });
 
@@ -178,9 +205,12 @@ describe('dirty-diff-computer', () => {
                     .concat(new Array(lines).map(() => ''))
             );
             expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-                modified: [],
-                removed: [],
-                added: [{ start: 2, end: 1 + lines }],
+                changes: [
+                    {
+                        previousRange: { start: 2, end: 2 },
+                        currentRange: { start: 2, end: 2 + lines },
+                    },
+                ],
             });
         });
     });
@@ -202,9 +232,12 @@ describe('dirty-diff-computer', () => {
             ]
         );
         expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-            modified: [],
-            removed: [],
-            added: [{ start: 1, end: 5 }],
+            changes: [
+                {
+                    previousRange: { start: 1, end: 1 },
+                    currentRange: { start: 1, end: 6 },
+                },
+            ],
         });
     });
 
@@ -215,9 +248,12 @@ describe('dirty-diff-computer', () => {
                 ['0'].concat(sequenceOfN(lines, () => 'ADDED LINE'))
             );
             expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-                modified: [],
-                removed: [],
-                added: [{ start: 1, end: lines }],
+                changes: [
+                    {
+                        previousRange: { start: 1, end: 1 },
+                        currentRange: { start: 1, end: lines + 1 },
+                    },
+                ],
             });
         });
     });
@@ -236,9 +272,12 @@ describe('dirty-diff-computer', () => {
             ]
         );
         expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-            removed: [],
-            added: [],
-            modified: [{ start: 1, end: 1 }],
+            changes: [
+                {
+                    previousRange: { start: 1, end: 2 },
+                    currentRange: { start: 1, end: 2 },
+                },
+            ],
         });
     });
 
@@ -249,9 +288,12 @@ describe('dirty-diff-computer', () => {
             sequenceOfN(numberOfLines, () => 'MODIFIED')
         );
         expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-            removed: [],
-            added: [],
-            modified: [{ start: 0, end: numberOfLines - 1 }],
+            changes: [
+                {
+                    previousRange: { start: 0, end: numberOfLines },
+                    currentRange: { start: 0, end: numberOfLines },
+                },
+            ],
         });
     });
 
@@ -270,9 +312,12 @@ describe('dirty-diff-computer', () => {
             ]
         );
         expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-            removed: [],
-            added: [],
-            modified: [{ start: 1, end: 2 }],
+            changes: [
+                {
+                    previousRange: { start: 1, end: 4 },
+                    currentRange: { start: 1, end: 3 },
+                },
+            ],
         });
     });
 
@@ -307,9 +352,20 @@ describe('dirty-diff-computer', () => {
             ]
         );
         expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-            removed: [3],
-            added: [{ start: 10, end: 11 }],
-            modified: [{ start: 0, end: 0 }],
+            changes: [
+                {
+                    previousRange: { start: 0, end: 1 },
+                    currentRange: { start: 0, end: 1 },
+                },
+                {
+                    previousRange: { start: 4, end: 5 },
+                    currentRange: { start: 4, end: 4 },
+                },
+                {
+                    previousRange: { start: 11, end: 11 },
+                    currentRange: { start: 10, end: 12 },
+                },
+            ],
         });
     });
 
@@ -342,9 +398,20 @@ describe('dirty-diff-computer', () => {
                 ''
             ]);
         expect(dirtyDiff).to.be.deep.equal(<DirtyDiff>{
-            removed: [11],
-            added: [{ start: 5, end: 5 }, { start: 9, end: 9 }],
-            modified: [],
+            changes: [
+                {
+                    previousRange: { start: 5, end: 5 },
+                    currentRange: { start: 5, end: 6 },
+                },
+                {
+                    previousRange: { start: 8, end: 8 },
+                    currentRange: { start: 9, end: 10 },
+                },
+                {
+                    previousRange: { start: 9, end: 10 },
+                    currentRange: { start: 12, end: 12 },
+                },
+            ],
         });
     });
 

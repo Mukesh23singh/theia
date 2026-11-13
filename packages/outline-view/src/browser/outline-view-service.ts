@@ -1,24 +1,24 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { Event, Emitter, DisposableCollection } from '@theia/core';
 import { WidgetFactory } from '@theia/core/lib/browser';
-import { OutlineViewWidget, OutlineViewWidgetFactory, OutlineSymbolInformationNode } from './outline-view-widget';
-import { Widget } from '@theia/core/shared/@phosphor/widgets';
+import { OutlineViewWidget, OutlineViewWidgetFactory, OutlineSymbolInformationNode } from './outline-view-widget.js';
+import { Widget } from '@theia/core/shared/@lumino/widgets';
 
 @injectable()
 export class OutlineViewService implements WidgetFactory {
@@ -30,6 +30,7 @@ export class OutlineViewService implements WidgetFactory {
     protected readonly onDidChangeOpenStateEmitter = new Emitter<boolean>();
     protected readonly onDidSelectEmitter = new Emitter<OutlineSymbolInformationNode>();
     protected readonly onDidOpenEmitter = new Emitter<OutlineSymbolInformationNode>();
+    protected readonly onDidTapNodeEmitter = new Emitter<OutlineSymbolInformationNode>();
 
     constructor(@inject(OutlineViewWidgetFactory) protected factory: OutlineViewWidgetFactory) { }
 
@@ -49,8 +50,16 @@ export class OutlineViewService implements WidgetFactory {
         return this.onDidChangeOpenStateEmitter.event;
     }
 
+    get onDidTapNode(): Event<OutlineSymbolInformationNode> {
+        return this.onDidTapNodeEmitter.event;
+    }
+
     get open(): boolean {
         return this.widget !== undefined && this.widget.isVisible;
+    }
+
+    didTapNode(node: OutlineSymbolInformationNode): void {
+        this.onDidTapNodeEmitter.fire(node);
     }
 
     /**

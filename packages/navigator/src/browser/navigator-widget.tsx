@@ -1,64 +1,52 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
-import { Message } from '@theia/core/shared/@phosphor/messaging';
+import { Message } from '@theia/core/shared/@lumino/messaging';
 import URI from '@theia/core/lib/common/uri';
-import { CommandService, notEmpty, SelectionService } from '@theia/core/lib/common';
-import {
-    CorePreferences, Key, TreeModel, SelectableTreeNode,
-    TREE_NODE_SEGMENT_CLASS, TREE_NODE_TAIL_CLASS,
-    TreeDecoration, NodeProps, OpenerService
-} from '@theia/core/lib/browser';
-import {
-    ContextMenuRenderer, ExpandableTreeNode,
-    TreeProps, TreeNode
-} from '@theia/core/lib/browser';
-import { FileTreeWidget, FileNode, DirNode, FileStatNode } from '@theia/filesystem/lib/browser';
+import { CommandService, MessageService } from '@theia/core/lib/common';
+import { Key, TreeModel, ContextMenuRenderer, ExpandableTreeNode, TreeProps, TreeNode } from '@theia/core/lib/browser';
+import { DirNode, FileStatNodeData } from '@theia/filesystem/lib/browser';
 import { WorkspaceService, WorkspaceCommands } from '@theia/workspace/lib/browser';
-import { ApplicationShell } from '@theia/core/lib/browser/shell/application-shell';
-import { WorkspaceNode, WorkspaceRootNode } from './navigator-tree';
-import { FileNavigatorModel } from './navigator-model';
+import { WorkspaceNode, WorkspaceRootNode } from './navigator-tree.js';
+import { FileNavigatorModel } from './navigator-model.js';
 import { isOSX, environment } from '@theia/core';
 import * as React from '@theia/core/shared/react';
-import { NavigatorContextKeyService } from './navigator-context-key-service';
-import { FileNavigatorCommands } from './navigator-contribution';
+import { NavigatorContextKeyService } from './navigator-context-key-service.js';
+import { NavigatorFileClipboard } from './navigator-file-clipboard.js';
+import { nls } from '@theia/core/lib/common/nls';
+import { AbstractNavigatorTreeWidget } from './abstract-navigator-tree-widget.js';
 
 export const FILE_NAVIGATOR_ID = 'files';
-export const LABEL = 'No folder opened';
+export const LABEL = nls.localizeByDefault('No Folder Opened');
 export const CLASS = 'theia-Files';
 
 @injectable()
-export class FileNavigatorWidget extends FileTreeWidget {
+export class FileNavigatorWidget extends AbstractNavigatorTreeWidget {
 
-    @inject(CorePreferences) protected readonly corePreferences: CorePreferences;
-
-    @inject(NavigatorContextKeyService)
-    protected readonly contextKeyService: NavigatorContextKeyService;
-
-    @inject(OpenerService) protected readonly openerService: OpenerService;
+    @inject(CommandService) protected readonly commandService: CommandService;
+    @inject(NavigatorContextKeyService) protected readonly contextKeyService: NavigatorContextKeyService;
+    @inject(WorkspaceService) protected readonly workspaceService: WorkspaceService;
+    @inject(NavigatorFileClipboard) protected readonly fileClipboard: NavigatorFileClipboard;
+    @inject(MessageService) protected readonly messageService: MessageService;
 
     constructor(
-        @inject(TreeProps) readonly props: TreeProps,
-        @inject(FileNavigatorModel) readonly model: FileNavigatorModel,
+        @inject(TreeProps) props: TreeProps,
+        @inject(FileNavigatorModel) override readonly model: FileNavigatorModel,
         @inject(ContextMenuRenderer) contextMenuRenderer: ContextMenuRenderer,
-        @inject(CommandService) protected readonly commandService: CommandService,
-        @inject(SelectionService) protected readonly selectionService: SelectionService,
-        @inject(WorkspaceService) protected readonly workspaceService: WorkspaceService,
-        @inject(ApplicationShell) protected readonly shell: ApplicationShell
     ) {
         super(props, model, contextMenuRenderer);
         this.id = FILE_NAVIGATOR_ID;
@@ -66,11 +54,11 @@ export class FileNavigatorWidget extends FileTreeWidget {
     }
 
     @postConstruct()
-    protected init(): void {
+    protected override init(): void {
         super.init();
         // This ensures that the context menu command to hide this widget receives the label 'Folders'
         // regardless of the name of workspace. See ViewContainer.updateToolbarItems.
-        const dataset = { ...this.title.dataset, visibilityCommandLabel: 'Folders' };
+        const dataset = { ...this.title.dataset, visibilityCommandLabel: nls.localizeByDefault('Folders') };
         this.title.dataset = dataset;
         this.updateSelectionContextKeys();
         this.toDispose.pushAll([
@@ -89,7 +77,7 @@ export class FileNavigatorWidget extends FileTreeWidget {
         ]);
     }
 
-    protected doUpdateRows(): void {
+    protected override doUpdateRows(): void {
         super.doUpdateRows();
         this.title.label = LABEL;
         if (WorkspaceNode.is(this.model.root)) {
@@ -108,37 +96,7 @@ export class FileNavigatorWidget extends FileTreeWidget {
         }
     }
 
-    protected enableDndOnMainPanel(): void {
-        const mainPanelNode = this.shell.mainPanel.node;
-        this.addEventListener(mainPanelNode, 'drop', async ({ dataTransfer }) => {
-            const treeNodes = dataTransfer && this.getSelectedTreeNodesFromData(dataTransfer) || [];
-            if (treeNodes.length > 0) {
-                treeNodes.filter(FileNode.is).forEach(treeNode => {
-                    if (!SelectableTreeNode.isSelected(treeNode)) {
-                        this.model.toggleNode(treeNode);
-                    }
-                });
-                this.commandService.executeCommand(FileNavigatorCommands.OPEN.id);
-            } else if (dataTransfer && dataTransfer.files?.length > 0) {
-                // the files were dragged from the outside the workspace
-                Array.from(dataTransfer.files).forEach(async file => {
-                    const fileUri = new URI(file.path);
-                    const opener = await this.openerService.getOpener(fileUri);
-                    opener.open(fileUri);
-                });
-            }
-        });
-        const handler = (e: DragEvent) => {
-            if (e.dataTransfer) {
-                e.dataTransfer.dropEffect = 'link';
-                e.preventDefault();
-            }
-        };
-        this.addEventListener(mainPanelNode, 'dragover', handler);
-        this.addEventListener(mainPanelNode, 'dragenter', handler);
-    }
-
-    protected getContainerTreeNode(): TreeNode | undefined {
+    override getContainerTreeNode(): TreeNode | undefined {
         const root = this.model.root;
         if (this.workspaceService.isMultiRootWorkspaceOpened) {
             return root;
@@ -149,77 +107,104 @@ export class FileNavigatorWidget extends FileTreeWidget {
         return undefined;
     }
 
-    protected renderTree(model: TreeModel): React.ReactNode {
+    protected override renderTree(model: TreeModel): React.ReactNode {
         if (this.model.root && this.isEmptyMultiRootWorkspace(model)) {
             return this.renderEmptyMultiRootWorkspace();
         }
         return super.renderTree(model);
     }
 
-    protected renderTailDecorations(node: TreeNode, props: NodeProps): React.ReactNode {
-        const tailDecorations = this.getDecorationData(node, 'tailDecorations').filter(notEmpty).reduce((acc, current) => acc.concat(current), []);
-
-        if (tailDecorations.length === 0) {
-            return;
-        }
-
-        // Handle rendering of directories versus file nodes.
-        if (FileStatNode.is(node) && node.fileStat.isDirectory) {
-            return this.renderTailDecorationsForDirectoryNode(node, props, tailDecorations);
-        } else {
-            return this.renderTailDecorationsForNode(node, props, tailDecorations);
-        }
-    }
-
-    protected renderTailDecorationsForDirectoryNode(node: TreeNode, props: NodeProps, tailDecorations:
-        (TreeDecoration.TailDecoration | TreeDecoration.TailDecorationIcon | TreeDecoration.TailDecorationIconClass)[]): React.ReactNode {
-        // If the node represents a directory, we just want to use the decorationData with the highest priority (last element).
-        const decoration = tailDecorations[tailDecorations.length - 1];
-        const { tooltip, fontData } = decoration as TreeDecoration.TailDecoration;
-        const color = (decoration as TreeDecoration.TailDecorationIcon).color;
-        const className = [TREE_NODE_SEGMENT_CLASS, TREE_NODE_TAIL_CLASS].join(' ');
-        const style = fontData ? this.applyFontStyles({}, fontData) : color ? { color } : undefined;
-        const content = <span className={this.getIconClass('circle', [TreeDecoration.Styles.DECORATOR_SIZE_CLASS])}></span>;
-
-        return <div className={className} style={style} title={tooltip}>
-            {content}
-        </div>;
-    }
-
-    protected shouldShowWelcomeView(): boolean {
+    protected override shouldShowWelcomeView(): boolean {
         return this.model.root === undefined;
     }
 
-    protected onAfterAttach(msg: Message): void {
+    protected override onAfterAttach(msg: Message): void {
         super.onAfterAttach(msg);
         this.addClipboardListener(this.node, 'copy', e => this.handleCopy(e));
         this.addClipboardListener(this.node, 'paste', e => this.handlePaste(e));
-        this.enableDndOnMainPanel();
     }
 
     protected handleCopy(event: ClipboardEvent): void {
         const uris = this.model.selectedFileStatNodes.map(node => node.uri.toString());
         if (uris.length > 0 && event.clipboardData) {
-            event.clipboardData.setData('text/plain', uris.join('\n'));
-            event.preventDefault();
+            const content = uris.join('\n');
+            event.clipboardData.setData('text/plain', content);
+            this.fileClipboard.set(content);
         }
+        event.preventDefault();
     }
 
     protected handlePaste(event: ClipboardEvent): void {
         if (event.clipboardData) {
             const raw = event.clipboardData.getData('text/plain');
-            if (!raw) {
-                return;
-            }
-            const target = this.model.selectedFileStatNodes[0];
-            if (!target) {
-                return;
-            }
-            for (const file of raw.split('\n')) {
+            // the consume decision must be made synchronously, before pasteFiles completes
+            if (this.canPasteFiles(raw)) {
                 event.preventDefault();
-                const source = new URI(file);
-                this.model.copy(source, target);
+                this.pasteFiles(raw).catch(error => this.messageService.error(error.message));
             }
+        }
+    }
+
+    /**
+     * Whether {@link pasteFiles} would handle a paste, i.e. a paste target is selected and,
+     * if already known, the clipboard text is not empty.
+     *
+     * @param raw the clipboard text, if it has been obtained already
+     */
+    canPasteFiles(raw?: string): boolean {
+        return raw !== '' && this.model.selectedFileStatNodes.length > 0;
+    }
+
+    /**
+     * Pastes the files given as newline-separated URIs or absolute paths into the selected directory.
+     *
+     * @param raw the clipboard text, expected to hold one file URI or absolute file system path per line
+     * @returns `true` if the paste was handled, i.e. clipboard text and a paste target were available;
+     *   the promise resolves once all file copies have completed
+     */
+    async pasteFiles(raw: string): Promise<boolean> {
+        if (!this.canPasteFiles(raw)) {
+            return false;
+        }
+        const target = this.model.selectedFileStatNodes[0];
+        const sources = this.parsePastedUris(raw);
+        if (sources.length === 0) {
+            this.messageService.info(nls.localize(
+                'theia/navigator/nothingToPaste',
+                'The clipboard does not contain workspace files that can be pasted here.'
+            ));
+            return true;
+        }
+        await Promise.all(sources.map(source => this.model.copy(source, target)));
+        return true;
+    }
+
+    protected parsePastedUris(raw: string): URI[] {
+        const uris: URI[] = [];
+        for (const file of raw.split('\n')) {
+            const trimmed = file.trim();
+            if (!trimmed) {
+                continue;
+            }
+            const source = this.asPastedFileUri(trimmed);
+            if (source && this.workspaceService.getWorkspaceRootUri(source)) {
+                uris.push(source);
+            }
+        }
+        return uris;
+    }
+
+    /** Interprets the given clipboard line as a URI or an absolute file system path, e.g. from the Copy Path command. */
+    protected asPastedFileUri(candidate: string): URI | undefined {
+        // check for absolute paths first: Windows paths like C:\foo also parse as URLs (scheme 'c:')
+        if (candidate.startsWith('/') || candidate.startsWith('\\\\') || /^[a-zA-Z]:[\\/]/.test(candidate)) {
+            return URI.fromFilePath(candidate);
+        }
+        try {
+            new URL(candidate);
+            return new URI(candidate);
+        } catch {
+            return undefined;
         }
     }
 
@@ -252,12 +237,12 @@ export class FileNavigatorWidget extends FileTreeWidget {
      */
     protected renderEmptyMultiRootWorkspace(): React.ReactNode {
         return <div className='theia-navigator-container'>
-            <div className='center'>You have not yet added a folder to the workspace.</div>
+            <div className='center'>{nls.localizeByDefault('You have not yet added a folder to the workspace.\n{0}', '')}</div>
             <div className='open-workspace-button-container'>
-                <button className='theia-button open-workspace-button' title='Add a folder to your workspace'
+                <button className='theia-button open-workspace-button' title={nls.localizeByDefault('Add Folder to Workspace')}
                     onClick={this.addFolder}
                     onKeyUp={this.keyUpHandler}>
-                    Add Folder
+                    {nls.localizeByDefault('Open Folder')}
                 </button>
             </div>
         </div>;
@@ -267,26 +252,29 @@ export class FileNavigatorWidget extends FileTreeWidget {
         return WorkspaceNode.is(model.root) && model.root.children.length === 0;
     }
 
-    protected handleClickEvent(node: TreeNode | undefined, event: React.MouseEvent<HTMLElement>): void {
-        const modifierKeyCombined: boolean = isOSX ? (event.shiftKey || event.metaKey) : (event.shiftKey || event.ctrlKey);
-        if (!modifierKeyCombined && node && this.corePreferences['workbench.list.openMode'] === 'singleClick') {
+    protected override tapNode(node?: TreeNode): void {
+        if (node && this.corePreferences['workbench.list.openMode'] === 'singleClick') {
             this.model.previewNode(node);
         }
-        super.handleClickEvent(node, event);
+        super.tapNode(node);
     }
 
-    protected onAfterShow(msg: Message): void {
+    protected override onAfterShow(msg: Message): void {
         super.onAfterShow(msg);
         this.contextKeyService.explorerViewletVisible.set(true);
     }
 
-    protected onAfterHide(msg: Message): void {
+    protected override onAfterHide(msg: Message): void {
         super.onAfterHide(msg);
         this.contextKeyService.explorerViewletVisible.set(false);
     }
 
     protected updateSelectionContextKeys(): void {
         this.contextKeyService.explorerResourceIsFolder.set(DirNode.is(this.model.selectedNodes[0]));
+        // As `FileStatNode` only created if `FileService.resolve` was successful, we can safely assume that
+        // a valid `FileSystemProvider` is available for the selected node. So we skip an additional check
+        // for provider availability here and check the node type.
+        this.contextKeyService.isFileSystemResource.set(FileStatNodeData.is(this.model.selectedNodes[0]));
     }
 
 }

@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -24,9 +24,9 @@
 // and https://github.com/microsoft/vscode/blob/04c36be045a94fee58e5f8992d3e3fd980294a84/src/vs/workbench/services/workingCopy/common/workingCopyFileOperationParticipant.ts
 
 /* eslint-disable max-len */
+/* eslint-disable @stylistic/brace-style, @stylistic/semi-spacing */
 /* eslint-disable @typescript-eslint/no-shadow */
 /* eslint-disable no-null/no-null */
-/* eslint-disable @typescript-eslint/tslint/config */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { injectable, inject, named, postConstruct } from '@theia/core/shared/inversify';
@@ -34,7 +34,7 @@ import URI from '@theia/core/lib/common/uri';
 import { timeout, Deferred } from '@theia/core/lib/common/promise-util';
 import { CancellationToken, CancellationTokenSource } from '@theia/core/lib/common/cancellation';
 import { Disposable, DisposableCollection } from '@theia/core/lib/common/disposable';
-import { WaitUntilEvent, Emitter, AsyncEmitter } from '@theia/core/lib/common/event';
+import { WaitUntilEvent, Emitter, AsyncEmitter, Event } from '@theia/core/lib/common/event';
 import { ContributionProvider } from '@theia/core/lib/common/contribution-provider';
 import { TernarySearchTree } from '@theia/core/lib/common/ternary-search-tree';
 import {
@@ -51,22 +51,25 @@ import {
     toFileOperationResult, toFileSystemProviderErrorCode,
     ResolveFileResult, ResolveFileResultWithMetadata,
     MoveFileOptions, CopyFileOptions, BaseStatWithMetadata, FileDeleteOptions, FileOperationOptions, hasAccessCapability, hasUpdateCapability,
-    hasFileReadStreamCapability, FileSystemProviderWithFileReadStreamCapability
-} from '../common/files';
+    hasFileReadStreamCapability, FileSystemProviderWithFileReadStreamCapability, ReadOnlyMessageFileSystemProvider
+} from '../common/files.js';
 import { BinaryBuffer, BinaryBufferReadable, BinaryBufferReadableStream, BinaryBufferReadableBufferedStream, BinaryBufferWriteableStream } from '@theia/core/lib/common/buffer';
 import { ReadableStream, isReadableStream, isReadableBufferedStream, transform, consumeStream, peekStream, peekReadable, Readable } from '@theia/core/lib/common/stream';
 import { LabelProvider } from '@theia/core/lib/browser/label-provider';
-import { FileSystemPreferences } from './filesystem-preferences';
+import { FileSystemPreferences } from '../common/filesystem-preferences.js';
 import { ProgressService } from '@theia/core/lib/common/progress-service';
-import { DelegatingFileSystemProvider } from '../common/delegating-file-system-provider';
+import { DelegatingFileSystemProvider } from '../common/delegating-file-system-provider.js';
 import type { TextDocumentContentChangeEvent } from '@theia/core/shared/vscode-languageserver-protocol';
 import { EncodingRegistry } from '@theia/core/lib/browser/encoding-registry';
 import { UTF8, UTF8_with_bom } from '@theia/core/lib/common/encodings';
 import { EncodingService, ResourceEncoding, DecodeStreamResult } from '@theia/core/lib/common/encoding-service';
+import { Minimatch } from 'minimatch';
 import { Mutable } from '@theia/core/lib/common/types';
-import { readFileIntoStream } from '../common/io';
-import { FileSystemWatcherErrorHandler } from './filesystem-watcher-error-handler';
-import { FileSystemUtils } from '../common/filesystem-utils';
+import { readFileIntoStream } from '../common/io.js';
+import { FileSystemWatcherErrorHandler } from './filesystem-watcher-error-handler.js';
+import { FileSystemUtils } from '../common/filesystem-utils.js';
+import { nls, ILogger } from '@theia/core';
+import { MarkdownString } from '@theia/core/lib/common/markdown-rendering';
 
 export interface FileOperationParticipant {
 
@@ -198,7 +201,7 @@ export const FileServiceContribution = Symbol('FileServiceContribution');
  *         });
  *
  *     }
- *```
+ * ```
  */
 export interface FileServiceContribution {
     /**
@@ -234,6 +237,15 @@ export interface FileSystemProviderCapabilitiesChangeEvent {
     scheme: string;
 }
 
+export interface FileSystemProviderReadOnlyMessageChangeEvent {
+    /** The affected file system provider for which this event was fired. */
+    provider: FileSystemProvider;
+    /** The uri for which the provider is registered */
+    scheme: string;
+    /** The new read only message */
+    message: MarkdownString | undefined;
+}
+
 /**
  * Represents the `FileSystemProviderActivation` event.
  * This event is fired by the {@link FileService} if it wants to activate the
@@ -253,7 +265,7 @@ export class TextFileOperationError extends FileOperationError {
     constructor(
         message: string,
         public textFileOperationResult: TextFileOperationResult,
-        public options?: ReadTextFileOptions & WriteTextFileOptions
+        override options?: ReadTextFileOptions & WriteTextFileOptions
     ) {
         super(message, FileOperationResult.FILE_OTHER_ERROR);
         Object.setPrototypeOf(this, TextFileOperationError.prototype);
@@ -292,6 +304,9 @@ export class FileService {
 
     @inject(FileSystemWatcherErrorHandler)
     protected readonly watcherErrorHandler: FileSystemWatcherErrorHandler;
+
+    @inject(ILogger) @named('filesystem:FileService')
+    protected readonly logger: ILogger;
 
     @postConstruct()
     protected init(): void {
@@ -341,6 +356,9 @@ export class FileService {
     private onDidChangeFileSystemProviderCapabilitiesEmitter = new Emitter<FileSystemProviderCapabilitiesChangeEvent>();
     readonly onDidChangeFileSystemProviderCapabilities = this.onDidChangeFileSystemProviderCapabilitiesEmitter.event;
 
+    private onDidChangeFileSystemProviderReadOnlyMessageEmitter = new Emitter<FileSystemProviderReadOnlyMessageChangeEvent>();
+    readonly onDidChangeFileSystemProviderReadOnlyMessage = this.onDidChangeFileSystemProviderReadOnlyMessageEmitter.event;
+
     private readonly providers = new Map<string, FileSystemProvider>();
     private readonly activations = new Map<string, Promise<FileSystemProvider>>();
 
@@ -363,10 +381,14 @@ export class FileService {
         providerDisposables.push(provider.onDidChangeFile(changes => this.onDidFilesChangeEmitter.fire(new FileChangesEvent(changes))));
         providerDisposables.push(provider.onFileWatchError(() => this.handleFileWatchError()));
         providerDisposables.push(provider.onDidChangeCapabilities(() => this.onDidChangeFileSystemProviderCapabilitiesEmitter.fire({ provider, scheme })));
+        if (ReadOnlyMessageFileSystemProvider.is(provider)) {
+            providerDisposables.push(provider.onDidChangeReadOnlyMessage(message => this.onDidChangeFileSystemProviderReadOnlyMessageEmitter.fire({ provider, scheme, message })));
+        }
 
         return Disposable.create(() => {
             this.onDidChangeFileSystemProviderRegistrationsEmitter.fire({ added: false, scheme, provider });
             this.providers.delete(scheme);
+            this.recursiveWatcherIndexes.delete(provider);
 
             providerDisposables.dispose();
         });
@@ -387,6 +409,15 @@ export class FileService {
         if (!activation) {
             const deferredActivation = new Deferred<FileSystemProvider>();
             this.activations.set(scheme, activation = deferredActivation.promise);
+            // Resolve the activation as soon as a provider is registered for the scheme. Otherwise a
+            // slow or dangling `onWillActivateFileSystemProvider` listener whose `waitUntil` promise
+            // never settles would wedge this activation (and everything awaiting it) forever. See #17506.
+            const registration = this.onDidChangeFileSystemProviderRegistrations(event => {
+                if (event.added && event.scheme === scheme && event.provider) {
+                    deferredActivation.resolve(event.provider);
+                }
+            });
+            deferredActivation.promise.then(() => registration.dispose(), () => registration.dispose());
             WaitUntilEvent.fire(this.onWillActivateFileSystemProviderEmitter, { scheme }).then(() => {
                 provider = this.providers.get(scheme);
                 if (!provider) {
@@ -402,6 +433,10 @@ export class FileService {
         return activation;
     }
 
+    hasProvider(scheme: string): boolean {
+        return this.providers.has(scheme);
+    }
+
     /**
      * Tests if the service (i.e. any of its registered {@link FileSystemProvider}s) can handle the given resource.
      * @param resource `URI` of the resource to test.
@@ -410,6 +445,14 @@ export class FileService {
      */
     canHandleResource(resource: URI): boolean {
         return this.providers.has(resource.scheme);
+    }
+
+    getReadOnlyMessage(resource: URI): MarkdownString | undefined {
+        const provider = this.providers.get(resource.scheme);
+        if (ReadOnlyMessageFileSystemProvider.is(provider)) {
+            return provider.readOnlyMessage;
+        }
+        return undefined;
     }
 
     /**
@@ -425,10 +468,20 @@ export class FileService {
         return !!(provider && (provider.capabilities & capability));
     }
 
+    /**
+     * List the schemes and capabilities for registered file system providers
+     */
+    listCapabilities(): { scheme: string; capabilities: FileSystemProviderCapabilities }[] {
+        return Array.from(this.providers.entries()).map(([scheme, provider]) => ({
+            scheme,
+            capabilities: provider.capabilities
+        }));
+    }
+
     protected async withProvider(resource: URI): Promise<FileSystemProvider> {
         // Assert path is absolute
         if (!resource.path.isAbsolute) {
-            throw new FileOperationError(`Unable to resolve filesystem provider with relative file path ${this.resourceForError(resource)}`, FileOperationResult.FILE_INVALID_PATH);
+            throw new FileOperationError(nls.localizeByDefault("Unable to resolve filesystem provider with relative file path '{0}'", this.resourceForError(resource)), FileOperationResult.FILE_INVALID_PATH);
         }
 
         return this.activateProvider(resource.scheme);
@@ -465,20 +518,20 @@ export class FileService {
     /**
      * Try to resolve file information and metadata for the given resource.
      * @param resource `URI` of the resource that should be resolved.
-     * @param options  Options to customize the resolvement process.
+     * @param options  Options to customize the resolution process.
      *
      * @return A promise that resolves if the resource could be successfully resolved.
      */
     resolve(resource: URI, options: ResolveMetadataFileOptions): Promise<FileStatWithMetadata>;
     resolve(resource: URI, options?: ResolveFileOptions | undefined): Promise<FileStat>;
-    async resolve(resource: any, options?: any) {
+    async resolve(resource: any, options?: any): Promise<FileStat> {
         try {
             return await this.doResolveFile(resource, options);
         } catch (error) {
 
             // Specially handle file not found case as file operation result
             if (toFileSystemProviderErrorCode(error) === FileSystemProviderErrorCode.FileNotFound) {
-                throw new FileOperationError(`Unable to resolve non-existing file '${this.resourceForError(resource)}'`, FileOperationResult.FILE_NOT_FOUND);
+                throw new FileOperationError(nls.localizeByDefault("Unable to resolve nonexistent file '{0}'", this.resourceForError(resource)), FileOperationResult.FILE_NOT_FOUND);
             }
 
             // Bubble up any other error as is
@@ -540,7 +593,7 @@ export class FileService {
 
                         return await this.toFileStat(provider, childResource, childStat, entries.length, resolveMetadata, recurse);
                     } catch (error) {
-                        console.trace(error);
+                        this.logger.error(error);
 
                         return null; // can happen e.g. due to permission errors
                     }
@@ -549,7 +602,7 @@ export class FileService {
                 // make sure to get rid of null values that signal a failure to resolve a particular entry
                 fileStat.children = resolvedEntries.filter(e => !!e) as FileStat[];
             } catch (error) {
-                console.trace(error);
+                this.logger.error(error);
 
                 fileStat.children = []; // gracefully handle errors, we may not have permissions to read
             }
@@ -562,7 +615,7 @@ export class FileService {
 
     /**
      * Try to resolve file information and metadata for all given resource.
-     * @param toResolve An array of all the resources (and corresponding resolvement options) that should be resolved.
+     * @param toResolve An array of all the resources (and corresponding resolution options) that should be resolved.
      *
      * @returns A promise of all resolved resources. The promise is not rejected if any of the given resources cannot be resolved.
      * Instead this is reflected with the `success` flag of the corresponding {@link ResolveFileResult}.
@@ -574,7 +627,7 @@ export class FileService {
             try {
                 return { stat: await this.doResolveFile(entry.resource, entry.options), success: true };
             } catch (error) {
-                console.trace(error);
+                this.logger.error(error);
 
                 return { stat: undefined, success: false };
             }
@@ -602,6 +655,11 @@ export class FileService {
 
     /**
      * Tests a user's permissions for the given resource.
+     * @param resource `URI` of the resource which should be tested.
+     * @param mode An optional integer that specifies the accessibility checks to be performed.
+     *      Check `FileAccess.Constants` for possible values of mode.
+     *      It is possible to create a mask consisting of the bitwise `OR` of two or more values (e.g. FileAccess.Constants.W_OK | FileAccess.Constants.R_OK).
+     *      If `mode` is not defined, `FileAccess.Constants.F_OK` will be used instead.
      */
     async access(resource: URI, mode?: number): Promise<boolean> {
         const provider = await this.withProvider(resource);
@@ -678,12 +736,7 @@ export class FileService {
     async read(resource: URI, options?: ReadTextFileOptions): Promise<TextFileContent> {
         const [bufferStream, decoder] = await this.doRead(resource, {
             ...options,
-            // optimization: since we know that the caller does not
-            // care about buffering, we indicate this to the reader.
-            // this reduces all the overhead the buffered reading
-            // has (open, read, close) if the provider supports
-            // unbuffered reading.
-            preferUnbuffered: true
+            preferUnbuffered: this.shouldReadUnbuffered(options)
         });
 
         return {
@@ -725,7 +778,7 @@ export class FileService {
 
         // validate binary
         if (options?.acceptTextOnly && decoder.detected.seemsBinary) {
-            throw new TextFileOperationError('File seems to be binary and cannot be opened as text', TextFileOperationResult.FILE_IS_BINARY, options);
+            throw new TextFileOperationError(nls.localizeByDefault('File seems to be binary and cannot be opened as text'), TextFileOperationResult.FILE_IS_BINARY, options);
         }
 
         return [bufferStream, decoder];
@@ -759,7 +812,7 @@ export class FileService {
                 throw new Error('incremental file update is not supported');
             }
         } catch (error) {
-            this.rethrowAsFileOperationError('Unable to write file', resource, error, options);
+            this.rethrowAsFileOperationError("Unable to write file '{0}' ({1})", resource, error, options);
         }
     }
 
@@ -771,7 +824,7 @@ export class FileService {
 
         // validate overwrite
         if (!options?.overwrite && await this.exists(resource)) {
-            throw new FileOperationError(`Unable to create file '${this.resourceForError(resource)}' that already exists when overwrite flag is not set`, FileOperationResult.FILE_MODIFIED_SINCE, options);
+            throw new FileOperationError(nls.localizeByDefault("Unable to create file '{0}' that already exists when overwrite flag is not set", this.resourceForError(resource)), FileOperationResult.FILE_MODIFIED_SINCE, options);
         }
 
         // do write into file (this will create it too)
@@ -826,7 +879,7 @@ export class FileService {
                 await this.doWriteBuffered(provider, resource, bufferOrReadableOrStreamOrBufferedStream instanceof BinaryBuffer ? BinaryBufferReadable.fromBuffer(bufferOrReadableOrStreamOrBufferedStream) : bufferOrReadableOrStreamOrBufferedStream);
             }
         } catch (error) {
-            this.rethrowAsFileOperationError('Unable to write file', resource, error, options);
+            this.rethrowAsFileOperationError("Unable to write file '{0}' ({1})", resource, error, options);
         }
 
         return this.resolve(resource, { resolveMetadata: true });
@@ -842,11 +895,11 @@ export class FileService {
 
         // file cannot be directory
         if ((stat.type & FileType.Directory) !== 0) {
-            throw new FileOperationError(`Unable to write file ${this.resourceForError(resource)} that is actually a directory`, FileOperationResult.FILE_IS_DIRECTORY, options);
+            throw new FileOperationError(nls.localizeByDefault("Unable to write file '{0}' that is actually a directory", this.resourceForError(resource)), FileOperationResult.FILE_IS_DIRECTORY, options);
         }
 
         if (this.modifiedSince(stat, options)) {
-            throw new FileOperationError('File Modified Since', FileOperationResult.FILE_MODIFIED_SINCE, options);
+            throw new FileOperationError(nls.localizeByDefault('File Modified Since'), FileOperationResult.FILE_MODIFIED_SINCE, options);
         }
 
         return stat;
@@ -872,17 +925,25 @@ export class FileService {
             options.mtime < stat.mtime && options.etag !== etag({ mtime: options.mtime /* not using stat.mtime for a reason, see above */, size: stat.size });
     }
 
+    protected shouldReadUnbuffered(options?: ReadFileOptions): boolean {
+        // optimization: since we know that the caller does not
+        // care about buffering, we indicate this to the reader.
+        // this reduces all the overhead the buffered reading
+        // has (open, read, close) if the provider supports
+        // unbuffered reading.
+        //
+        // However, if we read only part of the file we still
+        // want buffered reading as otherwise we need to read
+        // the whole file and cut out the specified part later.
+        return options?.position === undefined && options?.length === undefined;
+    }
+
     async readFile(resource: URI, options?: ReadFileOptions): Promise<FileContent> {
         const provider = await this.withReadProvider(resource);
 
         const stream = await this.doReadAsFileStream(provider, resource, {
             ...options,
-            // optimization: since we know that the caller does not
-            // care about buffering, we indicate this to the reader.
-            // this reduces all the overhead the buffered reading
-            // has (open, read, close) if the provider supports
-            // unbuffered reading.
-            preferUnbuffered: true
+            preferUnbuffered: this.shouldReadUnbuffered(options)
         });
 
         return {
@@ -946,7 +1007,7 @@ export class FileService {
                 value: fileStream
             };
         } catch (error) {
-            this.rethrowAsFileOperationError('Unable to read file', resource, error, options);
+            this.rethrowAsFileOperationError("Unable to read file '{0}' ({1})", resource, error, options);
         }
     }
 
@@ -955,7 +1016,7 @@ export class FileService {
 
         return transform(fileStream, {
             data: data => data instanceof BinaryBuffer ? data : BinaryBuffer.wrap(data),
-            error: error => this.asFileOperationError('Unable to read file', resource, error, options)
+            error: error => this.asFileOperationError("Unable to read file '{0}' ({1})", resource, error, options)
         }, data => BinaryBuffer.concat(data));
     }
 
@@ -965,7 +1026,7 @@ export class FileService {
         readFileIntoStream(provider, resource, stream, data => data, {
             ...options,
             bufferSize: this.BUFFER_SIZE,
-            errorTransformer: error => this.asFileOperationError('Unable to read file', resource, error, options)
+            errorTransformer: error => this.asFileOperationError("Unable to read file '{0}' ({1})", resource, error, options)
         }, token);
 
         return stream;
@@ -975,7 +1036,7 @@ export class FileService {
         throw this.asFileOperationError(message, resource, error, options);
     }
     protected asFileOperationError(message: string, resource: URI, error: Error, options?: ReadFileOptions & WriteFileOptions & CreateFileOptions): FileOperationError {
-        const fileOperationError = new FileOperationError(`${message} '${this.resourceForError(resource)}' (${ensureFileSystemProviderError(error).toString()})`,
+        const fileOperationError = new FileOperationError(nls.localizeByDefault(message, this.resourceForError(resource), ensureFileSystemProviderError(error).toString()),
             toFileOperationResult(error), options);
         fileOperationError.stack = `${fileOperationError.stack}\nCaused by: ${error.stack}`;
         return fileOperationError;
@@ -1005,12 +1066,12 @@ export class FileService {
 
         // Throw if resource is a directory
         if (stat.isDirectory) {
-            throw new FileOperationError(`Unable to read file '${this.resourceForError(resource)}' that is actually a directory`, FileOperationResult.FILE_IS_DIRECTORY, options);
+            throw new FileOperationError(nls.localizeByDefault("Unable to read file '{0}' that is actually a directory", this.resourceForError(resource)), FileOperationResult.FILE_IS_DIRECTORY, options);
         }
 
         // Throw if file not modified since (unless disabled)
         if (options && typeof options.etag === 'string' && options.etag !== ETAG_DISABLED && options.etag === stat.etag) {
-            throw new FileOperationError('File not modified since', FileOperationResult.FILE_NOT_MODIFIED_SINCE, options);
+            throw new FileOperationError(nls.localizeByDefault('File not modified since'), FileOperationResult.FILE_NOT_MODIFIED_SINCE, options);
         }
 
         // Throw if file is too large to load
@@ -1032,7 +1093,7 @@ export class FileService {
             }
 
             if (typeof tooLargeErrorResult === 'number') {
-                throw new FileOperationError(`Unable to read file '${this.resourceForError(resource)}' that is too large to open`, tooLargeErrorResult);
+                throw new FileOperationError(nls.localizeByDefault("Unable to read file '{0}' that is too large to open", this.resourceForError(resource)), tooLargeErrorResult);
             }
         }
     }
@@ -1120,8 +1181,8 @@ export class FileService {
         // if target exists get valid target
         if (exists && !overwrite) {
             const parent = await this.resolve(target.parent);
-            const name = isSameResourceWithDifferentPathCase ? target.path.name : target.path.name + '_copy';
-            target = FileSystemUtils.generateUniqueResourceURI(target.parent, parent, name, target.path.ext);
+            const targetFileStat = await this.resolve(target);
+            target = FileSystemUtils.generateUniqueResourceURI(parent, target, targetFileStat.isDirectory, isSameResourceWithDifferentPathCase ? 'copy' : undefined);
         }
 
         // delete as needed (unless target is same resource with different path case)
@@ -1227,11 +1288,11 @@ export class FileService {
             }
 
             if (isSameResourceWithDifferentPathCase && mode === 'copy') {
-                throw new Error(`Unable to copy when source '${this.resourceForError(source)}' is same as target '${this.resourceForError(target)}' with different path case on a case insensitive file system`);
+                throw new Error(nls.localizeByDefault("Unable to move/copy when source '{0}' is parent of target '{1}'.", this.resourceForError(source), this.resourceForError(target)));
             }
 
-            if (!isSameResourceWithDifferentPathCase && target.isEqualOrParent(source, isPathCaseSensitive)) {
-                throw new Error(`Unable to move/copy when source '${this.resourceForError(source)}' is parent of target '${this.resourceForError(target)}'.`);
+            if (!isSameResourceWithDifferentPathCase && source.isEqualOrParent(target, isPathCaseSensitive)) {
+                throw new Error(nls.localizeByDefault("Unable to move/copy when source '{0}' is parent of target '{1}'.", this.resourceForError(source), this.resourceForError(target)));
             }
         }
 
@@ -1243,8 +1304,8 @@ export class FileService {
             // it as it would delete the source as well. In this case we have to throw
             if (sourceProvider === targetProvider) {
                 const isPathCaseSensitive = !!(sourceProvider.capabilities & FileSystemProviderCapabilities.PathCaseSensitive);
-                if (source.isEqualOrParent(target, isPathCaseSensitive)) {
-                    throw new Error(`Unable to move/copy '${this.resourceForError(source)}' into '${this.resourceForError(target)}' since a file would replace the folder it is contained in.`);
+                if (target.isEqualOrParent(source, isPathCaseSensitive)) {
+                    throw new Error(nls.localizeByDefault("Unable to move/copy '{0}' into '{1}' since a file would replace the folder it is contained in.", this.resourceForError(source), this.resourceForError(target)));
                 }
             }
         }
@@ -1252,7 +1313,11 @@ export class FileService {
         return { exists, isSameResourceWithDifferentPathCase };
     }
 
-    async createFolder(resource: URI): Promise<FileStatWithMetadata> {
+    async createFolder(resource: URI, options: FileOperationOptions = {}): Promise<FileStatWithMetadata> {
+        const {
+            fromUserGesture = true,
+        } = options;
+
         const provider = this.throwIfFileSystemIsReadonly(await this.withProvider(resource), resource);
 
         // mkdir recursively
@@ -1260,7 +1325,12 @@ export class FileService {
 
         // events
         const fileStat = await this.resolve(resource, { resolveMetadata: true });
-        this.onDidRunOperationEmitter.fire(new FileOperationEvent(resource, FileOperation.CREATE, fileStat));
+
+        if (fromUserGesture) {
+            this.onDidRunUserOperationEmitter.fire({ correlationId: this.correlationIds++, operation: FileOperation.CREATE, target: resource });
+        } else {
+            this.onDidRunOperationEmitter.fire(new FileOperationEvent(resource, FileOperation.CREATE, fileStat));
+        }
 
         return fileStat;
     }
@@ -1273,7 +1343,7 @@ export class FileService {
             try {
                 const stat = await provider.stat(directory);
                 if ((stat.type & FileType.Directory) === 0) {
-                    throw new Error(`Unable to create folder ${this.resourceForError(directory)} that already exists but is not a directory`);
+                    throw new Error(nls.localizeByDefault("Unable to create folder '{0}' that already exists but is not a directory", this.resourceForError(directory)));
                 }
 
                 break; // we have hit a directory that exists -> good
@@ -1338,13 +1408,13 @@ export class FileService {
         // Validate trash support
         const useTrash = !!options?.useTrash;
         if (useTrash && !(provider.capabilities & FileSystemProviderCapabilities.Trash)) {
-            throw new Error(`Unable to delete file '${this.resourceForError(resource)}' via trash because provider does not support it.`);
+            throw new Error(nls.localizeByDefault("Unable to delete file '{0}' via trash because provider does not support it.", this.resourceForError(resource)));
         }
 
         // Validate delete
         const exists = await this.exists(resource);
         if (!exists) {
-            throw new FileOperationError(`Unable to delete non-existing file '${this.resourceForError(resource)}'`, FileOperationResult.FILE_NOT_FOUND);
+            throw new FileOperationError(nls.localizeByDefault("Unable to delete nonexistent file '{0}'", this.resourceForError(resource)), FileOperationResult.FILE_NOT_FOUND);
         }
 
         // Validate recursive
@@ -1352,7 +1422,7 @@ export class FileService {
         if (!recursive && exists) {
             const stat = await this.resolve(resource);
             if (stat.isDirectory && Array.isArray(stat.children) && stat.children.length > 0) {
-                throw new Error(`Unable to delete non-empty folder '${this.resourceForError(resource)}'.`);
+                throw new Error(nls.localizeByDefault("Unable to delete non-empty folder '{0}'.", this.resourceForError(resource)));
             }
         }
 
@@ -1371,15 +1441,17 @@ export class FileService {
     /**
      * An event that is emitted when files are changed on the disk.
      */
-    readonly onDidFilesChange = this.onDidFilesChangeEmitter.event;
+    get onDidFilesChange(): Event<FileChangesEvent> {
+        return this.onDidFilesChangeEmitter.event;
+    }
 
-    private activeWatchers = new Map<string, { disposable: Disposable, count: number }>();
+    private activeWatchers = new Map<string, WatcherEntry>();
+    private recursiveWatcherIndexes = new Map<FileSystemProvider, TernarySearchTree<URI, string>>();
 
     watch(resource: URI, options: WatchOptions = { recursive: false, excludes: [] }): Disposable {
         const resolvedOptions: WatchOptions = {
             ...options,
-            // always ignore temporary upload files
-            excludes: options.excludes.concat('**/theia_upload_*')
+            excludes: this.resolveWatcherExcludes(resource, options.excludes)
         };
 
         let watchDisposed = false;
@@ -1393,35 +1465,325 @@ export class FileService {
             } else {
                 watchDisposable = disposable;
             }
-        }, error => console.error(error));
+        }, error => this.logger.error(error));
 
         return Disposable.create(() => watchDisposable.dispose());
+    }
+
+    /**
+     * Resolve the effective exclude globs for a watcher: the caller-supplied `excludes`, the
+     * always-on temporary-upload exclude, and the user's `files.watcherExclude` preference.
+     *
+     * Applying `files.watcherExclude` here, for every watcher, rather than relying on individual
+     * callers, keeps the number of OS file watches (e.g. inotify watches on Linux) bounded even for
+     * watchers that request `excludes: []` - internal recursive watchers as well as plugin and
+     * language-server watchers created via `vscode.workspace.createFileSystemWatcher`. It also gives
+     * overlapping watchers a consistent set of excludes, so the watcher subsumption in `doWatch` can
+     * collapse them into a single OS watch instead of leaving duplicates that emit duplicate events.
+     */
+    protected resolveWatcherExcludes(resource: URI, excludes: string[]): string[] {
+        const resolved = new Set(excludes);
+        // always ignore temporary upload files
+        resolved.add('**/theia_upload_*');
+        const configured = this.preferences.get('files.watcherExclude', undefined, resource.toString());
+        if (configured) {
+            for (const pattern of Object.keys(configured)) {
+                if (configured[pattern]) {
+                    resolved.add(pattern);
+                }
+            }
+        }
+        return Array.from(resolved);
     }
 
     async doWatch(resource: URI, options: WatchOptions): Promise<Disposable> {
         const provider = await this.withProvider(resource);
         const key = this.toWatchKey(provider, resource, options);
 
-        // Only start watching if we are the first for the given key
-        const watcher = this.activeWatchers.get(key) || { count: 0, disposable: provider.watch(resource, options) };
-        if (!this.activeWatchers.has(key)) {
-            this.activeWatchers.set(key, watcher);
+        // (A) Exact-match dedup: if the same key already exists, just increment the count
+        const existing = this.activeWatchers.get(key);
+        if (existing) {
+            existing.count++;
+            return this.createWatcherDisposable(key, existing);
         }
 
-        // Increment usage counter
-        watcher.count += 1;
+        // (B) Check if an existing recursive parent watcher already covers this path
+        const subsumingParentKey = this.findSubsumingParent(provider, resource, options);
+        if (subsumingParentKey) {
+            const parentEntry = this.activeWatchers.get(subsumingParentKey) as RecursiveWatcherEntry;
+            const entry = this.createWatcherEntry(provider, resource, options, false);
+            entry.subsumingParent = parentEntry;
+            this.activeWatchers.set(key, entry);
+            parentEntry.subsumedChildren.add(key);
+            return this.createWatcherDisposable(key, entry);
+        }
 
+        // (C) Create a real OS-level watcher
+        const entry = this.createWatcherEntry(provider, resource, options);
+        this.activeWatchers.set(key, entry);
+
+        // (D) If this is a recursive watcher, index it and subsume existing children
+        if (this.isRecursiveWatcherEntry(entry)) {
+            this.indexRecursiveWatcher(provider, resource, key);
+            this.subsumeExistingChildren(provider, resource, key, entry);
+        }
+
+        return this.createWatcherDisposable(key, entry);
+    }
+
+    private createWatcherEntry(provider: FileSystemProvider, resource: URI, options: WatchOptions, startWatching: boolean = true): WatcherEntry {
+        const realWatcher = startWatching ? provider.watch(resource, options) : undefined;
+        if (options.recursive) {
+            const recursiveEntry: RecursiveWatcherEntry = {
+                resource, options, provider,
+                count: 1,
+                realWatcher,
+                subsumingParent: undefined,
+                subsumedChildren: new Set(),
+                compiledExcludes: options.excludes.map(pattern => new Minimatch(pattern, { dot: true })),
+            };
+            return recursiveEntry;
+        }
+        return {
+            resource, options, provider,
+            count: 1,
+            realWatcher,
+            subsumingParent: undefined,
+        };
+    }
+
+    private createWatcherDisposable(key: string, entry: WatcherEntry): Disposable {
         return Disposable.create(() => {
-
-            // Unref
-            watcher.count--;
-
-            // Dispose only when last user is reached
-            if (watcher.count === 0) {
-                watcher.disposable.dispose();
-                this.activeWatchers.delete(key);
+            entry.count--;
+            if (entry.count === 0) {
+                this.disposeWatcherEntry(key, entry);
             }
         });
+    }
+
+    private disposeWatcherEntry(key: string, entry: WatcherEntry): void {
+        // Unregister from parent if subsumed
+        if (entry.subsumingParent) {
+            entry.subsumingParent.subsumedChildren.delete(key);
+            entry.subsumingParent = undefined;
+        }
+
+        // If this is a recursive watcher with subsumed children, promote them.
+        // Remove from the index first so that promoted children don't re-parent to this dying entry.
+        // Only remove from the index if this entry has a real watcher — subsumed entries
+        // are never indexed, and removing would corrupt another watcher's index at the same URI.
+        if (this.isRecursiveWatcherEntry(entry)) {
+            if (entry.realWatcher) {
+                this.removeFromRecursiveIndex(entry.provider, entry.resource);
+            }
+            this.promoteSubsumedChildren(entry);
+        }
+
+        // Dispose the real OS watcher if any
+        if (entry.realWatcher) {
+            entry.realWatcher.dispose();
+        }
+
+        this.activeWatchers.delete(key);
+    }
+
+    private promoteSubsumedChildren(parentEntry: RecursiveWatcherEntry): void {
+        for (const childKey of parentEntry.subsumedChildren) {
+            const childEntry = this.activeWatchers.get(childKey);
+            if (!childEntry || childEntry.count === 0) {
+                continue;
+            }
+
+            childEntry.subsumingParent = undefined;
+
+            // Try to find another subsuming parent
+            const newParentKey = this.findSubsumingParent(childEntry.provider, childEntry.resource, childEntry.options);
+            if (newParentKey) {
+                const newParent = this.activeWatchers.get(newParentKey) as RecursiveWatcherEntry;
+                childEntry.subsumingParent = newParent;
+                newParent.subsumedChildren.add(childKey);
+            } else {
+                // No parent available — create a real OS watcher
+                childEntry.realWatcher = childEntry.provider.watch(childEntry.resource, childEntry.options);
+                // If this promoted child is recursive, re-index it so later promoted siblings can find it
+                if (this.isRecursiveWatcherEntry(childEntry)) {
+                    this.indexRecursiveWatcher(childEntry.provider, childEntry.resource, childKey);
+                }
+            }
+        }
+        parentEntry.subsumedChildren.clear();
+    }
+
+    private findSubsumingParent(provider: FileSystemProvider, resource: URI, childOptions: WatchOptions): string | undefined {
+        const tree = this.getRecursiveWatcherIndex(provider);
+
+        const parentKey = tree.findSubstr(resource);
+        if (!parentKey) {
+            return undefined;
+        }
+
+        const parentEntry = this.activeWatchers.get(parentKey);
+        if (!parentEntry || !this.isRecursiveWatcherEntry(parentEntry)) {
+            return undefined;
+        }
+
+        // Check if the child resource is excluded by the parent's exclude patterns
+        if (this.isExcludedByParent(parentEntry, resource)) {
+            return undefined;
+        }
+
+        // A parent can only subsume a child if the parent's excludes don't filter out
+        // events the child cares about. Every exclude of the parent must also be an
+        // exclude of the child; otherwise the child would silently miss events.
+        if (!this.areExcludesCompatible(parentEntry, childOptions)) {
+            return undefined;
+        }
+
+        return parentKey;
+    }
+
+    private isExcludedByParent(parentEntry: RecursiveWatcherEntry, childResource: URI): boolean {
+        if (parentEntry.compiledExcludes.length === 0) {
+            return false;
+        }
+
+        const caseSensitive = !!(parentEntry.provider.capabilities & FileSystemProviderCapabilities.PathCaseSensitive);
+        let parentUri = parentEntry.resource;
+        let childUri = childResource;
+        if (!caseSensitive) {
+            parentUri = parentUri.withPath(parentUri.path.toString().toLowerCase());
+            childUri = childUri.withPath(childUri.path.toString().toLowerCase());
+        }
+
+        const relativePath = parentUri.relative(childUri);
+        if (!relativePath) {
+            return false;
+        }
+
+        const relativeStr = relativePath.toString();
+        return parentEntry.compiledExcludes.some(pattern => this.matchesExcludePattern(pattern, relativeStr));
+    }
+
+    /**
+     * Returns true if the parent's excludes are compatible with the child, meaning
+     * the child won't silently miss events it expects. Excludes only matter when
+     * the child is recursive - a non-recursive child only watches its own directory,
+     * and `isExcludedByParent` already handles the case where the child's path itself
+     * is under an excluded directory. For recursive children, every exclude of the
+     * parent must also be an exclude of the child; otherwise the parent's OS watcher
+     * would filter out sub-paths the child cares about.
+     */
+    private areExcludesCompatible(parentEntry: RecursiveWatcherEntry, childOptions: WatchOptions): boolean {
+        if (!childOptions.recursive) {
+            return true;
+        }
+        if (parentEntry.compiledExcludes.length === 0) {
+            return true;
+        }
+        const childExcludes = new Set(childOptions.excludes);
+        return parentEntry.options.excludes.every(e => childExcludes.has(e));
+    }
+
+    private matchesExcludePattern(pattern: Minimatch, relativePath: string): boolean {
+        if (pattern.match(relativePath)) {
+            return true;
+        }
+        // Also test ancestor directories — if a directory is excluded, everything under it is excluded
+        const segments = relativePath.split('/');
+        let accumulated = '';
+        for (const segment of segments) {
+            accumulated = accumulated ? accumulated + '/' + segment : segment;
+            if (accumulated !== relativePath && pattern.match(accumulated)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private subsumeExistingChildren(provider: FileSystemProvider, parentResource: URI, parentKey: string, parentEntry: RecursiveWatcherEntry): void {
+        const caseSensitive = !!(provider.capabilities & FileSystemProviderCapabilities.PathCaseSensitive);
+        for (const [childKey, childEntry] of this.activeWatchers.entries()) {
+            if (childKey === parentKey) {
+                continue;
+            }
+            if (childEntry.subsumingParent) {
+                continue;
+            }
+            if (childEntry.provider !== provider) {
+                continue;
+            }
+            if (!parentResource.isEqualOrParent(childEntry.resource, caseSensitive)) {
+                continue;
+            }
+            if (this.isExcludedByParent(parentEntry, childEntry.resource)) {
+                continue;
+            }
+            if (!this.areExcludesCompatible(parentEntry, childEntry.options)) {
+                continue;
+            }
+
+            // Subsume: dispose the child's real watcher
+            if (childEntry.realWatcher) {
+                childEntry.realWatcher.dispose();
+                childEntry.realWatcher = undefined;
+            }
+            childEntry.subsumingParent = parentEntry;
+            parentEntry.subsumedChildren.add(childKey);
+
+            // If the child was itself a recursive watcher, re-parent its grandchildren
+            if (this.isRecursiveWatcherEntry(childEntry)) {
+                for (const grandchildKey of childEntry.subsumedChildren) {
+                    const grandchild = this.activeWatchers.get(grandchildKey);
+                    if (!grandchild) {
+                        continue;
+                    }
+                    // Check if the grandchild is compatible with the new parent
+                    if (this.isExcludedByParent(parentEntry, grandchild.resource) || !this.areExcludesCompatible(parentEntry, grandchild.options)) {
+                        // Grandchild can't be subsumed by the new parent — give it a real watcher
+                        grandchild.subsumingParent = undefined;
+                        grandchild.realWatcher = grandchild.provider.watch(grandchild.resource, grandchild.options);
+                        // If the promoted grandchild is recursive, re-index it so future watchers can find it
+                        if (this.isRecursiveWatcherEntry(grandchild)) {
+                            this.indexRecursiveWatcher(grandchild.provider, grandchild.resource, grandchildKey);
+                        }
+                    } else {
+                        grandchild.subsumingParent = parentEntry;
+                        parentEntry.subsumedChildren.add(grandchildKey);
+                    }
+                }
+                childEntry.subsumedChildren.clear();
+                // Only remove the child's index entry if it has a different URI than the parent.
+                // The parent was already indexed at its URI, and removing the child's
+                // entry would delete the parent's entry if they share the same URI.
+                if (!childEntry.resource.isEqual(parentResource, caseSensitive)) {
+                    this.removeFromRecursiveIndex(provider, childEntry.resource);
+                }
+            }
+        }
+    }
+
+    private getRecursiveWatcherIndex(provider: FileSystemProvider): TernarySearchTree<URI, string> {
+        let tree = this.recursiveWatcherIndexes.get(provider);
+        if (!tree) {
+            const caseSensitive = !!(provider.capabilities & FileSystemProviderCapabilities.PathCaseSensitive);
+            tree = TernarySearchTree.forUris<string>(caseSensitive);
+            this.recursiveWatcherIndexes.set(provider, tree);
+        }
+        return tree;
+    }
+
+    private indexRecursiveWatcher(provider: FileSystemProvider, resource: URI, key: string): void {
+        const tree = this.getRecursiveWatcherIndex(provider);
+        tree.set(resource, key);
+    }
+
+    private removeFromRecursiveIndex(provider: FileSystemProvider, resource: URI): void {
+        const tree = this.getRecursiveWatcherIndex(provider);
+        tree.delete(resource);
+    }
+
+    private isRecursiveWatcherEntry(entry: WatcherEntry): entry is RecursiveWatcherEntry {
+        return 'subsumedChildren' in entry;
     }
 
     private toWatchKey(provider: FileSystemProvider, resource: URI, options: WatchOptions): string {
@@ -1654,7 +2016,7 @@ export class FileService {
 
     protected throwIfFileSystemIsReadonly<T extends FileSystemProvider>(provider: T, resource: URI): T {
         if (provider.capabilities & FileSystemProviderCapabilities.Readonly) {
-            throw new FileOperationError(`Unable to modify readonly file ${this.resourceForError(resource)}`, FileOperationResult.FILE_PERMISSION_DENIED);
+            throw new FileOperationError(nls.localizeByDefault("Unable to modify read-only file '{0}'", this.resourceForError(resource)), FileOperationResult.FILE_PERMISSION_DENIED);
         }
 
         return provider;
@@ -1683,41 +2045,47 @@ export class FileService {
 
     async runFileOperationParticipants(target: URI, source: URI | undefined, operation: FileOperation): Promise<void> {
         const participantsTimeout = this.preferences['files.participants.timeout'];
-        if (participantsTimeout <= 0) {
+        if (participantsTimeout <= 0 || this.participants.length === 0) {
             return;
         }
 
         const cancellationTokenSource = new CancellationTokenSource();
 
-        return this.progressService.withProgress(this.progressLabel(operation), 'window', async () => {
-            for (const participant of this.participants) {
-                if (cancellationTokenSource.token.isCancellationRequested) {
-                    break;
-                }
+        return this.progressService.withProgress(
+            this.progressLabel(operation),
+            'notification',
+            async () => {
+                for (const participant of this.participants) {
+                    if (cancellationTokenSource.token.isCancellationRequested) {
+                        break;
+                    }
 
-                try {
-                    const promise = participant.participate(target, source, operation, participantsTimeout, cancellationTokenSource.token);
-                    await Promise.race([
-                        promise,
-                        timeout(participantsTimeout, cancellationTokenSource.token).then(() => cancellationTokenSource.dispose(), () => { /* no-op if cancelled */ })
-                    ]);
-                } catch (err) {
-                    console.warn(err);
+                    try {
+                        const promise = participant.participate(target, source, operation, participantsTimeout, cancellationTokenSource.token);
+                        await Promise.race([
+                            promise,
+                            timeout(participantsTimeout, cancellationTokenSource.token).then(() => cancellationTokenSource.dispose(), () => { /* no-op if cancelled */ })
+                        ]);
+                    } catch (err) {
+                        this.logger.warn(err);
+                    }
                 }
-            }
-        });
+            },
+            () => {
+                cancellationTokenSource.cancel();
+            });
     }
 
     private progressLabel(operation: FileOperation): string {
         switch (operation) {
             case FileOperation.CREATE:
-                return "Running 'File Create' participants...";
+                return nls.localizeByDefault("Running 'File Create' participants...");
             case FileOperation.MOVE:
-                return "Running 'File Rename' participants...";
+                return nls.localizeByDefault("Running 'File Rename' participants...");
             case FileOperation.COPY:
-                return "Running 'File Copy' participants...";
+                return nls.localizeByDefault("Running 'File Copy' participants...");
             case FileOperation.DELETE:
-                return "Running 'File Delete' participants...";
+                return nls.localizeByDefault("Running 'File Delete' participants...");
         }
     }
 
@@ -1748,6 +2116,8 @@ export class FileService {
             }
         } else if (detectedEncoding) {
             preferredEncoding = detectedEncoding;
+        } else if (this.preferences.get('files.encoding', undefined, resource.toString()) === UTF8_with_bom) {
+            preferredEncoding = UTF8; // if we did not detect UTF 8 BOM before, this can only be UTF 8 then
         }
 
         return this.getEncodingForResource(resource, preferredEncoding);
@@ -1778,4 +2148,18 @@ export class FileService {
     protected handleFileWatchError(): void {
         this.watcherErrorHandler.handleError();
     }
+}
+
+interface WatcherEntry {
+    readonly resource: URI;
+    readonly options: WatchOptions;
+    readonly provider: FileSystemProvider;
+    count: number;
+    realWatcher: Disposable | undefined;
+    subsumingParent: RecursiveWatcherEntry | undefined;
+}
+
+interface RecursiveWatcherEntry extends WatcherEntry {
+    readonly subsumedChildren: Set<string>;
+    readonly compiledExcludes: Minimatch[];
 }

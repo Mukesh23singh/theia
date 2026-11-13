@@ -1,11 +1,11 @@
 {
   "name": "@theia/cli",
-  "version": "1.18.0",
+  "version": "1.77.0",
   "description": "Theia CLI.",
   "publishConfig": {
     "access": "public"
   },
-  "license": "EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0",
+  "license": "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/eclipse-theia/theia.git"
@@ -17,41 +17,63 @@
   "files": [
     "bin",
     "lib",
-    "src"
+    "src",
+    "patches"
   ],
   "bin": {
-    "theia": "./bin/theia"
+    "theia": "./bin/theia.js",
+    "theia-patch": "./bin/theia-patch.js"
   },
   "scripts": {
+    "compile": "theiaext compile",
     "lint": "theiaext lint",
+    "test": "theiaext test",
     "build": "theiaext build",
     "watch": "theiaext watch",
     "clean": "theiaext clean"
   },
   "dependencies": {
-    "@theia/application-manager": "1.18.0",
-    "@theia/application-package": "1.18.0",
-    "@theia/ovsx-client": "1.18.0",
-    "@types/chai": "^4.2.7",
-    "@types/mkdirp": "^0.5.2",
-    "@types/mocha": "^5.2.7",
-    "@types/node-fetch": "^2.5.7",
-    "@types/puppeteer": "^2.0.0",
-    "@types/requestretry": "^1.12.3",
-    "@types/tar": "^4.0.3",
-    "chai": "^4.2.0",
-    "colors": "^1.4.0",
-    "decompress": "^4.2.1",
-    "https-proxy-agent": "^5.0.0",
-    "mocha": "^7.0.0",
-    "node-fetch": "^2.6.0",
-    "proxy-from-env": "^1.1.0",
-    "puppeteer": "^2.0.0",
-    "puppeteer-to-istanbul": "^1.2.2",
-    "temp": "^0.9.1",
-    "yargs": "^15.3.1"
+    "@theia/application-manager": "1.77.0",
+    "@theia/application-package": "1.77.0",
+    "@theia/ffmpeg": "1.77.0",
+    "@theia/localization-manager": "1.77.0",
+    "@theia/ovsx-client": "1.77.0",
+    "@theia/request": "1.77.0",
+    "@types/chai": "^4.3.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node-fetch": "^2.6.13",
+    "@types/tar-stream": "^3.1.5",
+    "@types/yauzl": "^3.4.0",
+    "chai": "^4.3.10",
+    "chalk": "4.0.0",
+    "escape-string-regexp": "4.0.0",
+    "glob": "^8.1.0",
+    "http-server": "^14.1.1",
+    "limiter": "^2.1.0",
+    "log-update": "^4.0.0",
+    "mocha": "^11.8.0",
+    "patch-package": "^8.0.1",
+    "puppeteer": "25.1.0",
+    "puppeteer-core": "25.1.0",
+    "puppeteer-to-istanbul": "1.4.0",
+    "tar-stream": "^3.2.2",
+    "temp": "^0.9.4",
+    "tslib": "^2.8.1",
+    "yargs": "^17.7.3",
+    "yauzl": "^3.4.0"
   },
   "devDependencies": {
-    "@types/proxy-from-env": "^1.0.1"
+    "@types/chai": "^4.3.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node-fetch": "^2.6.13",
+    "@types/proxy-from-env": "^1.0.4"
+  },
+  "gitHead": "21358137e41342742707f660b8e222f940a27652",
+  "exports": {
+    "./package.json": "./package.json",
+    "./lib/*.json": "./lib/*.json",
+    "./lib/*.js": "./lib/*.js",
+    "./lib/*": "./lib/*.js",
+    "./*": "./*"
   }
 }

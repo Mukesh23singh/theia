@@ -19,7 +19,7 @@
       "path": "../filesystem"
     },
     {
-      "path": "../navigator"
+      "path": "../monaco"
     }
   ]
 }

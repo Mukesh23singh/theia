@@ -1,24 +1,26 @@
-/********************************************************************************
- * Copyright (C) 2019 RedHat and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 RedHat and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable, inject } from 'inversify';
-import { isFirefox } from './browser';
-import { ClipboardService } from './clipboard-service';
-import { ILogger } from '../common/logger';
-import { MessageService } from '../common/message-service';
+import { injectable, inject, named } from 'inversify';
+import { isFirefox } from './browser.js';
+import { ClipboardService } from './clipboard-service.js';
+import { Emitter, Event } from '../common/event.js';
+import { ILogger } from '../common/logger.js';
+import { MessageService } from '../common/message-service.js';
+import { nls } from '../common/nls.js';
 
 export interface NavigatorClipboard {
     readText(): Promise<string>;
@@ -37,8 +39,11 @@ export class BrowserClipboardService implements ClipboardService {
     @inject(MessageService)
     protected readonly messageService: MessageService;
 
-    @inject(ILogger)
+    @inject(ILogger) @named('core:BrowserClipboardService')
     protected readonly logger: ILogger;
+
+    protected readonly onDidWriteTextEmitter = new Emitter<string>();
+    readonly onDidWriteText: Event<string> = this.onDidWriteTextEmitter.event;
 
     async readText(): Promise<string> {
         let permission;
@@ -52,16 +57,21 @@ export class BrowserClipboardService implements ClipboardService {
             } catch (e2) {
                 this.logger.error('Failed reading clipboard content.', e2);
                 if (isFirefox) {
-                    this.messageService.warn(`Clipboard API is not available.
-                    It can be enabled by 'dom.events.testing.asyncClipboard' preference on 'about:config' page. Then reload Theia.
-                    Note, it will allow FireFox getting full access to the system clipboard.`);
+                    this.messageService.warn(nls.localize(
+                        'theia/navigator/clipboardWarnFirefox',
+                        // eslint-disable-next-line max-len
+                        "Clipboard API is not available. It can be enabled by '{0}' preference on '{1}' page. Then reload Theia. Note, it will allow FireFox getting full access to the system clipboard.", 'dom.events.testing.asyncClipboard', 'about:config'
+                    ));
                 }
                 return '';
             }
         }
         if (permission.state === 'denied') {
             // most likely, the user intentionally denied the access
-            this.messageService.warn("Access to the clipboard is denied. Check your browser's permission.");
+            this.messageService.warn(nls.localize(
+                'theia/navigator/clipboardWarn',
+                "Access to the clipboard is denied. Check your browser's permission."
+            ));
             return '';
         }
         return this.getClipboardAPI().readText();
@@ -76,23 +86,30 @@ export class BrowserClipboardService implements ClipboardService {
             // in FireFox, Clipboard API isn't gated with the permissions
             try {
                 await this.getClipboardAPI().writeText(value);
+                this.onDidWriteTextEmitter.fire(value);
                 return;
             } catch (e2) {
                 this.logger.error('Failed writing to the clipboard.', e2);
                 if (isFirefox) {
-                    this.messageService.warn(`Clipboard API is not available.
-                    It can be enabled by 'dom.events.testing.asyncClipboard' preference on 'about:config' page. Then reload Theia.
-                    Note, it will allow FireFox getting full access to the system clipboard.`);
+                    this.messageService.warn(nls.localize(
+                        'theia/core/navigator/clipboardWarnFirefox',
+                        // eslint-disable-next-line max-len
+                        "Clipboard API is not available. It can be enabled by '{0}' preference on '{1}' page. Then reload Theia. Note, it will allow FireFox getting full access to the system clipboard.", 'dom.events.testing.asyncClipboard', 'about:config'
+                    ));
                 }
                 return;
             }
         }
         if (permission.state === 'denied') {
             // most likely, the user intentionally denied the access
-            this.messageService.warn("Access to the clipboard is denied. Check your browser's permission.");
+            this.messageService.warn(nls.localize(
+                'theia/core/navigator/clipboardWarn',
+                "Access to the clipboard is denied. Check your browser's permission."
+            ));
             return;
         }
-        return this.getClipboardAPI().writeText(value);
+        await this.getClipboardAPI().writeText(value);
+        this.onDidWriteTextEmitter.fire(value);
     }
 
     protected async queryPermission(name: string): Promise<PermissionStatus> {

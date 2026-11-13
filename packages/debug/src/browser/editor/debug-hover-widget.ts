@@ -1,32 +1,38 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import debounce = require('@theia/core/shared/lodash.debounce');
+import debounce from '@theia/core/shared/lodash.debounce';
 
-import { Widget } from '@theia/core/shared/@phosphor/widgets';
-import { Message } from '@theia/core/shared/@phosphor/messaging';
-import { injectable, postConstruct, inject, Container, interfaces } from '@theia/core/shared/inversify';
+import { MenuPath } from '@theia/core';
 import { Key } from '@theia/core/lib/browser';
 import { SourceTreeWidget } from '@theia/core/lib/browser/source-tree';
 import { Disposable, DisposableCollection } from '@theia/core/lib/common/disposable';
-import { DebugSessionManager } from '../debug-session-manager';
-import { DebugEditor } from './debug-editor';
-import { DebugExpressionProvider } from './debug-expression-provider';
-import { DebugHoverSource } from './debug-hover-source';
-import { DebugVariable } from '../console/debug-console-items';
+import { Message } from '@theia/core/shared/@lumino/messaging';
+import { Widget } from '@theia/core/shared/@lumino/widgets';
+import { Container, inject, injectable, interfaces, postConstruct } from '@theia/core/shared/inversify';
+import { URI as CodeUri } from '@theia/core/shared/vscode-uri';
+import * as monaco from '@theia/monaco-editor-core';
+import { IEditorHoverOptions } from '@theia/monaco-editor-core/esm/vs/editor/common/config/editorOptions.js';
+import { StandaloneServices } from '@theia/monaco-editor-core/esm/vs/editor/standalone/browser/standaloneServices.js';
+import { IConfigurationService } from '@theia/monaco-editor-core/esm/vs/platform/configuration/common/configuration.js';
+import { DebugVariable } from '../console/debug-console-items.js';
+import { DebugSessionManager } from '../debug-session-manager.js';
+import { DebugEditor } from './debug-editor.js';
+import { DebugExpressionProvider } from './debug-expression-provider.js';
+import { DebugHoverSource } from './debug-hover-source.js';
 
 export interface ShowDebugHoverOptions {
     selection: monaco.Range
@@ -43,12 +49,12 @@ export interface HideDebugHoverOptions {
 
 export function createDebugHoverWidgetContainer(parent: interfaces.Container, editor: DebugEditor): Container {
     const child = SourceTreeWidget.createContainer(parent, {
+        contextMenuPath: DebugHoverWidget.CONTEXT_MENU,
         virtualized: false
     });
     child.bind(DebugEditor).toConstantValue(editor);
     child.bind(DebugHoverSource).toSelf();
     child.unbind(SourceTreeWidget);
-    child.bind(DebugExpressionProvider).toSelf();
     child.bind(DebugHoverWidget).toSelf();
     return child;
 }
@@ -56,7 +62,9 @@ export function createDebugHoverWidgetContainer(parent: interfaces.Container, ed
 @injectable()
 export class DebugHoverWidget extends SourceTreeWidget implements monaco.editor.IContentWidget {
 
-    protected readonly toDispose = new DisposableCollection();
+    static CONTEXT_MENU: MenuPath = ['debug-hover-context-menu'];
+    static EDIT_MENU: MenuPath = [...DebugHoverWidget.CONTEXT_MENU, 'a_edit'];
+    static WATCH_MENU: MenuPath = [...DebugHoverWidget.CONTEXT_MENU, 'b_watch'];
 
     @inject(DebugEditor)
     protected readonly editor: DebugEditor;
@@ -72,6 +80,8 @@ export class DebugHoverWidget extends SourceTreeWidget implements monaco.editor.
 
     allowEditorOverflow = true;
 
+    protected suppressEditorHoverToDispose = new DisposableCollection();
+
     static ID = 'debug.editor.hover';
     getId(): string {
         return DebugHoverWidget.ID;
@@ -85,13 +95,16 @@ export class DebugHoverWidget extends SourceTreeWidget implements monaco.editor.
     }
 
     @postConstruct()
-    protected init(): void {
+    protected override init(): void {
         super.init();
         this.domNode.className = 'theia-debug-hover';
         this.titleNode.className = 'theia-debug-hover-title';
         this.domNode.appendChild(this.titleNode);
         this.contentNode.className = 'theia-debug-hover-content';
         this.domNode.appendChild(this.contentNode);
+
+        // for stopping scroll events from contentNode going to the editor
+        this.contentNode.addEventListener('wheel', e => e.stopPropagation());
 
         this.editor.getControl().addContentWidget(this);
         this.source = this.hoverSource;
@@ -107,15 +120,16 @@ export class DebugHoverWidget extends SourceTreeWidget implements monaco.editor.
         ]);
     }
 
-    dispose(): void {
+    override dispose(): void {
+        this.suppressEditorHoverToDispose.dispose();
         this.toDispose.dispose();
     }
 
-    show(options?: ShowDebugHoverOptions): void {
+    override show(options?: ShowDebugHoverOptions): void {
         this.schedule(() => this.doShow(options), options && options.immediate);
     }
 
-    hide(options?: HideDebugHoverOptions): void {
+    override hide(options?: HideDebugHoverOptions): void {
         this.schedule(() => this.doHide(), options && options.immediate);
     }
 
@@ -134,6 +148,8 @@ export class DebugHoverWidget extends SourceTreeWidget implements monaco.editor.
         if (!this.isVisible) {
             return;
         }
+        this.suppressEditorHoverToDispose.dispose();
+
         if (this.domNode.contains(document.activeElement)) {
             this.editor.getControl().focus();
         }
@@ -147,6 +163,7 @@ export class DebugHoverWidget extends SourceTreeWidget implements monaco.editor.
     }
 
     protected async doShow(options: ShowDebugHoverOptions | undefined = this.options): Promise<void> {
+
         if (!this.isEditorFrame()) {
             this.hide();
             return;
@@ -163,11 +180,16 @@ export class DebugHoverWidget extends SourceTreeWidget implements monaco.editor.
         }
 
         this.options = options;
-        const matchingExpression = this.expressionProvider.get(this.editor.getControl().getModel()!, options.selection);
-        if (!matchingExpression) {
+
+        const result = await this.expressionProvider.getEvaluatableExpression(this.editor, options.selection);
+
+        if (!result?.matchingExpression) {
             this.hide();
             return;
         }
+
+        this.options.selection = monaco.Range.lift(result.range);
+
         const toFocus = new DisposableCollection();
         if (this.options.focus === true) {
             toFocus.push(this.model.onNodeRefreshed(() => {
@@ -175,7 +197,7 @@ export class DebugHoverWidget extends SourceTreeWidget implements monaco.editor.
                 this.activate();
             }));
         }
-        const expression = await this.hoverSource.evaluate(matchingExpression);
+        const expression = await this.hoverSource.evaluate(result.matchingExpression);
         if (!expression) {
             toFocus.dispose();
             this.hide();
@@ -200,6 +222,8 @@ export class DebugHoverWidget extends SourceTreeWidget implements monaco.editor.
             }
         }
 
+        this.suppressEditorHover();
+
         super.show();
         await new Promise<void>(resolve => {
             setTimeout(() => window.requestAnimationFrame(() => {
@@ -209,8 +233,34 @@ export class DebugHoverWidget extends SourceTreeWidget implements monaco.editor.
         });
     }
 
+    /**
+     * Suppress the default editor-contribution hover from Code.
+     * Otherwise, both `textdocument/hover` and the debug hovers are visible
+     * at the same time when hovering over a symbol.
+     * This will priorize the debug hover over the editor hover.
+     */
+    protected suppressEditorHover(): void {
+        const codeEditor = this.editor.getControl();
+        codeEditor.updateOptions({ hover: { enabled: 'off' } });
+        this.suppressEditorHoverToDispose.push(Disposable.create(() => {
+            const model = codeEditor.getModel();
+            const overrides = {
+                resource: CodeUri.parse(this.editor.getResourceUri().toString()),
+                overrideIdentifier: model?.getLanguageId(),
+            };
+            const { enabled, delay, sticky } = StandaloneServices.get(IConfigurationService).getValue<IEditorHoverOptions>('editor.hover', overrides);
+            codeEditor.updateOptions({
+                hover: {
+                    enabled,
+                    delay,
+                    sticky
+                }
+            });
+        }));
+    }
+
     protected isEditorFrame(): boolean {
-        return this.sessions.isCurrentEditorFrame(this.editor.getControl().getModel()!.uri);
+        return this.sessions.isCurrentEditorFrame(this.editor.getResourceUri());
     }
 
     getPosition(): monaco.editor.IContentWidgetPosition {
@@ -218,17 +268,18 @@ export class DebugHoverWidget extends SourceTreeWidget implements monaco.editor.
             return undefined!;
         }
         const position = this.options && this.options.selection.getStartPosition();
-        const word = position && this.editor.getControl().getModel()!.getWordAtPosition(position);
-        return position && word ? {
-            position: new monaco.Position(position.lineNumber, word.startColumn),
-            preference: [
-                monaco.editor.ContentWidgetPositionPreference.ABOVE,
-                monaco.editor.ContentWidgetPositionPreference.BELOW
-            ]
-        } : undefined!;
+        return position
+            ? {
+                position: new monaco.Position(position.lineNumber, position.column),
+                preference: [
+                    monaco.editor.ContentWidgetPositionPreference.ABOVE,
+                    monaco.editor.ContentWidgetPositionPreference.BELOW,
+                ],
+            }
+            : undefined!;
     }
 
-    protected onUpdateRequest(msg: Message): void {
+    protected override onUpdateRequest(msg: Message): void {
         super.onUpdateRequest(msg);
         const { expression } = this.hoverSource;
         const value = expression && expression.value || '';
@@ -236,7 +287,7 @@ export class DebugHoverWidget extends SourceTreeWidget implements monaco.editor.
         this.titleNode.title = value;
     }
 
-    protected onAfterAttach(msg: Message): void {
+    protected override onAfterAttach(msg: Message): void {
         super.onAfterAttach(msg);
         this.addKeyListener(this.domNode, Key.ESCAPE, () => this.hide());
     }

@@ -1,36 +1,37 @@
-/********************************************************************************
- * Copyright (c) 2021 SAP SE or an SAP affiliate company and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 SAP SE or an SAP affiliate company and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, inject, optional } from '@theia/core/shared/inversify';
 import {
-    TreeWidget, TreeProps, ContextMenuRenderer, TreeNode, TreeModel,
+    DiffUris, TreeWidget, TreeProps, ContextMenuRenderer, TreeNode, TreeModel,
     CompositeTreeNode, NodeProps, QuickViewService
 } from '@theia/core/lib/browser';
 import * as React from '@theia/core/shared/react';
-import { BulkEditInfoNode, BulkEditNode } from './bulk-edit-tree';
-import { BulkEditTreeModel } from './bulk-edit-tree-model';
+import { BulkEditInfoNode, BulkEditNode } from './bulk-edit-tree.js';
+import { BulkEditTreeModel } from './bulk-edit-tree-model.js';
 import { FileResourceResolver } from '@theia/filesystem/lib/browser';
 import URI from '@theia/core/lib/common/uri';
 import { EditorWidget, EditorManager, EditorOpenerOptions } from '@theia/editor/lib/browser';
-import { DiffUris } from '@theia/core/lib/browser';
 import { MEMORY_TEXT } from '@theia/core/lib/common';
 import { Disposable } from '@theia/core/lib/common/disposable';
+import { nls } from '@theia/core/lib/common/nls';
+import { ResourceEdit, ResourceFileEdit, ResourceTextEdit } from '@theia/monaco-editor-core/esm/vs/editor/browser/services/bulkEditService.js';
 
 export const BULK_EDIT_TREE_WIDGET_ID = 'bulkedit';
-export const BULK_EDIT_WIDGET_NAME = 'Refactor Preview';
+export const BULK_EDIT_WIDGET_NAME = nls.localizeByDefault('Refactor Preview');
 
 @injectable()
 export class BulkEditTreeWidget extends TreeWidget {
@@ -47,8 +48,8 @@ export class BulkEditTreeWidget extends TreeWidget {
 
     constructor(
         @inject(TreeProps) readonly treeProps: TreeProps,
-        @inject(BulkEditTreeModel) readonly model: BulkEditTreeModel,
-        @inject(ContextMenuRenderer) readonly contextMenuRenderer: ContextMenuRenderer
+        @inject(BulkEditTreeModel) override readonly model: BulkEditTreeModel,
+        @inject(ContextMenuRenderer) override readonly contextMenuRenderer: ContextMenuRenderer
     ) {
         super(treeProps, model, contextMenuRenderer);
 
@@ -63,19 +64,19 @@ export class BulkEditTreeWidget extends TreeWidget {
         }));
     }
 
-    async initModel(edits: monaco.editor.ResourceEdit[]): Promise<void> {
+    async initModel(edits: ResourceEdit[]): Promise<void> {
         await this.model.initModel(edits, await this.getFileContentsMap(edits));
         this.quickView?.showItem(BULK_EDIT_WIDGET_NAME);
     }
 
-    protected handleClickEvent(node: TreeNode | undefined, event: React.MouseEvent<HTMLElement>): void {
-        super.handleClickEvent(node, event);
+    protected override tapNode(node?: TreeNode): void {
+        super.tapNode(node);
         if (BulkEditNode.is(node)) {
             this.doOpen(node);
         }
     }
 
-    protected handleDown(event: KeyboardEvent): void {
+    protected override handleDown(event: KeyboardEvent): void {
         const node = this.model.getNextSelectableNode();
         super.handleDown(event);
         if (BulkEditNode.is(node)) {
@@ -83,7 +84,7 @@ export class BulkEditTreeWidget extends TreeWidget {
         }
     }
 
-    protected handleUp(event: KeyboardEvent): void {
+    protected override handleUp(event: KeyboardEvent): void {
         const node = this.model.getPrevSelectableNode();
         super.handleUp(event);
         if (BulkEditNode.is(node)) {
@@ -91,14 +92,14 @@ export class BulkEditTreeWidget extends TreeWidget {
         }
     }
 
-    protected renderTree(model: TreeModel): React.ReactNode {
+    protected override renderTree(model: TreeModel): React.ReactNode {
         if (CompositeTreeNode.is(model.root) && model.root.children.length > 0) {
             return super.renderTree(model);
         }
-        return <div className='theia-widget-noInfo noEdits'>No edits have been detected in the workspace so far.</div>;
+        return <div className='theia-widget-noInfo noEdits'>{nls.localizeByDefault('Made no edits')}</div>;
     }
 
-    protected renderCaption(node: TreeNode, props: NodeProps): React.ReactNode {
+    protected override renderCaption(node: TreeNode, props: NodeProps): React.ReactNode {
         if (BulkEditInfoNode.is(node)) {
             return this.decorateBulkEditInfoNode(node);
         } else if (BulkEditNode.is(node)) {
@@ -120,9 +121,9 @@ export class BulkEditTreeWidget extends TreeWidget {
                     const startColumn = +bulkEdit.textEdit.range.startColumn;
                     const endColumn = +bulkEdit.textEdit.range.endColumn;
                     const lineText = lines[startLineNum - 1];
-                    const beforeMatch = (startColumn > 26 ? '... ' : '') + lineText.substr(0, startColumn - 1).substr(-25);
+                    const beforeMatch = (startColumn > 26 ? '... ' : '') + lineText.substring(0, startColumn - 1).slice(-25);
                     const replacedText = lineText.substring(startColumn - 1, endColumn - 1);
-                    const afterMatch = lineText.substr(startColumn - 1 + replacedText.length, 75);
+                    const afterMatch = lineText.substring(startColumn - 1 + replacedText.length, startColumn - 1 + replacedText.length + 75);
 
                     return <div className='bulkEditNode'>
                         <div className='message'>
@@ -149,14 +150,14 @@ export class BulkEditTreeWidget extends TreeWidget {
         </div>;
     }
 
-    private async getFileContentsMap(edits: monaco.editor.ResourceEdit[]): Promise<Map<string, string>> {
+    private async getFileContentsMap(edits: ResourceEdit[]): Promise<Map<string, string>> {
         const fileContentMap = new Map<string, string>();
 
         if (edits) {
             for (const element of edits) {
                 if (element) {
-                    const filePath = (('newResource' in element) && (element as monaco.editor.ResourceFileEdit).newResource?.path) ||
-                        (('resource' in element) && (element as monaco.editor.ResourceTextEdit).resource.path);
+                    const filePath = (('newResource' in element) && (element as ResourceFileEdit).newResource?.path) ||
+                        (('resource' in element) && (element as ResourceTextEdit).resource.path);
 
                     if (filePath && !fileContentMap.has(filePath)) {
                         const fileUri = new URI(filePath).withScheme('file');
@@ -192,9 +193,9 @@ export class BulkEditTreeWidget extends TreeWidget {
                         const startColumn = node.bulkEdit.textEdit.range.startColumn;
                         const endColumn = node.bulkEdit.textEdit.range.endColumn;
                         const lineText = lines[startLineNum - 1];
-                        const beforeMatch = lineText.substr(0, startColumn - 1);
+                        const beforeMatch = lineText.substring(0, startColumn - 1);
                         const replacedText = lineText.substring(startColumn - 1, endColumn - 1);
-                        const afterMatch = lineText.substr(startColumn - 1 + replacedText.length);
+                        const afterMatch = lineText.substring(startColumn - 1 + replacedText.length);
                         lines[startLineNum - 1] = beforeMatch + node.bulkEdit.textEdit.text + afterMatch;
                     }
                 }

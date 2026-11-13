@@ -1,48 +1,83 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
+import { injectable, inject, postConstruct, named } from '@theia/core/shared/inversify';
 import debounce from 'p-debounce';
-import * as showdown from 'showdown';
-import * as sanitize from 'sanitize-html';
-import { Emitter } from '@theia/core/lib/common/event';
+import markdownit from '@theia/core/shared/markdown-it';
+import * as DOMPurify from '@theia/core/shared/dompurify';
+import { Emitter, Event } from '@theia/core/lib/common/event';
 import { CancellationToken, CancellationTokenSource } from '@theia/core/lib/common/cancellation';
 import { HostedPluginSupport } from '@theia/plugin-ext/lib/hosted/browser/hosted-plugin';
-import { VSXExtension, VSXExtensionFactory } from './vsx-extension';
+import { VSXExtension, VSXExtensionFactory } from './vsx-extension.js';
 import { ProgressService } from '@theia/core/lib/common/progress-service';
-import { VSXExtensionsSearchModel } from './vsx-extensions-search-model';
-import { Deferred } from '@theia/core/lib/common/promise-util';
-import { PreferenceInspectionScope, PreferenceService } from '@theia/core/lib/browser';
+import { VSXExtensionsSearchModel } from './vsx-extensions-search-model.js';
+import { PreferenceInspection, PreferenceInspectionScope, PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
-import { RecommendedExtensions } from './recommended-extensions/recommended-extensions-preference-contribution';
+import { RecommendedExtensions } from '../common/recommended-extensions-preference-contribution.js';
 import URI from '@theia/core/lib/common/uri';
-import { VSXResponseError, VSXSearchParam } from '@theia/ovsx-client/lib/ovsx-types';
-import { OVSXAsyncClient } from './ovsx-async-client';
+import { VSXAllVersions, VSXExtensionRaw, VSXSearchEntry, VSXSearchOptions, VSXTargetPlatform } from '@theia/ovsx-client/lib/ovsx-types';
+import { OVSXApiFilterProvider } from '@theia/ovsx-client';
+import { ApplicationServer } from '@theia/core/lib/common/application-protocol';
+import { VSXRegistryService } from '../common/vsx-registry-service.js';
+import { RequestContext, RequestService } from '@theia/core/shared/@theia/request';
+import { HostedPluginServer, PluginIdentifiers, PluginType } from '@theia/plugin-ext';
+import { HostedPluginWatcher } from '@theia/plugin-ext/lib/hosted/browser/hosted-plugin-watcher';
+import { ILogger } from '@theia/core';
 
 @injectable()
 export class VSXExtensionsModel {
-
+    protected initialized: Promise<void>;
+    /**
+     * Single source for all extensions
+     */
+    protected readonly extensions = new Map<string, VSXExtension>();
     protected readonly onDidChangeEmitter = new Emitter<void>();
-    readonly onDidChange = this.onDidChangeEmitter.event;
+    protected disabled = new Set<PluginIdentifiers.UnversionedId>();
+    protected uninstalled = new Set<PluginIdentifiers.VersionedId>();
+    protected deployed = new Set<PluginIdentifiers.VersionedId>();
+    protected _versionedInstalled = new Set<PluginIdentifiers.VersionedId>();
+    protected _unversionedInstalled = new Set<PluginIdentifiers.UnversionedId>();
+    protected _recommended = new Set<string>();
+    protected _searchResult = new Set<string>();
+    protected builtins = new Set<PluginIdentifiers.UnversionedId>();
+    protected _searchError?: string;
 
-    @inject(OVSXAsyncClient)
-    protected client: OVSXAsyncClient;
+    protected searchCancellationTokenSource = new CancellationTokenSource();
+    protected updateSearchResult = debounce(async () => {
+        const { token } = this.resetSearchCancellationTokenSource();
+        // Only the free-text portion is sent to OVSX; `@`-prefixed mode and type tokens are
+        // consumed locally by the search model and would otherwise return no OVSX matches.
+        const { freeText } = this.search.parseQuery();
+        await this.doUpdateSearchResult({ query: freeText, includeAllVersions: true }, token);
+    }, 500);
+
+    @inject(VSXRegistryService)
+    protected readonly vsxRegistryService: VSXRegistryService;
+
+    @inject(RequestService)
+    protected readonly request: RequestService;
 
     @inject(HostedPluginSupport)
     protected readonly pluginSupport: HostedPluginSupport;
+
+    @inject(HostedPluginWatcher)
+    protected pluginWatcher: HostedPluginWatcher;
+
+    @inject(HostedPluginServer)
+    protected readonly pluginServer: HostedPluginServer;
 
     @inject(VSXExtensionFactory)
     protected readonly extensionFactory: VSXExtensionFactory;
@@ -59,27 +94,129 @@ export class VSXExtensionsModel {
     @inject(VSXExtensionsSearchModel)
     readonly search: VSXExtensionsSearchModel;
 
-    protected readonly initialized = new Deferred<void>();
+    @inject(OVSXApiFilterProvider)
+    protected vsxApiFilter: OVSXApiFilterProvider;
+
+    @inject(ApplicationServer)
+    protected readonly applicationServer: ApplicationServer;
+
+    @inject(ILogger) @named('vsx-registry:VSXExtensionsModel')
+    protected readonly logger: ILogger;
 
     @postConstruct()
-    protected async init(): Promise<void> {
-        await this.client.ready;
+    protected init(): void {
+        this.initialized = this.doInit().catch(e => this.logger.error(e));
+    }
+
+    protected async doInit(): Promise<void> {
         await Promise.all([
             this.initInstalled(),
             this.initSearchResult(),
             this.initRecommended(),
         ]);
-        this.initialized.resolve();
+    }
+
+    get onDidChange(): Event<void> {
+        return this.onDidChangeEmitter.event;
+    }
+
+    get installed(): IterableIterator<string> {
+        return this._versionedInstalled.values();
+    }
+
+    get searchError(): string | undefined {
+        return this._searchError;
+    }
+
+    get searchResult(): IterableIterator<string> {
+        return this._searchResult.values();
+    }
+
+    get recommended(): IterableIterator<string> {
+        return this._recommended.values();
+    }
+
+    setOnlyShowVerifiedExtensions(bool: boolean): void {
+        if (this.preferences.get('extensions.onlyShowVerifiedExtensions') !== bool) {
+            this.preferences.updateValue('extensions.onlyShowVerifiedExtensions', bool);
+        }
+        this.updateSearchResult();
+    }
+
+    isBuiltIn(id: string): boolean {
+        return this.builtins.has(id as PluginIdentifiers.UnversionedId);
+    }
+
+    /**
+     * @param id should be a ${@link PluginIdentifiers.VersionedId}
+     * @returns `true` if the specific version queried installed
+     */
+    isInstalledAtSpecificVersion(id: string): boolean {
+        return this._versionedInstalled.has(id as PluginIdentifiers.VersionedId);
+    }
+
+    /**
+     * @param id should be an unversioned Identifier
+     * @returns `true` if any version of the plugin is installed
+     */
+    isInstalled(id: string): boolean {
+        return this._unversionedInstalled.has(id as PluginIdentifiers.UnversionedId);
+    }
+
+    isUninstalled(id: string): boolean {
+        return this.uninstalled.has(id as PluginIdentifiers.VersionedId);
+    }
+
+    isDeployed(id: string): boolean {
+        return this.deployed.has(id as PluginIdentifiers.VersionedId);
+    }
+
+    isDisabled(id: string): boolean {
+        return this.disabled.has(id as PluginIdentifiers.UnversionedId);
+    }
+
+    getExtension(id: string): VSXExtension | undefined {
+        return this.extensions.get(id);
+    }
+
+    resolve(id: string): Promise<VSXExtension> {
+        return this.doChange(async () => {
+            await this.initialized;
+            const extension = await this.refresh(id);
+            if (!extension) {
+                throw new Error(`Failed to resolve ${id} extension.`);
+            }
+            if (extension.readme === undefined && extension.readmeUrl) {
+                try {
+                    // A README served by the local plugin host (installed extensions) is same-origin and can be
+                    // fetched directly by the frontend. A remote registry README must go through the backend
+                    // `VSXRegistryService`, which only allows fetching from configured OVSX registry origins.
+                    const rawReadme = extension.localReadmeUrl
+                        ? RequestContext.asText(await this.request.request({ url: extension.localReadmeUrl }))
+                        : await this.vsxRegistryService.fetchReadme(extension.readmeUrl);
+                    if (rawReadme) {
+                        const readme = this.compileReadme(rawReadme);
+                        extension.update({ readme });
+                    }
+                } catch (e) {
+                    this.logger.error(`[${id}]: failed to compile readme, reason:`, e);
+                }
+            }
+            return extension;
+        });
     }
 
     protected async initInstalled(): Promise<void> {
         await this.pluginSupport.willStart;
-        this.pluginSupport.onDidChangePlugins(() => this.updateInstalled());
         try {
             await this.updateInstalled();
         } catch (e) {
-            console.error(e);
+            this.logger.error(e);
         }
+
+        this.pluginWatcher.onDidDeploy(() => {
+            this.updateInstalled();
+        });
     }
 
     protected async initSearchResult(): Promise<void> {
@@ -87,7 +224,7 @@ export class VSXExtensionsModel {
         try {
             await this.updateSearchResult();
         } catch (e) {
-            console.error(e);
+            this.logger.error(e);
         }
     }
 
@@ -101,42 +238,19 @@ export class VSXExtensionsModel {
         try {
             await this.updateRecommended();
         } catch (e) {
-            console.error(e);
+            this.logger.error(e);
         }
     }
 
-    /**
-     * single source of all extensions
-     */
-    protected readonly extensions = new Map<string, VSXExtension>();
-
-    protected _installed = new Set<string>();
-    get installed(): IterableIterator<string> {
-        return this._installed.values();
+    protected resetSearchCancellationTokenSource(): CancellationTokenSource {
+        this.searchCancellationTokenSource.cancel();
+        return this.searchCancellationTokenSource = new CancellationTokenSource();
     }
 
-    isInstalled(id: string): boolean {
-        return this._installed.has(id);
-    }
-
-    protected _searchResult = new Set<string>();
-    get searchResult(): IterableIterator<string> {
-        return this._searchResult.values();
-    }
-
-    protected _recommended = new Set<string>();
-    get recommended(): IterableIterator<string> {
-        return this._recommended.values();
-    }
-
-    getExtension(id: string): VSXExtension | undefined {
-        return this.extensions.get(id);
-    }
-
-    protected setExtension(id: string): VSXExtension {
+    protected setExtension(id: string, version?: string): VSXExtension {
         let extension = this.extensions.get(id);
         if (!extension) {
-            extension = this.extensionFactory({ id });
+            extension = this.extensionFactory({ id, version, model: this });
             this.extensions.set(id, extension);
         }
         return extension;
@@ -147,73 +261,155 @@ export class VSXExtensionsModel {
     protected doChange<T>(task: () => Promise<T>, token: CancellationToken = CancellationToken.None): Promise<T | undefined> {
         return this.progressService.withProgress('', 'extensions', async () => {
             if (token && token.isCancellationRequested) {
-                return undefined;
+                return;
             }
             const result = await task();
             if (token && token.isCancellationRequested) {
-                return undefined;
+                return;
             }
-            this.onDidChangeEmitter.fire(undefined);
+            this.onDidChangeEmitter.fire();
             return result;
         });
     }
 
-    protected searchCancellationTokenSource = new CancellationTokenSource();
-    protected updateSearchResult = debounce(() => {
-        this.searchCancellationTokenSource.cancel();
-        this.searchCancellationTokenSource = new CancellationTokenSource();
-        const query = this.search.query;
-        return this.doUpdateSearchResult({ query, includeAllVersions: true }, this.searchCancellationTokenSource.token);
-    }, 150);
-    protected doUpdateSearchResult(param: VSXSearchParam, token: CancellationToken): Promise<void> {
+    protected doUpdateSearchResult(param: VSXSearchOptions, token: CancellationToken): Promise<void> {
         return this.doChange(async () => {
-            const result = await this.client.search(param);
-            if (token.isCancellationRequested) {
+            this._searchResult = new Set<string>();
+            if (!param.query) {
                 return;
             }
-            const searchResult = new Set<string>();
-            for (const data of result.extensions) {
-                const id = data.namespace.toLowerCase() + '.' + data.name.toLowerCase();
-                const extension = this.client.getLatestCompatibleVersion(data);
-                if (!extension) {
-                    continue;
+            const filter = await this.vsxApiFilter();
+            try {
+                const result = await this.vsxRegistryService.search(param);
+
+                if (token.isCancellationRequested) {
+                    return;
                 }
-                this.setExtension(id).update(Object.assign(data, {
-                    publisher: data.namespace,
-                    downloadUrl: data.files.download,
-                    iconUrl: data.files.icon,
-                    readmeUrl: data.files.readme,
-                    licenseUrl: data.files.license,
-                    version: extension.version
-                }));
-                searchResult.add(id);
+                for (const data of result.extensions) {
+                    const id = data.namespace.toLowerCase() + '.' + data.name.toLowerCase();
+                    const allVersions = filter.getLatestCompatibleVersion(data);
+                    if (!allVersions) {
+                        continue;
+                    }
+                    if (this.preferences.get('extensions.onlyShowVerifiedExtensions')) {
+                        this.fetchVerifiedStatus(id, allVersions).then(verified => {
+                            this.doChange(() => {
+                                this.addExtensions(data, id, allVersions, !!verified);
+                                return Promise.resolve();
+                            });
+                        });
+                    } else {
+                        this.addExtensions(data, id, allVersions);
+                        this.fetchVerifiedStatus(id, allVersions).then(verified => {
+                            this.doChange(() => {
+                                let extension = this.getExtension(id);
+                                extension = this.setExtension(id);
+                                extension.update(Object.assign({
+                                    verified: verified
+                                }));
+                                return Promise.resolve();
+                            });
+                        });
+                    }
+                }
+            } catch (error) {
+                this._searchError = error?.message || String(error);
             }
-            this._searchResult = searchResult;
+
         }, token);
     }
 
+    protected async fetchVerifiedStatus(id: string, allVersions: VSXAllVersions): Promise<boolean | undefined> {
+        try {
+            const res = await this.vsxRegistryService.query({ extensionId: id, extensionVersion: allVersions.version, includeAllVersions: true });
+            const extension = res.extensions?.[0];
+            let verified = extension?.verified;
+            if (!verified && extension?.publishedBy.loginName === 'open-vsx') {
+                verified = true;
+            }
+            return verified;
+        } catch (error) {
+            this.logger.error(error);
+            return false;
+        }
+    }
+
+    protected addExtensions(data: VSXSearchEntry, id: string, allVersions: VSXAllVersions, verified?: boolean): void {
+        if (!this.preferences.get('extensions.onlyShowVerifiedExtensions') || verified) {
+            const extension = this.setExtension(id);
+            extension.update(Object.assign(data, {
+                publisher: data.namespace,
+                downloadUrl: data.files.download,
+                iconUrl: data.files.icon,
+                readmeUrl: data.files.readme,
+                licenseUrl: data.files.license,
+                version: allVersions.version,
+                verified: verified
+            }));
+            this._searchResult.add(id);
+        }
+    }
+
     protected async updateInstalled(): Promise<void> {
-        const prevInstalled = this._installed;
+        const [deployed, uninstalled, disabled, currInstalled] = await Promise.all([
+            this.pluginServer.getDeployedPluginIds(),
+            this.pluginServer.getUninstalledPluginIds(),
+            this.pluginServer.getDisabledPluginIds(),
+            this.pluginServer.getInstalledPluginIds()
+        ]);
+
+        this.uninstalled = new Set();
+        uninstalled.forEach(id => this.uninstalled.add(id));
+        this.disabled = new Set(disabled);
+        this.deployed = new Set();
+        deployed.forEach(id => this.deployed.add(id));
+
+        const prevInstalled = this._versionedInstalled;
+        const installedVersioned = new Set<PluginIdentifiers.VersionedId>();
         return this.doChange(async () => {
-            const plugins = this.pluginSupport.plugins;
-            const currInstalled = new Set<string>();
             const refreshing = [];
-            for (const plugin of plugins) {
-                if (plugin.model.engine.type === 'vscode') {
-                    const id = plugin.model.id;
-                    this._installed.delete(id);
-                    const extension = this.setExtension(id);
-                    currInstalled.add(extension.id);
-                    refreshing.push(this.refresh(id));
+            for (const versionedId of currInstalled) {
+                installedVersioned.add(versionedId);
+                const idAndVersion = PluginIdentifiers.idAndVersionFromVersionedId(versionedId);
+                if (idAndVersion) {
+                    this._versionedInstalled.delete(versionedId);
+                    this.setExtension(idAndVersion.id, idAndVersion.version);
+                    refreshing.push(this.refresh(idAndVersion.id, idAndVersion.version));
                 }
             }
-            for (const id of this._installed) {
-                refreshing.push(this.refresh(id));
+            for (const id of this._versionedInstalled) {
+                const extension = this.getExtension(id);
+                if (!extension) { continue; }
+                refreshing.push(this.refresh(id, extension.version));
             }
-            Promise.all(refreshing);
+            await Promise.all(refreshing);
             const installed = new Set([...prevInstalled, ...currInstalled]);
             const installedSorted = Array.from(installed).sort((a, b) => this.compareExtensions(a, b));
-            this._installed = new Set(installedSorted.values());
+            this._versionedInstalled = new Set(installedSorted);
+            this._unversionedInstalled = new Set(installedSorted.map(PluginIdentifiers.toUnversioned));
+
+            const missingIds = new Set<PluginIdentifiers.VersionedId>();
+            for (const id of installedVersioned) {
+                const unversionedId = PluginIdentifiers.unversionedFromVersioned(id);
+                const plugin = this.pluginSupport.getPlugin(unversionedId);
+                if (plugin) {
+                    if (plugin.type === PluginType.System) {
+                        this.builtins.add(unversionedId);
+                    } else {
+                        this.builtins.delete(unversionedId);
+                    }
+                } else {
+                    missingIds.add(id);
+                }
+            }
+            const missing = await this.pluginServer.getDeployedPlugins([...missingIds.values()]);
+            for (const plugin of missing) {
+                if (plugin.type === PluginType.System) {
+                    this.builtins.add(PluginIdentifiers.componentsToUnversionedId(plugin.metadata.model));
+                } else {
+                    this.builtins.delete(PluginIdentifiers.componentsToUnversionedId(plugin.metadata.model));
+                }
+            }
         });
     }
 
@@ -224,7 +420,7 @@ export class VSXExtensionsModel {
 
             const updateRecommendationsForScope = (scope: PreferenceInspectionScope, root?: URI) => {
                 const { recommendations, unwantedRecommendations } = this.getRecommendationsForScope(scope, root);
-                recommendations.forEach(recommendation => allRecommendations.add(recommendation));
+                recommendations.forEach(recommendation => allRecommendations.add(recommendation.toLowerCase()));
                 unwantedRecommendations.forEach(unwantedRecommendation => allUnwantedRecommendations.add(unwantedRecommendation));
             };
 
@@ -236,7 +432,7 @@ export class VSXExtensionsModel {
             if (this.workspaceService.saved) {
                 updateRecommendationsForScope('workspaceValue');
             }
-            const recommendedSorted = new Set(Array.from(allRecommendations).sort((a, b) => this.compareExtensions(a, b)).values());
+            const recommendedSorted = new Set(Array.from(allRecommendations).sort((a, b) => this.compareExtensions(a, b)));
             allUnwantedRecommendations.forEach(unwantedRecommendation => recommendedSorted.delete(unwantedRecommendation));
             this._recommended = recommendedSorted;
             return Promise.all(Array.from(recommendedSorted, plugin => this.refresh(plugin)));
@@ -244,60 +440,49 @@ export class VSXExtensionsModel {
     }
 
     protected getRecommendationsForScope(scope: PreferenceInspectionScope, root?: URI): Required<RecommendedExtensions> {
-        const configuredValue = this.preferences.inspect<Required<RecommendedExtensions>>('extensions', root?.toString())?.[scope];
+        const inspection: PreferenceInspection<Required<RecommendedExtensions>> | undefined =
+            this.preferences.inspect<Required<RecommendedExtensions>>('extensions', root?.toString());
+        const configuredValue = inspection ? inspection[scope] : undefined;
         return {
             recommendations: configuredValue?.recommendations ?? [],
             unwantedRecommendations: configuredValue?.unwantedRecommendations ?? [],
         };
     }
 
-    resolve(id: string): Promise<VSXExtension> {
-        return this.doChange(async () => {
-            await this.initialized.promise;
-            const extension = await this.refresh(id);
-            if (!extension) {
-                throw new Error(`Failed to resolve ${id} extension.`);
-            }
-            if (extension.readmeUrl) {
-                try {
-                    const rawReadme = await this.client.fetchText(extension.readmeUrl);
-                    const readme = this.compileReadme(rawReadme);
-                    extension.update({ readme });
-                } catch (e) {
-                    if (!VSXResponseError.is(e) || e.statusCode !== 404) {
-                        console.error(`[${id}]: failed to compile readme, reason:`, e);
-                    }
-                }
-            }
-            return extension;
-        });
-    }
-
     protected compileReadme(readmeMarkdown: string): string {
-        const markdownConverter = new showdown.Converter({
-            noHeaderId: true,
-            strikethrough: true,
-            headerLevelStart: 2
-        });
-
-        const readmeHtml = markdownConverter.makeHtml(readmeMarkdown);
-        return sanitize(readmeHtml, {
-            allowedTags: sanitize.defaults.allowedTags.concat(['h1', 'h2', 'img'])
-        });
+        const readmeHtml = markdownit({ html: true }).render(readmeMarkdown);
+        return DOMPurify.sanitize(readmeHtml);
     }
 
-    protected async refresh(id: string): Promise<VSXExtension | undefined> {
+    protected async refresh(id: string, version?: string): Promise<VSXExtension | undefined> {
         try {
             let extension = this.getExtension(id);
             if (!this.shouldRefresh(extension)) {
                 return extension;
             }
-            const data = await this.client.getLatestCompatibleExtensionVersion(id);
-            if (!data) {
-                return;
+            const targetPlatform = await this.applicationServer.getApplicationPlatform() as VSXTargetPlatform;
+            let data: VSXExtensionRaw | undefined;
+            if (version === undefined) {
+                data = await this.vsxRegistryService.findLatestCompatibleExtension({
+                    extensionId: id,
+                    includeAllVersions: true,
+                    targetPlatform
+                });
+            } else {
+                data = await this.vsxRegistryService.findLatestCompatibleExtension({
+                    extensionId: id,
+                    extensionVersion: version,
+                    includeAllVersions: true,
+                    targetPlatform
+                });
             }
-            if (data.error) {
-                return this.onDidFailRefresh(id, data.error);
+            if (!data || data.error) {
+                return this.onDidFailRefresh(id, data?.error ?? 'No data found');
+            }
+            if (!data.verified) {
+                if (data.publishedBy.loginName === 'open-vsx') {
+                    data.verified = true;
+                }
             }
             extension = this.setExtension(id);
             extension.update(Object.assign(data, {
@@ -306,7 +491,8 @@ export class VSXExtensionsModel {
                 iconUrl: data.files.icon,
                 readmeUrl: data.files.readme,
                 licenseUrl: data.files.license,
-                version: data.version
+                version: data.version,
+                verified: data.verified
             }));
             return extension;
         } catch (e) {
@@ -319,19 +505,15 @@ export class VSXExtensionsModel {
      * @param extension the extension to refresh.
      */
     protected shouldRefresh(extension?: VSXExtension): boolean {
-        if (extension === undefined) {
-            return true;
-        }
-        return !extension.builtin;
+        return extension === undefined || extension.plugin === undefined;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    protected onDidFailRefresh(id: string, error: any): VSXExtension | undefined {
+    protected onDidFailRefresh(id: string, error: unknown): VSXExtension | undefined {
         const cached = this.getExtension(id);
-        if (cached && cached.installed) {
+        if (cached && (cached.deployed || cached.installed)) {
             return cached;
         }
-        console.error(`[${id}]: failed to refresh, reason:`, error);
+        this.logger.error(`[${id}]: failed to refresh, reason:`, error);
         return undefined;
     }
 

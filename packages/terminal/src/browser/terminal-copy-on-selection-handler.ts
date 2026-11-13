@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2019 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, postConstruct } from '@theia/core/shared/inversify';
 import { isFirefox } from '@theia/core/lib/browser';
@@ -50,6 +50,17 @@ export class TerminalCopyOnSelectionHandler {
         } catch (e) { }
 
         return false;
+    }
+
+    /**
+     * Synchronously copy text to clipboard using document.execCommand('copy')
+     * with the document-level copy event interceptor. This approach avoids race
+     * conditions when callers don't await command completion (e.g., context menu
+     * selections or automated tests).
+     */
+    syncCopy(text: string): void {
+        this.textToCopy = text;
+        this.executeCommandCopy();
     }
 
     private executeCommandCopy(): void {

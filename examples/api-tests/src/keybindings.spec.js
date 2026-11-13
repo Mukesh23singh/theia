@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 // @ts-check
 describe('Keybindings', function () {
@@ -21,7 +21,7 @@ describe('Keybindings', function () {
 
     const { Disposable, DisposableCollection } = require('@theia/core/lib/common/disposable');
     const { isOSX } = require('@theia/core/lib/common/os');
-    const { CommonCommands } = require('@theia/core/lib/browser/common-frontend-contribution');
+    const { CommonCommands } = require('@theia/core/lib/browser/common-commands');
     const { TerminalService } = require('@theia/terminal/lib/browser/base/terminal-service');
     const { TerminalCommands } = require('@theia/terminal/lib/browser/terminal-frontend-contribution');
     const { ApplicationShell } = require('@theia/core/lib/browser/shell/application-shell');
@@ -73,7 +73,7 @@ describe('Keybindings', function () {
             when: 'false'
         }));
 
-        const editor = await editorManager.open(workspaceService.tryGetRoots()[0].resource.resolve('package.json'), {
+        const editor = await editorManager.open(workspaceService.tryGetRoots()[0].resource.resolve('esbuild.mjs'), {
             mode: 'activate',
             selection: {
                 start: {
@@ -83,7 +83,6 @@ describe('Keybindings', function () {
             }
         });
         toTearDown.push(editor);
-
         const waitForCommand = new Deferred();
         toTearDown.push(commands.onWillExecuteCommand(e => waitForCommand.resolve(e.commandId)));
         keybindings.dispatchKeyDown({

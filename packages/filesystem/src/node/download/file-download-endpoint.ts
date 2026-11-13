@@ -1,28 +1,29 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import * as url from 'url';
 import { injectable, inject, named } from '@theia/core/shared/inversify';
-import { json } from 'body-parser';
-import { Application, Router } from '@theia/core/shared/express';
+// A CommonJS module whose exports cannot be detected statically, so it is imported as a whole.
+import bodyParser from 'body-parser';
+import { Application, Router, RequestHandler } from '@theia/core/shared/express';
 import { BackendApplicationContribution } from '@theia/core/lib/node/backend-application';
-import { FileUri } from '@theia/core/lib/node/file-uri';
-import { FileDownloadHandler } from './file-download-handler';
+import { HttpConnectionValidator } from '@theia/core/lib/node';
+import { FileUri } from '@theia/core/lib/common/file-uri';
+import { FileDownloadHandler } from './file-download-handler.js';
 
 @injectable()
 export class FileDownloadEndpoint implements BackendApplicationContribution {
@@ -41,16 +42,21 @@ export class FileDownloadEndpoint implements BackendApplicationContribution {
     @named(FileDownloadHandler.DOWNLOAD_LINK)
     protected readonly downloadLinkHandler: FileDownloadHandler;
 
+    @inject(HttpConnectionValidator)
+    protected readonly connectionValidator: HttpConnectionValidator;
+
     configure(app: Application): void {
+        // Reject unauthenticated/cross-origin requests to the file read endpoints.
+        const guard: RequestHandler = (request, response, next) => this.connectionValidator.validateRequest(request, response, next);
         const router = Router();
         router.get('/download', (request, response) => this.downloadLinkHandler.handle(request, response));
         router.get('/', (request, response) => this.singleFileDownloadHandler.handle(request, response));
         router.put('/', (request, response) => this.multiFileDownloadHandler.handle(request, response));
         // Content-Type: application/json
-        app.use(json());
-        app.use(FileDownloadEndpoint.PATH, router);
-        app.get('/file', (request, response) => {
-            const uri = url.parse(request.url).query;
+        app.use(bodyParser.json());
+        app.use(FileDownloadEndpoint.PATH, guard, router);
+        app.get('/file', guard, (request, response) => {
+            const uri = new URL(request.url, 'http://localhost').search.slice(1);
             if (!uri) {
                 response.status(400).send('invalid uri');
                 return;

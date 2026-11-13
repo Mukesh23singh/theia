@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2021 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
@@ -20,17 +20,39 @@
  *--------------------------------------------------------------------------------------------*/
 // code copied and modified from https://github.com/microsoft/vscode/blob/1.55.2/src/vs/workbench/api/common/extHostSecrets.ts
 
-import { Plugin, PLUGIN_RPC_CONTEXT, SecretsExt, SecretsMain } from '../common/plugin-api-rpc';
-import { RPCProtocol } from '../common/rpc-protocol';
+import { inject, injectable } from '@theia/core/shared/inversify';
+import { Plugin, PLUGIN_RPC_CONTEXT, SecretsExt, SecretsMain } from '../common/plugin-api-rpc.js';
+import { RPCProtocol } from '../common/rpc-protocol.js';
 import { Event, Emitter } from '@theia/core/lib/common/event';
+import { Disposable, DisposableGroup } from '@theia/core';
 import * as theia from '@theia/plugin';
 
-export class SecretsExtImpl implements SecretsExt {
+export interface PasswordChange {
+    extensionId: string;
+    key: string;
+}
+
+export const InternalSecretsExt = Symbol('InternalSecretsExt');
+export interface InternalSecretsExt extends SecretsExt {
+    keys(extensionId: string): Promise<string[]>;
+
+    get(extensionId: string, key: string): Promise<string | undefined>;
+
+    store(extensionId: string, key: string, value: string): Promise<void>;
+
+    delete(extensionId: string, key: string): Promise<void>;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onDidChangePassword(listener: (e: PasswordChange) => any, thisArgs?: any, disposables?: DisposableGroup): Disposable;
+}
+
+@injectable()
+export class SecretsExtImpl implements InternalSecretsExt {
     private proxy: SecretsMain;
-    private onDidChangePasswordEmitter = new Emitter<{ extensionId: string, key: string }>();
+    private onDidChangePasswordEmitter = new Emitter<PasswordChange>();
     readonly onDidChangePassword = this.onDidChangePasswordEmitter.event;
 
-    constructor(rpc: RPCProtocol) {
+    constructor(@inject(RPCProtocol) rpc: RPCProtocol) {
         this.proxy = rpc.getProxy(PLUGIN_RPC_CONTEXT.SECRETS_MAIN);
     }
 
@@ -49,17 +71,21 @@ export class SecretsExtImpl implements SecretsExt {
     delete(extensionId: string, key: string): Promise<void> {
         return this.proxy.$deletePassword(extensionId, key);
     }
+
+    keys(extensionId: string): Promise<string[]> {
+        return this.proxy.$getKeys(extensionId);
+    }
 }
 
 export class SecretStorageExt implements theia.SecretStorage {
 
     protected readonly id: string;
-    readonly secretState: SecretsExtImpl;
+    readonly secretState: InternalSecretsExt;
 
     private onDidChangeEmitter = new Emitter<theia.SecretStorageChangeEvent>();
     readonly onDidChange: Event<theia.SecretStorageChangeEvent> = this.onDidChangeEmitter.event;
 
-    constructor(pluginDescription: Plugin, secretState: SecretsExtImpl) {
+    constructor(pluginDescription: Plugin, secretState: InternalSecretsExt) {
         this.id = pluginDescription.model.id.toLowerCase();
         this.secretState = secretState;
 
@@ -80,5 +106,9 @@ export class SecretStorageExt implements theia.SecretStorage {
 
     delete(key: string): Promise<void> {
         return this.secretState.delete(this.id, key);
+    }
+
+    keys(): Promise<string[]> {
+        return this.secretState.keys(this.id) || [];
     }
 }

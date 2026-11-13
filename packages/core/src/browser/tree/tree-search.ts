@@ -1,27 +1,27 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { inject, injectable, postConstruct } from 'inversify';
-import { Disposable, DisposableCollection } from '../../common/disposable';
-import { Event, Emitter } from '../../common/event';
-import { Tree, TreeNode } from './tree';
-import { TreeDecoration } from './tree-decorator';
-import { FuzzySearch } from './fuzzy-search';
-import { TopDownTreeIterator } from './tree-iterator';
-import { LabelProvider } from '../label-provider';
+import { Disposable, DisposableCollection } from '../../common/disposable.js';
+import { Event, Emitter } from '../../common/event.js';
+import { Tree, TreeNode } from './tree.js';
+import { TreeDecoration } from './tree-decorator.js';
+import { FuzzySearch } from './fuzzy-search.js';
+import { TopDownTreeIterator } from './tree-iterator.js';
+import { LabelProvider } from '../label-provider.js';
 
 @injectable()
 export class TreeSearch implements Disposable {

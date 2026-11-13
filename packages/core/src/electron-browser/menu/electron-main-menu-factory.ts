@@ -1,33 +1,28 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import * as electron from '../../../shared/electron';
-import { inject, injectable } from 'inversify';
-import {
-    CommandRegistry, isOSX, ActionMenuNode, CompositeMenuNode,
-    MAIN_MENU_BAR, MenuModelRegistry, MenuPath, MenuNode
-} from '../../common';
-import { Keybinding } from '../../common/keybinding';
-import { PreferenceService, KeybindingRegistry, CommonCommands } from '../../browser';
-import { ContextKeyService } from '../../browser/context-key-service';
-import debounce = require('lodash.debounce');
-import { ContextMenuContext } from '../../browser/menu/context-menu-context';
-import { MAXIMIZED_CLASS } from '../../browser/shell/theia-dock-panel';
+import { inject, injectable, postConstruct } from 'inversify';
+import { isOSX, MAIN_MENU_BAR, MenuNode, CompoundMenuNode, Group, RenderedMenuNode, CommandMenu, AcceleratorSource, MenuPath, PreferenceService } from '../../common/index.js';
+import { CommonCommands } from '../../browser/index.js';
+import debounce from '../../../shared/lodash.debounce/index.cjs';
+import { BrowserMainMenuFactory } from '../../browser/menu/browser-menu-plugin.js';
+import { ContextMatcher } from '../../browser/context-key-service.js';
+import { electronMenuAcceleratorMetadata, MenuDto, MenuRole } from '../../electron-common/electron-api.js';
 
 /**
  * Representation of possible electron menu options.
@@ -38,6 +33,22 @@ export interface ElectronMenuOptions {
      * Defaults to `true`.
      */
     readonly showDisabled?: boolean;
+
+    /**
+     * Controls whether to render disabled items as disabled
+     * Defaults to `true`
+     */
+    readonly honorDisabled?: boolean;
+    /**
+     * A DOM context to use when evaluating any `when` clauses
+     * of menu items registered for this item.
+     */
+    context?: HTMLElement;
+    /**
+     * A context key service to use when evaluating any `when` clauses.
+     * If none is provided, the global context will be used.
+     */
+    contextKeyService?: ContextMatcher;
 }
 
 /**
@@ -54,203 +65,235 @@ export type ElectronMenuItemRole = ('undo' | 'redo' | 'cut' | 'copy' | 'paste' |
     'selectNextTab' | 'selectPreviousTab' | 'mergeAllWindows' | 'clearRecentDocuments' |
     'moveTabToNewWindow' | 'windowMenu');
 
+function traverseMenuDto(items: MenuDto[], callback: (item: MenuDto) => void): void {
+    for (const item of items) {
+        callback(item);
+        if (item.submenu) {
+            traverseMenuDto(item.submenu, callback);
+        }
+    }
+}
+
+function traverseMenuModel(effectivePath: MenuPath, item: MenuNode, callback: (item: MenuNode, path: MenuPath) => void): void {
+    callback(item, effectivePath);
+    if (CompoundMenuNode.is(item)) {
+        for (const child of item.children) {
+            traverseMenuModel([...effectivePath, child.id], child, callback);
+        }
+    }
+}
+
 @injectable()
-export class ElectronMainMenuFactory {
+export class ElectronMainMenuFactory extends BrowserMainMenuFactory {
 
-    protected _menu: Electron.Menu | undefined;
-    protected _toggledCommands: Set<string> = new Set();
+    protected menu?: MenuDto[];
 
-    @inject(ContextKeyService)
-    protected readonly contextKeyService: ContextKeyService;
+    @inject(PreferenceService)
+    protected preferencesService: PreferenceService;
 
-    @inject(ContextMenuContext)
-    protected readonly context: ContextMenuContext;
+    /**
+     * The title bar style ('native' or 'custom'). Set by {@link ElectronMenuContribution}
+     * after querying the main process for the active style.
+     */
+    titleBarStyle?: string;
 
-    constructor(
-        @inject(CommandRegistry) protected readonly commandRegistry: CommandRegistry,
-        @inject(PreferenceService) protected readonly preferencesService: PreferenceService,
-        @inject(MenuModelRegistry) protected readonly menuProvider: MenuModelRegistry,
-        @inject(KeybindingRegistry) protected readonly keybindingRegistry: KeybindingRegistry
-    ) {
-        preferencesService.onPreferenceChanged(
-            debounce(e => {
-                if (e.preferenceName === 'window.menuBarVisibility') {
-                    this.setMenuBar();
-                }
-                if (this._menu) {
-                    for (const item of this._toggledCommands) {
-                        this._menu.getMenuItemById(item).checked = this.commandRegistry.isToggled(item);
-                    }
-                    electron.remote.getCurrentWindow().setMenu(this._menu);
-                }
-            }, 10)
-        );
-        keybindingRegistry.onKeybindingsChanged(() => {
+    setMenuBar = debounce(() => this.doSetMenuBar(), 100);
+
+    @postConstruct()
+    postConstruct(): void {
+        this.keybindingRegistry.onKeybindingsChanged(() => {
             this.setMenuBar();
+        });
+        this.menuProvider.onDidChange(() => {
+            this.setMenuBar();
+        });
+        this.preferencesService.ready.then(() => {
+            this.preferencesService.onPreferenceChanged(
+                debounce(e => {
+                    if (e.preferenceName === 'window.menuBarVisibility') {
+                        this.setMenuBar();
+                    }
+                    if (this.menu) {
+                        const menuModel = this.menuProvider.getMenu(MAIN_MENU_BAR)!;
+                        const toggledMap = new Map<string, MenuDto>();
+                        traverseMenuDto(this.menu, item => {
+                            if (item.id) {
+                                toggledMap.set(item.id, item);
+                            }
+                        });
+                        let anyChanged = false;
+
+                        traverseMenuModel(MAIN_MENU_BAR, menuModel, ((item, path) => {
+                            if (CommandMenu.is(item)) {
+                                const isToggled = item.isToggled(path);
+                                const menuItem = toggledMap.get(item.id);
+                                if (menuItem && isToggled !== menuItem.checked) {
+                                    anyChanged = true;
+                                    menuItem.type = isToggled ? 'checkbox' : 'normal';
+                                    menuItem.checked = isToggled;
+                                }
+                            }
+                        }));
+
+                        if (anyChanged) {
+                            window.electronTheiaCore.setMenu(this.menu);
+                        }
+                    }
+                }, 10)
+            );
         });
     }
 
-    async setMenuBar(): Promise<void> {
-        await this.preferencesService.ready;
-        const createdMenuBar = this.createMenuBar();
-        if (isOSX) {
-            electron.remote.Menu.setApplicationMenu(createdMenuBar);
-        } else {
-            electron.remote.getCurrentWindow().setMenu(createdMenuBar);
-        }
-    }
-
-    createMenuBar(): Electron.Menu | null {
+    doSetMenuBar(): void {
         const preference = this.preferencesService.get<string>('window.menuBarVisibility') || 'classic';
-        const maxWidget = document.getElementsByClassName(MAXIMIZED_CLASS);
-        if (preference === 'visible' || (preference === 'classic' && maxWidget.length === 0)) {
-            const menuModel = this.menuProvider.getMenu(MAIN_MENU_BAR);
-            const template = this.fillMenuTemplate([], menuModel);
-            if (isOSX) {
-                template.unshift(this.createOSXMenu());
-            }
-            const menu = electron.remote.Menu.buildFromTemplate(template);
-            this._menu = menu;
-            return this._menu;
+        const isFullScreen = window.electronTheiaCore.isFullScreen();
+        const isCustomTitleBar = this.titleBarStyle === 'custom';
+
+        switch (preference) {
+            case 'visible':
+                this.menu = this.createElectronMenuBar();
+                window.electronTheiaCore.setMenu(this.menu);
+                window.electronTheiaCore.setMenuBarVisible(true);
+                window.electronTheiaCore.setAutoHideMenuBar(false);
+                break;
+            case 'toggle':
+                if (isCustomTitleBar) {
+                    // With custom title bar, the Lumino menu bar handles toggle via Alt-key listener.
+                    // Do not set autoHideMenuBar on the native window to prevent it from appearing.
+                    window.electronTheiaCore.setMenuBarVisible(false);
+                    window.electronTheiaCore.setAutoHideMenuBar(false);
+                } else {
+                    // With native title bar, Electron's autoHideMenuBar handles Alt toggling.
+                    this.menu = this.createElectronMenuBar();
+                    window.electronTheiaCore.setMenu(this.menu);
+                    window.electronTheiaCore.setMenuBarVisible(false);
+                    window.electronTheiaCore.setAutoHideMenuBar(true);
+                }
+                break;
+            case 'hidden':
+                window.electronTheiaCore.setMenuBarVisible(false);
+                window.electronTheiaCore.setAutoHideMenuBar(false);
+                break;
+            case 'compact':
+                window.electronTheiaCore.setMenuBarVisible(false);
+                window.electronTheiaCore.setAutoHideMenuBar(false);
+                break;
+            case 'classic':
+            default:
+                this.menu = this.createElectronMenuBar();
+                window.electronTheiaCore.setMenu(this.menu);
+                window.electronTheiaCore.setMenuBarVisible(!isFullScreen);
+                window.electronTheiaCore.setAutoHideMenuBar(isFullScreen);
+                break;
         }
-        this._menu = undefined;
-        // eslint-disable-next-line no-null/no-null
-        return null;
     }
 
-    createContextMenu(menuPath: MenuPath, args?: any[]): Electron.Menu {
-        const menuModel = this.menuProvider.getMenu(menuPath);
-        const template = this.fillMenuTemplate([], menuModel, args, { showDisabled: false });
-        return electron.remote.Menu.buildFromTemplate(template);
+    createElectronMenuBar(): MenuDto[] {
+        const menuModel = this.menuProvider.getMenu(MAIN_MENU_BAR)!;
+        const menu = this.fillMenuTemplate([], MAIN_MENU_BAR, menuModel, [], this.contextKeyService, { honorDisabled: false }, false);
+        if (isOSX) {
+            menu.unshift(this.createOSXMenu());
+        }
+        return menu;
     }
 
-    protected fillMenuTemplate(items: Electron.MenuItemConstructorOptions[],
-        menuModel: CompositeMenuNode,
-        args: any[] = [],
-        options?: ElectronMenuOptions
-    ): Electron.MenuItemConstructorOptions[] {
-        const showDisabled = (options?.showDisabled === undefined) ? true : options?.showDisabled;
-        for (const menu of menuModel.children) {
-            if (menu instanceof CompositeMenuNode) {
-                if (menu.children.length > 0) {
-                    // do not render empty nodes
+    createElectronContextMenu(menuPath: MenuPath, menu: CompoundMenuNode, contextMatcher: ContextMatcher, args?: any[],
+        context?: HTMLElement, skipSingleRootNode?: boolean): MenuDto[] {
+        return this.fillMenuTemplate([], menuPath, menu, args, contextMatcher, { showDisabled: true, context }, true);
+    }
 
-                    if (menu.isSubmenu) { // submenu node
+    protected fillMenuTemplate(parentItems: MenuDto[],
+        menuPath: MenuPath,
+        menu: MenuNode,
+        args: unknown[] = [],
+        contextMatcher: ContextMatcher,
+        options: ElectronMenuOptions,
+        skipRoot: boolean
+    ): MenuDto[] {
+        const showDisabled = options?.showDisabled !== false;
+        const honorDisabled = options?.honorDisabled !== false;
 
-                        const submenu = this.fillMenuTemplate([], menu, args, options);
-                        if (submenu.length === 0) {
-                            continue;
-                        }
+        const effectivePath = menu.effectiveMenuPath || menuPath;
 
-                        items.push({
-                            label: menu.label,
-                            submenu
-                        });
+        if (CompoundMenuNode.is(menu) && menu.children.length && menu.isVisible(effectivePath, contextMatcher, options.context, ...args)) {
+            if (Group.is(menu) && menu.id === 'inline') {
+                return parentItems;
+            }
 
-                    } else { // group node
-
-                        // process children
-                        const submenu = this.fillMenuTemplate([], menu, args, options);
-                        if (submenu.length === 0) {
-                            continue;
-                        }
-
-                        if (items.length > 0) {
-                            // do not put a separator above the first group
-
-                            items.push({
-                                type: 'separator'
-                            });
-                        }
-
-                        // render children
-                        items.push(...submenu);
-                    }
-                }
-            } else if (menu instanceof ActionMenuNode) {
-                const node = menu.altNode && this.context.altPressed ? menu.altNode : menu;
-                const commandId = node.action.commandId;
-
-                // That is only a sanity check at application startup.
-                if (!this.commandRegistry.getCommand(commandId)) {
-                    console.debug(`Skipping menu item with missing command: "${commandId}".`);
-                    continue;
-                }
-
-                if (!this.commandRegistry.isVisible(commandId, ...args)
-                    || (!!node.action.when && !this.contextKeyService.match(node.action.when))) {
-                    continue;
-                }
-
-                // We should omit rendering context-menu items which are disabled.
-                if (!showDisabled && !this.commandRegistry.isEnabled(commandId, ...args)) {
-                    continue;
-                }
-
-                const bindings = this.keybindingRegistry.getKeybindingsForCommand(commandId);
-
-                let accelerator;
-
-                /* Only consider the first keybinding. */
-                if (bindings.length > 0) {
-                    const binding = bindings[0];
-                    accelerator = this.acceleratorFor(binding);
-                }
-
-                const menuItem = {
-                    id: node.id,
-                    label: node.label,
-                    type: this.commandRegistry.getToggledHandler(commandId, ...args) ? 'checkbox' : 'normal',
-                    checked: this.commandRegistry.isToggled(commandId, ...args),
-                    enabled: true, // https://github.com/eclipse-theia/theia/issues/446
-                    visible: true,
-                    accelerator,
-                    click: () => this.execute(commandId, args)
-                } as Electron.MenuItemConstructorOptions;
-
-                if (isOSX) {
-                    const role = this.roleFor(node.id);
-                    if (role) {
-                        menuItem.role = role;
-                        delete menuItem.click;
-                    }
-                }
-                items.push(menuItem);
-
-                if (this.commandRegistry.getToggledHandler(commandId, ...args)) {
-                    this._toggledCommands.add(commandId);
-                }
+            if (menu.contextKeyOverlays) {
+                const overlays = menu.contextKeyOverlays;
+                contextMatcher = this.services.contextKeyService.createOverlay(Object.keys(overlays).map(key => [key, overlays[key]]));
+            }
+            const children = menu.children;
+            const myItems: MenuDto[] = [];
+            children.forEach(child => this.fillMenuTemplate(myItems, [...effectivePath, child.id], child, args, contextMatcher, options, false));
+            if (myItems.length === 0) {
+                return parentItems;
+            }
+            if (!skipRoot && RenderedMenuNode.is(menu)) {
+                parentItems.push({ label: menu.label, submenu: myItems });
             } else {
-                items.push(...this.handleDefault(menu, args, options));
+                if (parentItems.length && parentItems[parentItems.length - 1].type !== 'separator') {
+                    parentItems.push({ type: 'separator' });
+                }
+                parentItems.push(...myItems);
+                parentItems.push({ type: 'separator' });
             }
+        } else if (CommandMenu.is(menu)) {
+            if (!menu.isVisible(effectivePath, contextMatcher, options.context, ...args)) {
+                return parentItems;
+            }
+
+            // We should omit rendering context-menu items which are disabled.
+            if (!showDisabled && !menu.isEnabled(effectivePath, ...args)) {
+                return parentItems;
+            }
+
+            const acceleratorSequence = AcceleratorSource.is(menu) ? menu.getAccelerator(options.context, 'physical') : [];
+
+            const menuItem: MenuDto = {
+                id: menu.id,
+                label: menu.label,
+                type: menu.isToggled(effectivePath, ...args) ? 'checkbox' : 'normal',
+                checked: menu.isToggled(effectivePath, ...args),
+                enabled: !honorDisabled || menu.isEnabled(effectivePath, ...args), // see https://github.com/eclipse-theia/theia/issues/446
+                visible: true,
+                ...electronMenuAcceleratorMetadata(acceleratorSequence),
+                execute: async () => {
+                    const wasToggled = menuItem.checked;
+                    await menu.run(effectivePath, ...args);
+                    const isToggled = menu.isToggled(effectivePath, ...args);
+                    if (isToggled !== wasToggled) {
+                        menuItem.type = isToggled ? 'checkbox' : 'normal';
+                        menuItem.checked = isToggled;
+                        window.electronTheiaCore.setMenu(this.menu);
+                    }
+                }
+            };
+
+            // Only assign Electron roles when no custom args are present.
+            // Custom args indicate that command handlers have context-dependent
+            // behavior (e.g. chat view copying the whole message when there is
+            // no DOM selection) that would be bypassed by the native role.
+            const role = args.length === 0 ? this.roleFor(menu.id) : undefined;
+            if (role) {
+                menuItem.role = role;
+                delete menuItem.execute;
+            }
+            parentItems.push(menuItem);
         }
-        return items;
+        return parentItems;
     }
 
-    protected handleDefault(menuNode: MenuNode, args: any[] = [], options?: ElectronMenuOptions): Electron.MenuItemConstructorOptions[] {
-        return [];
-    }
-
-    /**
-     * Return a user visible representation of a keybinding.
-     */
-    protected acceleratorFor(keybinding: Keybinding): string {
-        const bindingKeySequence = this.keybindingRegistry.resolveKeybinding(keybinding);
-        // FIXME see https://github.com/electron/electron/issues/11740
-        // Key Sequences can't be represented properly in the electron menu.
-        //
-        // We can do what VS Code does, and append the chords as a suffix to the menu label.
-        // https://github.com/eclipse-theia/theia/issues/1199#issuecomment-430909480
-        if (bindingKeySequence.length > 1) {
-            return '';
+    protected undefinedOrMatch(contextKeyService: ContextMatcher, expression?: string, context?: HTMLElement): boolean {
+        if (expression) {
+            return contextKeyService.match(expression, context);
         }
-
-        const keyCode = bindingKeySequence[0];
-        return this.keybindingRegistry.acceleratorForKeyCode(keyCode, '+');
+        return true;
     }
 
-    protected roleFor(id: string): ElectronMenuItemRole | undefined {
-        let role: ElectronMenuItemRole | undefined;
+    protected roleFor(id: string): MenuRole | undefined {
+        let role: MenuRole | undefined;
         switch (id) {
             case CommonCommands.UNDO.id:
                 role = 'undo';
@@ -276,24 +319,7 @@ export class ElectronMainMenuFactory {
         return role;
     }
 
-    protected async execute(command: string, args: any[]): Promise<void> {
-        try {
-            // This is workaround for https://github.com/eclipse-theia/theia/issues/446.
-            // Electron menus do not update based on the `isEnabled`, `isVisible` property of the command.
-            // We need to check if we can execute it.
-            if (this.commandRegistry.isEnabled(command, ...args)) {
-                await this.commandRegistry.executeCommand(command, ...args);
-                if (this._menu && this.commandRegistry.isVisible(command, ...args)) {
-                    this._menu.getMenuItemById(command).checked = this.commandRegistry.isToggled(command, ...args);
-                    electron.remote.getCurrentWindow().setMenu(this._menu);
-                }
-            }
-        } catch {
-            // no-op
-        }
-    }
-
-    protected createOSXMenu(): Electron.MenuItemConstructorOptions {
+    protected createOSXMenu(): MenuDto {
         return {
             label: 'Theia',
             submenu: [

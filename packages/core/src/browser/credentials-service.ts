@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2021 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
@@ -21,8 +21,8 @@
 // code copied and modified from https://github.com/microsoft/vscode/blob/1.55.2/src/vs/workbench/services/credentials/common/credentials.ts#L12
 
 import { inject, injectable } from 'inversify';
-import { Emitter, Event } from '../common/event';
-import { KeytarService } from '../common/keytar-protocol';
+import { Emitter, Event } from '../common/event.js';
+import { KeyStoreService } from '../common/key-store.js';
 
 export interface CredentialsProvider {
     getPassword(service: string, account: string): Promise<string | undefined>;
@@ -30,6 +30,7 @@ export interface CredentialsProvider {
     deletePassword(service: string, account: string): Promise<boolean>;
     findPassword(service: string): Promise<string | undefined>;
     findCredentials(service: string): Promise<Array<{ account: string, password: string }>>;
+    keys(service: string): Promise<string[]>;
 }
 
 export const CredentialsService = Symbol('CredentialsService');
@@ -50,7 +51,7 @@ export class CredentialsServiceImpl implements CredentialsService {
 
     private credentialsProvider: CredentialsProvider;
 
-    constructor(@inject(KeytarService) private readonly keytarService: KeytarService) {
+    constructor(@inject(KeyStoreService) private readonly keytarService: KeyStoreService) {
         this.credentialsProvider = new KeytarCredentialsProvider(this.keytarService);
     }
 
@@ -78,11 +79,15 @@ export class CredentialsServiceImpl implements CredentialsService {
     findCredentials(service: string): Promise<Array<{ account: string, password: string; }>> {
         return this.credentialsProvider.findCredentials(service);
     }
+
+    async keys(service: string): Promise<string[]> {
+        return this.credentialsProvider.keys(service);
+    }
 }
 
 class KeytarCredentialsProvider implements CredentialsProvider {
 
-    constructor(private readonly keytarService: KeytarService) {}
+    constructor(private readonly keytarService: KeyStoreService) { }
 
     deletePassword(service: string, account: string): Promise<boolean> {
         return this.keytarService.deletePassword(service, account);
@@ -102,5 +107,9 @@ class KeytarCredentialsProvider implements CredentialsProvider {
 
     setPassword(service: string, account: string, password: string): Promise<void> {
         return this.keytarService.setPassword(service, account, password);
+    }
+
+    keys(service: string): Promise<string[]> {
+        return this.keytarService.keys(service);
     }
 }

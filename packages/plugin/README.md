@@ -192,6 +192,7 @@ Simple example that show a status bar message with statusBarItem:
         item.text = 'test status bar item';
         item.show();
 ```
+
 #### Output channel API
 
  It is possible to show a container for readonly textual information:
@@ -241,9 +242,10 @@ const terminal = theia.window.createTerminal("Bash terminal", "/bin/bash", ["-l"
 ```
 
 Where are:
- - first argument - terminal's name.
- - second argument - path to the executable shell.
- - third argument - arguments to configure executable shell.
+
+- first argument - terminal's name.
+- second argument - path to the executable shell.
+- third argument - arguments to configure executable shell.
 
 You can create terminal with specific options:
 
@@ -258,10 +260,11 @@ const options: theia.TerminalOptions {
 ```
 
 Where are:
- - "shellPath" - path to the executable shell, for example "/bin/bash", "bash", "sh" or so on.
- - "shellArgs" - shell command arguments, for example without login: "-l". If you defined shell command "/bin/bash" and set up shell arguments "-l" than will be created terminal process with command "/bin/bash -l". And client side will connect to stdin/stdout of this process to interaction with user.
- - "cwd" - current working directory;
- - "env"- environment variables for terminal process, for example TERM - identifier terminal window capabilities.
+
+- "shellPath" - path to the executable shell, for example "/bin/bash", "bash", "sh" or so on.
+- "shellArgs" - shell command arguments, for example without login: "-l". If you defined shell command "/bin/bash" and set up shell arguments "-l" than will be created terminal process with command "/bin/bash -l". And client side will connect to stdin/stdout of this process to interaction with user.
+- "cwd" - current working directory;
+- "env"- environment variables for terminal process, for example TERM - identifier terminal window capabilities.
 
 Function to create new terminal with defined theia.TerminalOptions described above:
 
@@ -288,6 +291,7 @@ terminal.sendText("Hello, Theia!", false);
 ```
 
 Where are:
+
 - first argument - text content.
 - second argument - in case true, terminal will apply new line after the text, otherwise will send only the text.
 
@@ -323,6 +327,7 @@ terminal.processId.then(id => {
 Preference API allows one to read or update User's and Workspace's preferences.
 
 To get preferences:
+
 ```typescript
 // editor preferences
 const preferences = theia.workspace.getConfiguration('editor');
@@ -332,6 +337,7 @@ const fontSize = preferences.get('tabSize');
 ```
 
 To change preference:
+
 ```typescript
 preferences.onDidChangeConfiguration(e => {
     if (e.affectsConfiguration('editor.tabSize')) {
@@ -353,6 +359,7 @@ const diagnostics = theia.languages.getDiagnostics(uriToResource)
 ```
 
 To get all diagnostics use:
+
 ```typescript
 const diagnostics =  theia.languages.getDiagnostics()
 ```
@@ -424,6 +431,7 @@ diagnosticsCollection.forEach((uri, diagnostics) => {
 #### Signature help
 
 To provide signature help form plugin it is required to register provider. For registration 3 items are needed:
+
 - Documents selector to describe for which files it should be applied
 - Handler which will do the work
 - Trigger characters after typing of which the handler should be invoked. Often symbols `(` and `,` are used.
@@ -474,6 +482,7 @@ Example of signature information:
 ```
 
 Note, that:
+
 - `activeSignature` and `activeParameter` are zero based.
 - label is usually full method signature.
 - for documentation fields markdown partially supported (Tags aren't supported).
@@ -490,19 +499,22 @@ In case if a few providers are registered the chain will be executed until one o
 To contribute a hover it is only needed to provide a function that can be called with a `TextDocument` and a `Position` returning hover info. Registration is done using a document selector which either a language id ('typescript', 'javascript' etc.) or a more complex filter like `{scheme: 'file', language: 'typescript'}`.
 
 For example,
+
 ```typescript
 theia.languages.registerHoverProvider('typescript', {
-    provideHover(doc: theia.TextDocument, position: theia.Position) {
+    provideHover(doc: theia.TextDocument, position: theia.Position, token: theia.CancellationToken) {
         return new theia.Hover('Hover for all **typescript** files.');
     }
 });
 ```
+
 will show the hover message for all `typescript` files.
 
 The code below puts word under cursor into hover message:
+
 ```typescript
 theia.languages.registerHoverProvider({scheme: 'file'}, {
-    provideHover(doc: theia.TextDocument, position: theia.Position) {
+    provideHover(doc: theia.TextDocument, position: theia.Position, token: theia.CancellationToken) {
         const range = doc.getWordRangeAtPosition(position);
         const text = doc.getText(range);
         return new theia.Hover(text);
@@ -681,8 +693,9 @@ Example of code symbol provider registration:
 ```typescript
 const documentsSelector: theia.DocumentSelector = { scheme: 'file', language: 'typescript' };
 const provider = { provideDocumentSymbols: provideSymbols };
+const metadata = { label: 'providerLabel' }
 
-const disposable = theia.languages.registerDocumentSymbolProvider(documentsSelector, provider);
+const disposable = theia.languages.registerDocumentSymbolProvider(documentsSelector, provider, metadata);
 
 ...
 
@@ -748,7 +761,7 @@ function provideRanges(document: theia.TextDocument): theia.ProviderResult<theia
 
 ## Additional Information
 
-- [API documentation for `@theia/plugin`](https://eclipse-theia.github.io/theia/docs/next/modules/plugin.html)
+- [API documentation for `@theia/plugin`](https://eclipse-theia.github.io/theia/docs/next/modules/_theia_plugin.html)
 - [Theia - GitHub](https://github.com/eclipse-theia/theia)
 - [Theia - Website](https://theia-ide.org/)
 
@@ -758,5 +771,6 @@ function provideRanges(document: theia.TextDocument): theia.ProviderResult<theia
 - [一 (Secondary) GNU General Public License, version 2 with the GNU Classpath Exception](https://projects.eclipse.org/license/secondary-gpl-2.0-cp)
 
 ## Trademark
+
 "Theia" is a trademark of the Eclipse Foundation
-https://www.eclipse.org/theia
+<https://www.eclipse.org/theia>

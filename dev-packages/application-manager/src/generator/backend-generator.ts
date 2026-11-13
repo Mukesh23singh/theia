@@ -1,32 +1,123 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
+import { EOL } from 'os';
 import { AbstractGenerator } from './abstract-generator';
 
 export class BackendGenerator extends AbstractGenerator {
 
     async generate(): Promise<void> {
+        if (this.pck.isBrowserOnly()) {
+            // no backend generation in case of browser-only target
+            return;
+        }
         const backendModules = this.pck.targetBackendModules;
         await this.write(this.pck.backend('server.js'), this.compileServer(backendModules));
         await this.write(this.pck.backend('main.js'), this.compileMain(backendModules));
+        if (this.pck.isElectron()) {
+            await this.write(this.pck.backend('electron-main.js'), this.compileElectronMain(this.pck.targetElectronMainModules));
+        }
+    }
+
+    protected compileElectronMain(electronMainModules?: Map<string, string>): string {
+        return `// @ts-check
+
+import '@theia/core/shared/reflect-metadata';
+import { resolve } from 'path';
+import { app } from 'electron';
+${this.emitStartupLogger('Electron main', 'electron main start', { requirePerformance: true })}
+${this.emitStartupLog('loading modules...')}
+
+// Workaround for https://github.com/electron/electron/issues/9225. Chrome has an issue where
+// in certain locales (e.g. PL), image metrics are wrongly computed. We explicitly set the
+// LC_NUMERIC to prevent this from happening (selects the numeric formatting category of the
+// C locale, http://en.cppreference.com/w/cpp/locale/LC_categories).
+if (process.env.LC_ALL) {
+    process.env.LC_ALL = 'C';
+}
+process.env.LC_NUMERIC = 'C';
+
+(async () => {
+    // A GUI app on macOS and Linux does not inherit the \`$PATH\` defined in the user's
+    // dotfiles (.bashrc/.bash_profile/.zshrc/etc). The backend resolves it from the user's login shell once it
+    // has started, see \`ShellEnvironmentServer\` in \`@theia/core\`, so that the start-up does not wait for the shell.
+    // https://github.com/electron/electron/issues/550#issuecomment-162037357
+
+    const theiaAppProjectPath = resolve(import.meta.dirname, '..', '..');
+    process.env.THEIA_APP_PROJECT_PATH = theiaAppProjectPath;
+    const { default: electronMainApplicationModule } = await import('@theia/core/lib/electron-main/electron-main-application-module');
+    const { ElectronMainApplication, ElectronMainApplicationGlobals } = await import('@theia/core/lib/electron-main/electron-main-application');
+    const { Container } = await import('@theia/core/shared/inversify');
+
+    const config = ${this.prettyStringify(this.pck.props.frontend.config)};
+    const isSingleInstance = ${this.pck.props.backend.config.singleInstance === true ? 'true' : 'false'};
+
+    if (isSingleInstance && !app.requestSingleInstanceLock(process.argv)) {
+        // There is another instance running, exit now. The other instance will request focus.
+        app.quit();
+        return;
+    }
+
+    const container = new Container();
+    container.load(electronMainApplicationModule);
+    container.bind(ElectronMainApplicationGlobals).toConstantValue({
+        THEIA_APP_PROJECT_PATH: theiaAppProjectPath,
+        THEIA_BACKEND_MAIN_PATH: resolve(import.meta.dirname, 'main.js'),
+        THEIA_FRONTEND_HTML_PATH: resolve(import.meta.dirname, '..', '..', 'lib', 'frontend', 'index.html'),
+        THEIA_SECONDARY_WINDOW_HTML_PATH: resolve(import.meta.dirname, '..', '..', 'lib', 'frontend', 'secondary-window.html')
+    });
+    ${this.emitStartupLog('container created')}
+
+    function load(raw) {
+        return Promise.resolve(raw.default).then(module =>
+            container.load(module)
+        );
+    }
+
+    async function start() {
+        ${this.emitStartupLog('resolving application')}
+        const application = container.get(ElectronMainApplication);
+        ${this.emitStartupLog('application resolved')}
+        await application.start(config);
+    }
+
+    try {
+${Array.from(electronMainModules?.values() ?? [], jsModulePath => `\
+        await load(await import('${jsModulePath}'));`).join(EOL)}
+        ${this.emitStartupLog('modules loaded')}
+        await start();
+    } catch (reason) {
+        if (typeof reason !== 'number') {
+            console.error('Failed to start the electron application.');
+            if (reason) {
+                console.error(reason);
+            }
+        }
+        app.quit();
+    };
+})();
+`;
     }
 
     protected compileServer(backendModules: Map<string, string>): string {
         return `// @ts-check
-require('reflect-metadata');${this.ifElectron(`
+import 'reflect-metadata';
+import path from 'path';
+${this.emitStartupLogger('Backend server', 'backend process start', { requirePerformance: true })}
+${this.emitStartupLog('loading modules...')}${this.ifElectron(`
 
 // Patch electron version if missing, see https://github.com/eclipse-theia/theia/pull/7361#pullrequestreview-377065146
 if (typeof process.versions.electron === 'undefined' && typeof process.env.THEIA_ELECTRON_VERSION === 'string') {
@@ -38,65 +129,95 @@ if ('ELECTRON_RUN_AS_NODE' in process.env) {
     delete process.env.ELECTRON_RUN_AS_NODE;
 }
 
-const path = require('path');
-const express = require('express');
-const { Container } = require('inversify');
-const { BackendApplication, BackendApplicationServer, CliManager } = require('@theia/core/lib/node');
-const { backendApplicationModule } = require('@theia/core/lib/node/backend-application-module');
-const { messagingBackendModule } = require('@theia/core/lib/node/messaging/messaging-backend-module');
-const { loggerBackendModule } = require('@theia/core/lib/node/logger-backend-module');
+process.env.THEIA_APP_PROJECT_PATH = path.resolve(import.meta.dirname, '..', '..')
 
-const container = new Container();
-container.load(backendApplicationModule);
-container.load(messagingBackendModule);
-container.load(loggerBackendModule);
+// The modules are imported dynamically, so that they are loaded after the environment above has been set up.
+// This module must not use top-level \`await\`, so that Electron can load the backend with \`require\`.
+export default async (port, host, argv = process.argv) => {
+    try {
+        const { default: express } = await import('@theia/core/shared/express');
+        const { Container } = await import('@theia/core/shared/inversify');
+        const { BackendApplication, BackendApplicationServer, CliManager } = await import('@theia/core/lib/node');
+        const { backendApplicationModule } = await import('@theia/core/lib/node/backend-application-module');
+        const { messagingBackendModule } = await import('@theia/core/lib/node/messaging/messaging-backend-module');
+        const { loggerBackendModule } = await import('@theia/core/lib/node/logger-backend-module');
 
-function defaultServeStatic(app) {
-    app.use(express.static(path.resolve(__dirname, '../../lib')))
-}
+        const container = new Container();
+        container.load(backendApplicationModule);
+        container.load(messagingBackendModule);
+        container.load(loggerBackendModule);
+        ${this.emitStartupLog('container created')}
 
-function load(raw) {
-    return Promise.resolve(raw.default).then(
-        module => container.load(module)
-    );
-}
+        function defaultServeStatic(app) {
+            app.use(express.static(path.resolve(import.meta.dirname, '../../lib/frontend')))
+        }
 
-function start(port, host, argv = process.argv) {
-    if (!container.isBound(BackendApplicationServer)) {
-        container.bind(BackendApplicationServer).toConstantValue({ configure: defaultServeStatic });
-    }
-    return container.get(CliManager).initializeCli(argv).then(() => {
-        return container.get(BackendApplication).start(port, host);
-    });
-}
+        function load(raw) {
+            return Promise.resolve(raw).then(
+                module => container.load(module.default)
+            );
+        }
 
-module.exports = (port, host, argv) => Promise.resolve()${this.compileBackendModuleImports(backendModules)}
-    .then(() => start(port, host, argv)).catch(error => {
-        console.error('Failed to start the backend application:');
-        console.error(error);
-        process.exitCode = 1;
+        async function start() {
+            if (!container.isBound(BackendApplicationServer)) {
+                container.bind(BackendApplicationServer).toConstantValue({ configure: defaultServeStatic });
+            }
+            let result = undefined;
+            await container.get(CliManager).initializeCli(argv.slice(2),
+                () => {
+                    ${this.emitStartupLog('resolving application')}
+                    const application = container.get(BackendApplication);
+                    ${this.emitStartupLog('application resolved')}
+                    return application.configured;
+                },
+                async () => {
+                    result = container.get(BackendApplication).start(port, host);
+                });
+            if (result) {
+                return result;
+            } else {
+                return Promise.reject(0);
+            }
+        }
+
+${Array.from(backendModules.values(), jsModulePath => `\
+        await load(import('${jsModulePath}'));`).join(EOL)}
+        ${this.emitStartupLog('modules loaded')}
+        return await start();
+    } catch (error) {
+        if (typeof error !== 'number') {
+            console.error('Failed to start the backend application:');
+            console.error(error);
+            process.exitCode = 1;
+        }
         throw error;
-    });
+    }
+}
 `;
     }
 
     protected compileMain(backendModules: Map<string, string>): string {
         return `// @ts-check
-const { BackendApplicationConfigProvider } = require('@theia/core/lib/node/backend-application-config-provider');
-const main = require('@theia/core/lib/node/main');
+${this.emitStartupLogger('Backend main', 'backend process start', { requirePerformance: true })}
+${this.emitStartupLog('entry point loaded')}
+import { BackendApplicationConfigProvider } from '@theia/core/lib/node/backend-application-config-provider';
+import * as main from '@theia/core/lib/node/main';
 
 BackendApplicationConfigProvider.set(${this.prettyStringify(this.pck.props.backend.config)});
 
-const serverModule = require('./server');
-const serverAddress = main.start(serverModule());
+globalThis.extensionInfo = ${this.prettyStringify(this.pck.extensionPackages.map(({ name, version }) => ({ name, version })))};
 
-serverAddress.then(({ port, address }) => {
-    if (process && process.send) {
-        process.send({ port, address });
+// Loaded after the configuration has been set, as imports are evaluated first.
+// No top-level \`await\`, so that Electron can load the backend with \`require\`.
+const serverAddress = import('./server.js').then(({ default: serverModule }) => main.start(serverModule()));
+
+serverAddress.then((addressInfo) => {
+    if (process && process.send && addressInfo) {
+        process.send(addressInfo);
     }
 });
 
-module.exports = serverAddress;
+globalThis.serverAddress = serverAddress;
 `;
     }
 

@@ -1,21 +1,21 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
-import { injectable } from '@theia/core/shared/inversify';
-import { PluginDeployerEntry, PluginDeployerEntryType, PluginType } from '../../common/plugin-protocol';
-import { PluginDeployerEntryImpl } from './plugin-deployer-entry-impl';
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+import { injectable, unmanaged } from '@theia/core/shared/inversify';
+import { PluginDeployerEntry, PluginDeployerEntryType, PluginType } from '../../common/plugin-protocol.js';
+import { PluginDeployerEntryImpl } from './plugin-deployer-entry-impl.js';
 
 /**
  * Proxify call to plugin deployer entry by adding the deployer name as part of the updating path
@@ -25,7 +25,10 @@ export class ProxyPluginDeployerEntry<T> implements PluginDeployerEntry {
 
     private readonly deployerName: string;
 
-    constructor(readonly deployer: T, readonly delegate: PluginDeployerEntryImpl) {
+    constructor(
+        @unmanaged() readonly deployer: T,
+        @unmanaged() readonly delegate: PluginDeployerEntryImpl
+    ) {
         this.deployerName = (this.deployer as {}).constructor.name;
     }
 
@@ -54,11 +57,11 @@ export class ProxyPluginDeployerEntry<T> implements PluginDeployerEntry {
         return this.delegate.getChanges();
     }
 
-    isFile(): boolean {
+    isFile(): Promise<boolean> {
         return this.delegate.isFile();
     }
 
-    isDirectory(): boolean {
+    isDirectory(): Promise<boolean> {
         return this.delegate.isDirectory();
     }
     isResolved(): boolean {

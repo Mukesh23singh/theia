@@ -1,77 +1,323 @@
-/********************************************************************************
- * Copyright (c) 2021 SAP SE or an SAP affiliate company and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
-/* eslint-disable @typescript-eslint/no-explicit-any */
+// *****************************************************************************
+// Copyright (C) 2021 SAP SE or an SAP affiliate company and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import {
+    ApplicationShell,
     InputBox, InputOptions, KeybindingRegistry, PickOptions,
-    QuickInputButton, QuickInputService, QuickPick, QuickPickItem, QuickPickItemButtonEvent, QuickPickItemHighlights, QuickPickOptions, QuickPickSeparator
+    QuickInputButton, QuickInputHideReason, QuickInputService, QuickPick, QuickPickItem,
+    QuickPickItemButtonEvent, QuickPickItemHighlights, QuickPickOptions, QuickPickSeparator
 } from '@theia/core/lib/browser';
-import { CancellationToken, Event } from '@theia/core/lib/common';
-import { injectable, inject } from '@theia/core/shared/inversify';
-import { MonacoResolvedKeybinding } from './monaco-resolved-keybinding';
+import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
+import {
+    IInputBox, IInputOptions, IKeyMods, IPickOptions, IQuickInput, IQuickInputButton,
+    IQuickInputService, IQuickNavigateConfiguration, IQuickPick, IQuickPickItem, IQuickPickItemButtonEvent,
+    IQuickPickSeparator, IQuickTree, IQuickTreeItem, IQuickWidget, QuickPickInput
+} from '@theia/monaco-editor-core/esm/vs/platform/quickinput/common/quickInput.js';
+import { IQuickInputOptions, IQuickInputStyles } from '@theia/monaco-editor-core/esm/vs/platform/quickinput/browser/quickInput.js';
+import { QuickInputController } from '@theia/monaco-editor-core/esm/vs/platform/quickinput/browser/quickInputController.js';
+import { MonacoResolvedKeybinding } from './monaco-resolved-keybinding.js';
+import { IQuickAccessController } from '@theia/monaco-editor-core/esm/vs/platform/quickinput/common/quickAccess.js';
+import { QuickAccessController } from '@theia/monaco-editor-core/esm/vs/platform/quickinput/browser/quickAccess.js';
+import { IContextKey, IContextKeyService, IScopedContextKeyService } from '@theia/monaco-editor-core/esm/vs/platform/contextkey/common/contextkey.js';
+import * as monaco from '@theia/monaco-editor-core';
+import { ResolvedKeybinding } from '@theia/monaco-editor-core/esm/vs/base/common/keybindings.js';
+import { IInstantiationService } from '@theia/monaco-editor-core/esm/vs/platform/instantiation/common/instantiation.js';
+import { StandaloneServices } from '@theia/monaco-editor-core/esm/vs/editor/standalone/browser/standaloneServices.js';
+import { IMatch } from '@theia/monaco-editor-core/esm/vs/base/common/filters.js';
+import { CancellationToken, Event } from '@theia/core';
+import { MonacoColorRegistry } from './monaco-color-registry.js';
+import { ThemeService } from '@theia/core/lib/browser/theming';
+import { IStandaloneThemeService } from '@theia/monaco-editor-core/esm/vs/editor/standalone/common/standaloneTheme.js';
+import { ILayoutService } from '@theia/monaco-editor-core/esm/vs/platform/layout/browser/layoutService.js';
+import { IHoverDelegate, IHoverDelegateOptions } from '@theia/monaco-editor-core/esm/vs/base/browser/ui/hover/hoverDelegate.js';
+import { IHoverWidget } from '@theia/monaco-editor-core/esm/vs/base/browser/ui/hover/hover.js';
+import MonacoSeverityModule from '@theia/monaco-editor-core/esm/vs/base/common/severity.js';
+import { Severity } from '@theia/core/lib/common/severity';
+import { IStorageService } from '@theia/monaco-editor-core/esm/vs/platform/storage/common/storage.js';
+import { IContextMenuService } from '@theia/monaco-editor-core/esm/vs/platform/contextview/browser/contextView.js';
+import { WindowFocusService } from '@theia/core/lib/browser/window/window-focus-service';
+import { SecondaryWindowService } from '@theia/core/lib/browser/window/secondary-window-service';
 
+// `@theia/monaco-editor-core` ships ES modules without declaring `"type": "module"`, so the compiler assumes CommonJS semantics
+// for their default exports. At runtime, the default export is the `Severity` enum.
+const MonacoSeverity = MonacoSeverityModule as unknown as typeof MonacoSeverityModule.default;
+type MonacoSeverity = MonacoSeverityModule.default;
+
+/**
+ * Converts Theia's {@link Severity} to Monaco's {@link MonacoSeverity}.
+ *
+ * These enums have different numeric values for Error and Info:
+ * - Theia: Ignore=0, Error=1, Warning=2, Info=3
+ * - Monaco: Ignore=0, Info=1, Warning=2, Error=3
+ */
+function severityToMonaco(severity: Severity): MonacoSeverity {
+    switch (severity) {
+        case Severity.Error: return MonacoSeverity.Error;
+        case Severity.Warning: return MonacoSeverity.Warning;
+        case Severity.Info: return MonacoSeverity.Info;
+        case Severity.Ignore:
+        default: return MonacoSeverity.Ignore;
+    }
+}
+
+// Copied from @vscode/src/vs/base/parts/quickInput/browser/quickInputList.ts
+export interface IListElement {
+    readonly index: number;
+    readonly item: IQuickPickItem;
+    readonly saneLabel: string;
+    readonly saneAriaLabel: string;
+    readonly saneDescription?: string;
+    readonly saneDetail?: string;
+    readonly labelHighlights?: IMatch[];
+    readonly descriptionHighlights?: IMatch[];
+    readonly detailHighlights?: IMatch[];
+    readonly checked: boolean;
+    readonly separator?: IQuickPickSeparator;
+    readonly fireButtonTriggered: (event: IQuickPickItemButtonEvent<IQuickPickItem>) => void;
+}
+
+class HoverDelegate implements IHoverDelegate {
+    showHover(options: IHoverDelegateOptions, focus?: boolean | undefined): IHoverWidget | undefined {
+        return undefined;
+    }
+    onDidHideHover?: (() => void) | undefined;
+    delay: number;
+    placement?: 'mouse' | 'element' | undefined;
+    showNativeHover?: boolean | undefined;
+
+}
 @injectable()
-export class MonacoQuickInputImplementation implements monaco.quickInput.IQuickInputService {
+export class MonacoQuickInputImplementation implements IQuickInputService {
+    get currentQuickInput(): IQuickInput | undefined {
+        return this.controller.currentQuickInput;
+    }
 
-    controller: monaco.quickInput.QuickInputController;
-    quickAccess: monaco.quickInput.IQuickAccessController;
+    declare readonly _serviceBrand: undefined;
 
-    @inject(monaco.contextKeyService.ContextKeyService)
-    protected readonly contextKeyService: monaco.contextKeyService.ContextKeyService;
+    controller: QuickInputController;
+    quickAccess: IQuickAccessController;
 
+    @inject(ApplicationShell)
+    protected readonly shell: ApplicationShell;
+
+    @inject(MonacoColorRegistry)
+    protected readonly colorRegistry: MonacoColorRegistry;
+
+    @inject(ThemeService)
+    protected readonly themeService: ThemeService;
+
+    @inject(WindowFocusService)
+    protected readonly windowFocusService: WindowFocusService;
+
+    @inject(SecondaryWindowService)
+    protected readonly secondaryWindowService: SecondaryWindowService;
+
+    /**
+     * The container hosting the quick input in the main window.
+     */
     protected container: HTMLElement;
-    private quickInputList: monaco.list.List<monaco.list.IListElement>;
 
-    get backButton(): monaco.quickInput.IQuickInputButton { return this.controller.backButton; }
-    get onShow(): Event<void> { return this.controller.onShow; }
-    get onHide(): Event<void> { return this.controller.onHide; }
+    /**
+     * The containers hosting the quick input in secondary windows, see {@link getContainer}.
+     */
+    protected readonly secondaryContainers = new Map<Window, {
+        container: HTMLElement,
+        scopedContextKeyService: IScopedContextKeyService,
+        scopedInQuickOpen: IContextKey<boolean>
+    }>();
 
-    constructor() {
+    /**
+     * The element that had focus when the quick input was shown. Cleared when the quick input is hidden.
+     */
+    previousFocusElement: HTMLElement | undefined;
+
+    protected inQuickOpen: IContextKey<boolean>;
+
+    /**
+     * Help keybinding service prioritize keybindings when this element is focused.
+     */
+    protected scopedInQuickOpen: IContextKey<boolean>;
+
+    /**
+     * Help keybinding service prioritize keybindings when this element is focused.
+     */
+    protected scopedContextKeyService: IScopedContextKeyService;
+
+    get backButton(): IQuickInputButton { return this.controller.backButton; }
+    get onShow(): monaco.IEvent<void> { return this.controller.onShow; }
+    get onHide(): monaco.IEvent<void> { return this.controller.onHide; }
+
+    @postConstruct()
+    protected init(): void {
         this.initContainer();
         this.initController();
-        this.quickAccess = new monaco.quickInput.QuickAccessController(this, monaco.services.StaticServices.instantiationService.get());
+        this.quickAccess = new QuickAccessController(this, StandaloneServices.get(IInstantiationService));
+
+        const contextService = StandaloneServices.get(IContextKeyService);
+
+        this.inQuickOpen = contextService.createKey<boolean>('inQuickOpen', false);
+
+        this.scopedContextKeyService = contextService.createScoped(this.container);
+        this.scopedInQuickOpen = this.scopedContextKeyService.createKey<boolean>('inQuickOpen', false);
+
+        this.controller.onShow(() => {
+            // The controller has moved the quick input to the container of the focused window, see `createLayoutService`.
+            const container = this.controller.container;
+            // `onShow` fires before focus moves into the quick input, and again whenever it switches to another picker.
+            const activeElement = container.ownerDocument.activeElement;
+            // not using `instanceof HTMLElement`, the element may have been created in a secondary window, i.e. in another JavaScript realm
+            if (activeElement && typeof (activeElement as HTMLElement).focus === 'function' && !container.contains(activeElement)) {
+                this.previousFocusElement = activeElement as HTMLElement;
+            }
+            container.style.top = container === this.container ? this.shell.mainPanel.node.getBoundingClientRect().top + 'px' : '0px';
+            this.inQuickOpen.set(true);
+            this.getScopedInQuickOpen(container).set(true);
+        });
+        this.controller.onHide(() => {
+            this.previousFocusElement = undefined;
+            this.inQuickOpen.set(false);
+            this.scopedInQuickOpen.set(false);
+            this.secondaryContainers.forEach(({ scopedInQuickOpen }) => scopedInQuickOpen.set(false));
+        });
+
+        this.themeService.initialized.then(() => this.controller.applyStyles(this.computeStyles()));
+        // Hook into the theming service of Monaco to ensure that the updates are ready.
+        StandaloneServices.get(IStandaloneThemeService).onDidColorThemeChange(() => this.controller.applyStyles(this.computeStyles()));
+        window.addEventListener('resize', () => this.updateLayout());
+        this.secondaryWindowService.onWindowClosed(win => {
+            const secondary = this.secondaryContainers.get(win);
+            if (!secondary) {
+                return;
+            }
+            if (this.controller.container === secondary.container) {
+                // Move the quick input back to the main window, as Monaco does on `onWillUnregisterWindow` for the windows registered with it.
+                this.controller['reparentUI'](this.container);
+                this.updateLayout();
+            }
+            secondary.scopedContextKeyService.dispose();
+            this.secondaryContainers.delete(win);
+        });
+    }
+
+    /**
+     * @returns the container hosting the quick input in the given window, which is created for secondary windows if necessary
+     */
+    protected getContainer(win: Window): HTMLElement {
+        if (win === window) {
+            return this.container;
+        }
+        let secondary = this.secondaryContainers.get(win);
+        if (!secondary) {
+            const container = win.document.createElement('div');
+            container.id = 'quick-input-container';
+            win.document.body.appendChild(container);
+            const scopedContextKeyService = StandaloneServices.get(IContextKeyService).createScoped(container);
+            secondary = { container, scopedContextKeyService, scopedInQuickOpen: scopedContextKeyService.createKey<boolean>('inQuickOpen', false) };
+            this.secondaryContainers.set(win, secondary);
+            win.addEventListener('resize', () => this.updateLayout());
+        }
+        return secondary.container;
+    }
+
+    protected getScopedInQuickOpen(container: HTMLElement): IContextKey<boolean> {
+        for (const secondary of this.secondaryContainers.values()) {
+            if (secondary.container === container) {
+                return secondary.scopedInQuickOpen;
+            }
+        }
+        return this.scopedInQuickOpen;
+    }
+
+    /**
+     * Creates the layout service of the quick input controller. The controller moves the quick input to the `activeContainer`
+     * of the layout service whenever it is shown, which is the container of the focused window, so that the quick input
+     * is shown in secondary windows as well.
+     */
+    protected createLayoutService(delegate: ILayoutService): ILayoutService {
+        const getActiveContainer = () => this.getContainer(this.windowFocusService.focusedWindow ?? window);
+        const getDimension = (container: HTMLElement) => this.getClientDimension(container.ownerDocument.defaultView ?? window);
+        const getMainContainer = () => this.container;
+        const getContainers = () => [this.container, ...Array.from(this.secondaryContainers.values(), secondary => secondary.container)];
+        return {
+            _serviceBrand: undefined,
+            onDidLayoutMainContainer: delegate.onDidLayoutMainContainer,
+            onDidLayoutContainer: delegate.onDidLayoutContainer,
+            onDidLayoutActiveContainer: delegate.onDidLayoutActiveContainer,
+            onDidAddContainer: delegate.onDidAddContainer,
+            onDidChangeActiveContainer: delegate.onDidChangeActiveContainer,
+            get mainContainer(): HTMLElement {
+                return getMainContainer();
+            },
+            get mainContainerDimension(): monaco.editor.IDimension {
+                return getDimension(getMainContainer());
+            },
+            get activeContainer(): HTMLElement {
+                return getActiveContainer();
+            },
+            get activeContainerDimension(): monaco.editor.IDimension {
+                return getDimension(getActiveContainer());
+            },
+            get containers(): Iterable<HTMLElement> {
+                return getContainers();
+            },
+            getContainer: win => this.getContainer(win),
+            whenContainerStylesLoaded: win => delegate.whenContainerStylesLoaded(win),
+            mainContainerOffset: delegate.mainContainerOffset,
+            activeContainerOffset: delegate.activeContainerOffset,
+            focus: () => delegate.focus()
+        };
     }
 
     setContextKey(key: string | undefined): void {
         if (key) {
-            this.contextKeyService.createKey<string>(key, undefined);
+            StandaloneServices.get(IContextKeyService).createKey<string>(key, undefined);
         }
     }
 
-    createQuickPick<T extends monaco.quickInput.IQuickPickItem>(): monaco.quickInput.IQuickPick<T> {
-        return this.controller.createQuickPick<T>();
+    createQuickWidget(): IQuickWidget {
+        return this.controller.createQuickWidget();
     }
 
-    createInputBox(): monaco.quickInput.IInputBox {
+    createQuickPick<T extends IQuickPickItem>(options: { useSeparators: true; }): IQuickPick<T, { useSeparators: true; }>;
+    createQuickPick<T extends IQuickPickItem>(options: { useSeparators: false; }): IQuickPick<T, { useSeparators: false; }>;
+    createQuickPick<T extends IQuickPickItem>(options: { useSeparators: boolean }): IQuickPick<T, { useSeparators: true; }> | IQuickPick<T, { useSeparators: false; }> {
+        return this.controller.createQuickPick({
+            useSeparators: options.useSeparators
+        });
+    }
+
+    createInputBox(): IInputBox {
         return this.controller.createInputBox();
+    }
+
+    createQuickTree<T extends IQuickTreeItem>(): IQuickTree<T> {
+        return this.controller.createQuickTree();
     }
 
     open(filter: string): void {
         this.quickAccess.show(filter);
-        setTimeout(() => {
-            this.quickInputList.focusNth(0);
-        }, 300);
     }
 
-    input(options?: monaco.quickInput.IInputOptions, token?: CancellationToken): Promise<string | undefined> {
+    input(options?: IInputOptions, token?: monaco.CancellationToken): Promise<string | undefined> {
         return this.controller.input(options, token);
     }
 
-    pick<T extends monaco.quickInput.IQuickPickItem, O extends monaco.quickInput.IPickOptions<T>>(
-        picks: Promise<T[]> | T[], options: O = <O>{}, token?: CancellationToken): Promise<(O extends { canPickMany: true } ? T[] : T) | undefined> {
+    pick<T extends IQuickPickItem, O extends IPickOptions<T>>(
+        picks: Promise<QuickPickInput<T>[]> | QuickPickInput<T>[], options?: O, token?: monaco.CancellationToken
+    ): Promise<(O extends { canPickMany: true; } ? T[] : T) | undefined> {
         return this.controller.pick(picks, options, token);
     }
 
@@ -87,7 +333,7 @@ export class MonacoQuickInputImplementation implements monaco.quickInput.IQuickI
         this.controller.toggle();
     }
 
-    applyStyles(styles: monaco.quickInput.IQuickInputStyles): void {
+    applyStyles(styles: IQuickInputStyles): void {
         this.controller.applyStyles(styles);
     }
 
@@ -95,11 +341,12 @@ export class MonacoQuickInputImplementation implements monaco.quickInput.IQuickI
         this.controller.layout(dimension, titleBarOffset);
     }
 
-    navigate?(next: boolean, quickNavigate?: monaco.quickInput.IQuickNavigateConfiguration): void {
+    navigate(next: boolean, quickNavigate?: IQuickNavigateConfiguration): void {
         this.controller.navigate(next, quickNavigate);
     }
 
     dispose(): void {
+        this.scopedContextKeyService.dispose();
         this.controller.dispose();
     }
 
@@ -111,49 +358,158 @@ export class MonacoQuickInputImplementation implements monaco.quickInput.IQuickI
         this.controller.back();
     }
 
-    async accept?(keyMods?: monaco.quickInput.IKeyMods): Promise<void> {
+    async accept(keyMods?: IKeyMods): Promise<void> {
         this.controller.accept(keyMods);
     }
 
+    toggleHover(): void {
+        return this.controller.toggleHover();
+    }
+
+    setAlignment(alignment: 'top' | 'center' | { top: number; left: number; }): void {
+        this.controller.setAlignment(alignment);
+    }
+
     private initContainer(): void {
-        const overlayWidgets = document.createElement('div');
-        overlayWidgets.classList.add('quick-input-overlay');
-        document.body.appendChild(overlayWidgets);
-        const container = this.container = document.createElement('quick-input-container');
-        container.style.position = 'absolute';
-        container.style.top = '0px';
-        container.style.right = '50%';
-        container.style.zIndex = '1000000';
-        overlayWidgets.appendChild(container);
+        const container = this.container = document.createElement('div');
+        container.id = 'quick-input-container';
+        document.body.appendChild(this.container);
     }
 
     private initController(): void {
-        this.controller = new monaco.quickInput.QuickInputController(this.getOptions());
-        this.controller.layout({ width: 600, height: 1200 }, 0);
-    }
+        const contextKeyService = StandaloneServices.get(IContextKeyService);
+        const instantiationService = StandaloneServices.get(IInstantiationService);
+        const layoutService = this.createLayoutService(StandaloneServices.get(ILayoutService));
+        const storageService = StandaloneServices.get(IStorageService);
 
-    private getOptions(): monaco.quickInput.IQuickInputOptions {
-        return {
+        const options: IQuickInputOptions = {
             idPrefix: 'quickInput_',
             container: this.container,
+            styles: this.computeStyles(),
             ignoreFocusOut: () => false,
-            isScreenReaderOptimized: () => true,
             backKeybindingLabel: () => undefined,
             setContextKey: (id?: string) => this.setContextKey(id),
             returnFocus: () => this.container.focus(),
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            createList: (user: string, container: HTMLElement, delegate: any, renderers: any, options: any) => {
-                this.quickInputList = new monaco.list.List(user, container, delegate, renderers, options);
-                return this.quickInputList;
-            },
-            styles: {
-                widget: {},
-                list: {},
-                inputBox: {},
-                countBadge: {},
-                button: {},
-                progressBar: {}
+            hoverDelegate: new HoverDelegate(),
+            linkOpenerDelegate: () => {
+                // @monaco-uplift: not sure what to do here
             }
+        };
+        const contextMenuService = StandaloneServices.get(IContextMenuService);
+        this.controller = new QuickInputController(options, layoutService, instantiationService, contextKeyService, storageService, contextMenuService);
+        this.updateLayout();
+    }
+
+    private updateLayout(): void {
+        // Initialize the layout using screen dimensions as monaco computes the actual sizing.
+        // https://github.com/microsoft/vscode/blob/6261075646f055b99068d3688932416f2346dd3b/src/vs/base/parts/quickinput/browser/quickInput.ts#L1799
+        this.controller.layout(this.getClientDimension(this.controller.container.ownerDocument.defaultView ?? window), 0);
+    }
+
+    private getClientDimension(win: Window): monaco.editor.IDimension {
+        return { width: win.innerWidth, height: win.innerHeight };
+    }
+
+    /**
+     * Wraps a color ID as a CSS variable reference: `var(--theia-<id>)`.
+     * Monaco applies these values as inline styles, so the `var()` wrapper is required.
+     */
+    private asCssVariable(id: string): string {
+        return `var(${this.colorRegistry.toCssVariableName(id)})`;
+    }
+
+    // @monaco-uplift
+    // Keep the styles up to date with https://github.com/microsoft/vscode/blob/7888ff3a6b104e9e2e3d0f7890ca92dd0828215f/src/vs/platform/quickinput/browser/quickInput.ts#L171.
+    private computeStyles(): IQuickInputStyles {
+        return {
+            toggle: {
+                inputActiveOptionBorder: this.asCssVariable('inputOption.activeBorder'),
+                inputActiveOptionForeground: this.asCssVariable('inputOption.activeForeground'),
+                inputActiveOptionBackground: this.asCssVariable('inputOption.activeBackground')
+            },
+            pickerGroup: {
+                pickerGroupBorder: this.asCssVariable('pickerGroup.border'),
+                pickerGroupForeground: this.asCssVariable('pickerGroup.foreground')
+            },
+            widget: {
+                quickInputBackground: this.asCssVariable('quickInput.background'),
+                quickInputForeground: this.asCssVariable('quickInput.foreground'),
+                quickInputTitleBackground: this.asCssVariable('quickInputTitle.background'),
+                widgetBorder: this.asCssVariable('widget.border'),
+                widgetShadow: this.asCssVariable('widget.shadow')
+            },
+            list: {
+                listBackground: this.asCssVariable('quickInput.background'),
+                listInactiveFocusForeground: this.asCssVariable('quickInputList.focusForeground'),
+                listInactiveSelectionIconForeground: this.asCssVariable('quickInputList.focusIconForeground'),
+                listInactiveFocusBackground: this.asCssVariable('quickInputList.focusBackground'),
+                listFocusOutline: this.asCssVariable('contrastActiveBorder'),
+                listInactiveFocusOutline: this.asCssVariable('contrastActiveBorder'),
+
+                listFocusBackground: this.asCssVariable('list.focusBackground'),
+                listFocusForeground: this.asCssVariable('list.focusForeground'),
+                listActiveSelectionBackground: this.asCssVariable('list.activeSelectionBackground'),
+                listActiveSelectionForeground: this.asCssVariable('list.activeSelectionForeground'),
+                listActiveSelectionIconForeground: this.asCssVariable('list.activeSelectionIconForeground'),
+                listFocusAndSelectionOutline: this.asCssVariable('list.focusAndSelectionOutline'),
+                listFocusAndSelectionBackground: this.asCssVariable('list.activeSelectionBackground'),
+                listFocusAndSelectionForeground: this.asCssVariable('list.activeSelectionForeground'),
+                listInactiveSelectionBackground: this.asCssVariable('list.inactiveSelectionBackground'),
+                listInactiveSelectionForeground: this.asCssVariable('list.inactiveSelectionForeground'),
+                listHoverBackground: this.asCssVariable('list.hoverBackground'),
+                listHoverForeground: this.asCssVariable('list.hoverForeground'),
+                listDropOverBackground: this.asCssVariable('list.dropBackground'),
+                listDropBetweenBackground: this.asCssVariable('list.dropBetweenBackground'),
+                listSelectionOutline: this.asCssVariable('contrastActiveBorder'),
+                listHoverOutline: this.asCssVariable('contrastActiveBorder'),
+                treeIndentGuidesStroke: this.asCssVariable('tree.indentGuidesStroke'),
+                treeInactiveIndentGuidesStroke: this.asCssVariable('tree.inactiveIndentGuidesStroke'),
+                treeStickyScrollBackground: undefined,
+                treeStickyScrollBorder: undefined,
+                treeStickyScrollShadow: this.asCssVariable('scrollbar.shadow'),
+                tableColumnsBorder: this.asCssVariable('tree.tableColumnsBorder'),
+                tableOddRowsBackgroundColor: this.asCssVariable('tree.tableOddRowsBackground'),
+
+            },
+            inputBox: {
+                inputForeground: this.asCssVariable('input.foreground'),
+                inputBackground: this.asCssVariable('input.background'),
+                inputBorder: this.asCssVariable('input.border'),
+                inputValidationInfoBackground: this.asCssVariable('inputValidation.infoBackground'),
+                inputValidationInfoForeground: this.asCssVariable('inputValidation.infoForeground'),
+                inputValidationInfoBorder: this.asCssVariable('inputValidation.infoBorder'),
+                inputValidationWarningBackground: this.asCssVariable('inputValidation.warningBackground'),
+                inputValidationWarningForeground: this.asCssVariable('inputValidation.warningForeground'),
+                inputValidationWarningBorder: this.asCssVariable('inputValidation.warningBorder'),
+                inputValidationErrorBackground: this.asCssVariable('inputValidation.errorBackground'),
+                inputValidationErrorForeground: this.asCssVariable('inputValidation.errorForeground'),
+                inputValidationErrorBorder: this.asCssVariable('inputValidation.errorBorder'),
+            },
+            countBadge: {
+                badgeBackground: this.asCssVariable('badge.background'),
+                badgeForeground: this.asCssVariable('badge.foreground'),
+                badgeBorder: this.asCssVariable('contrastBorder')
+            },
+            button: {
+                buttonForeground: this.asCssVariable('button.foreground'),
+                buttonBackground: this.asCssVariable('button.background'),
+                buttonHoverBackground: this.asCssVariable('button.hoverBackground'),
+                buttonBorder: this.asCssVariable('contrastBorder'),
+                buttonSeparator: this.asCssVariable('button.separator'),
+                buttonSecondaryForeground: this.asCssVariable('button.secondaryForeground'),
+                buttonSecondaryBackground: this.asCssVariable('button.secondaryBackground'),
+                buttonSecondaryHoverBackground: this.asCssVariable('button.secondaryHoverBackground'),
+            },
+            progressBar: {
+                progressBarBackground: this.asCssVariable('progressBar.background')
+            },
+            keybindingLabel: {
+                keybindingLabelBackground: this.asCssVariable('keybindingLabel.background'),
+                keybindingLabelForeground: this.asCssVariable('keybindingLabel.foreground'),
+                keybindingLabelBorder: this.asCssVariable('keybindingLabel.border'),
+                keybindingLabelBottomBorder: this.asCssVariable('keybindingLabel.bottomBorder'),
+                keybindingLabelShadow: this.asCssVariable('widget.shadow')
+            },
         };
     }
 }
@@ -167,41 +523,67 @@ export class MonacoQuickInputService implements QuickInputService {
     protected readonly keybindingRegistry: KeybindingRegistry;
 
     get backButton(): QuickInputButton {
-        return this.monacoService.backButton;
+        // need to cast because of vscode issue https://github.com/microsoft/vscode/issues/190584
+        return this.monacoService.backButton as QuickInputButton;
     }
 
     get onShow(): Event<void> { return this.monacoService.onShow; }
     get onHide(): Event<void> { return this.monacoService.onHide; }
+    get previousFocusElement(): HTMLElement | undefined { return this.monacoService.previousFocusElement; }
 
     open(filter: string): void {
         this.monacoService.open(filter);
     }
 
     createInputBox(): InputBox {
-        return this.monacoService.createInputBox();
+        const monacoInputBox = this.monacoService.createInputBox();
+        return new Proxy(monacoInputBox as unknown as InputBox, {
+            set(target: InputBox, prop: string | symbol, value: unknown): boolean {
+                if (prop === 'severity') {
+                    (target as unknown as IInputBox)[prop] = severityToMonaco(value as Severity);
+                    return true;
+                }
+                (target as unknown as Record<string | symbol, unknown>)[prop] = value;
+                return true;
+            },
+            get(target: InputBox, prop: string | symbol): unknown {
+                const result = (target as unknown as Record<string | symbol, unknown>)[prop];
+                if (typeof result === 'function') {
+                    return result.bind(target);
+                }
+                return result;
+            }
+        });
     }
 
-    input(options?: InputOptions, token?: CancellationToken): Promise<string | undefined> {
-        let inputOptions: monaco.quickInput.IInputOptions | undefined;
+    input(options?: InputOptions, token?: monaco.CancellationToken): Promise<string | undefined> {
+        let inputOptions: IInputOptions | undefined;
         if (options) {
             const { validateInput, ...props } = options;
             inputOptions = { ...props };
             if (validateInput) {
-                inputOptions.validateInput = async input => validateInput(input);
+                inputOptions.validateInput = async input => {
+                    const result = await validateInput(input);
+                    if (result && typeof result !== 'string') {
+                        return { content: result.content, severity: severityToMonaco(result.severity) };
+                    }
+                    return result;
+                };
             }
         }
         return this.monacoService.input(inputOptions, token);
     }
 
-    pick<T extends QuickPickItem, O extends PickOptions<T>>(picks: T[] | Promise<T[]>, options?: O, token?: CancellationToken):
-        Promise<(O extends { canPickMany: true; } ? T[] : T) | undefined> {
+    async pick<T extends QuickPickItem, O extends PickOptions<T> = PickOptions<T>>(
+        picks: Promise<QuickPickInput<T>[]> | QuickPickInput<T>[], options?: O, token?: CancellationToken
+    ): Promise<T[] | T | undefined> {
         return this.monacoService.pick(picks, options, token);
     }
 
-    showQuickPick<T extends QuickPickItem>(items: T[], options?: QuickPickOptions<T>): Promise<T> {
-        return new Promise<T>((resolve, reject) => {
-            const quickPick = this.monacoService.createQuickPick<MonacoQuickPickItem<T>>();
-            const wrapped = this.wrapQuickPick(quickPick);
+    showQuickPick<T extends QuickPickItem>(items: Array<T | QuickPickSeparator>, options?: QuickPickOptions<T>): Promise<T | undefined> {
+        return new Promise<T | undefined>((resolve, reject) => {
+            const wrapped = this.createQuickPick<T>();
+            wrapped.items = items;
 
             if (options) {
                 wrapped.canSelectMany = !!options.canSelectMany;
@@ -211,6 +593,7 @@ export class MonacoQuickInputService implements QuickInputService {
                 wrapped.ignoreFocusOut = !!options.ignoreFocusOut;
                 wrapped.matchOnDescription = options.matchOnDescription ?? true;
                 wrapped.matchOnDetail = options.matchOnDetail ?? true;
+                wrapped.keepScrollPosition = options.keepScrollPosition ?? false;
                 wrapped.placeholder = options.placeholder;
                 wrapped.step = options.step;
                 wrapped.title = options.title;
@@ -220,20 +603,10 @@ export class MonacoQuickInputService implements QuickInputService {
                     wrapped.activeItems = [options.activeItem];
                 }
 
-                wrapped.onDidAccept(() => {
-                    if (options?.onDidAccept) {
-                        options.onDidAccept();
-                    }
-                    wrapped.hide();
-                    resolve(wrapped.selectedItems[0]);
-                });
+                if (options.value) {
+                    wrapped.value = options.value;
+                }
 
-                wrapped.onDidHide(() => {
-                    if (options.onDidHide) {
-                        options.onDidHide();
-                    };
-                    wrapped.dispose();
-                });
                 wrapped.onDidChangeValue((filter: string) => {
                     if (options.onDidChangeValue) {
                         options.onDidChangeValue(wrapped, filter);
@@ -244,14 +617,23 @@ export class MonacoQuickInputService implements QuickInputService {
                         options.onDidChangeActive(wrapped, activeItems);
                     }
                 });
-                wrapped.onDidTriggerButton((button: monaco.quickInput.IQuickInputButton) => {
+                wrapped.onDidTriggerButton((button: IQuickInputButton) => {
                     if (options.onDidTriggerButton) {
-                        options.onDidTriggerButton(button);
+                        // need to cast because of vscode issue https://github.com/microsoft/vscode/issues/190584
+                        options.onDidTriggerButton(button as QuickInputButton);
                     }
                 });
-                wrapped.onDidTriggerItemButton((evt: QuickPickItemButtonEvent<T>) => {
+                wrapped.onDidTriggerItemButton((event: QuickPickItemButtonEvent<T>) => {
                     if (options.onDidTriggerItemButton) {
-                        options.onDidTriggerItemButton(evt);
+                        // https://github.com/theia-ide/vscode/blob/standalone/0.23.x/src/vs/base/parts/quickinput/browser/quickInput.ts#L1387
+                        options.onDidTriggerItemButton(
+                            {
+                                ...event,
+                                removeItem: () => {
+                                    wrapped.items = wrapped.items.filter(item => item !== event.item);
+                                    wrapped.activeItems = wrapped.activeItems.filter(item => item !== event.item);
+                                }
+                            });
                     }
                 });
                 wrapped.onDidChangeSelection((selectedItems: Array<T>) => {
@@ -260,8 +642,20 @@ export class MonacoQuickInputService implements QuickInputService {
                     }
                 });
             }
-
-            wrapped.items = items;
+            wrapped.onDidAccept(() => {
+                if (options?.onDidAccept) {
+                    options.onDidAccept();
+                }
+                wrapped.hide();
+                resolve(wrapped.selectedItems[0]);
+            });
+            wrapped.onDidHide(() => {
+                if (options?.onDidHide) {
+                    options?.onDidHide();
+                };
+                wrapped.dispose();
+                setTimeout(() => resolve(undefined));
+            });
             wrapped.show();
         }).then(item => {
             if (item?.execute) {
@@ -272,11 +666,11 @@ export class MonacoQuickInputService implements QuickInputService {
     }
 
     createQuickPick<T extends QuickPickItem>(): QuickPick<T> {
-        const quickPick = this.monacoService.createQuickPick<MonacoQuickPickItem<T>>();
+        const quickPick = this.monacoService.createQuickPick<MonacoQuickPickItem<T>>({ useSeparators: true });
         return this.wrapQuickPick(quickPick);
     }
 
-    wrapQuickPick<T extends QuickPickItem>(wrapped: monaco.quickInput.IQuickPick<MonacoQuickPickItem<T>>): QuickPick<T> {
+    wrapQuickPick<T extends QuickPickItem>(wrapped: IQuickPick<MonacoQuickPickItem<T>, { useSeparators: true }>): QuickPick<T> {
         return new MonacoQuickPick(wrapped, this.keybindingRegistry);
     }
 
@@ -290,11 +684,11 @@ export class MonacoQuickInputService implements QuickInputService {
 }
 
 class MonacoQuickInput {
-    constructor(protected readonly wrapped: monaco.quickInput.IQuickInput) {
+    constructor(protected readonly wrapped: IQuickInput) {
     }
 
-    readonly onDidHide: Event<void> = this.wrapped.onDidHide;
-    readonly onDispose: Event<void> = this.wrapped.onDispose;
+    get onDidHide(): Event<{ reason: QuickInputHideReason }> { return this.wrapped.onDidHide; }
+    get onDispose(): Event<void> { return this.wrapped.onDispose; }
 
     get title(): string | undefined {
         return this.wrapped.title;
@@ -370,7 +764,7 @@ class MonacoQuickInput {
 }
 
 class MonacoQuickPick<T extends QuickPickItem> extends MonacoQuickInput implements QuickPick<T> {
-    constructor(protected readonly wrapped: monaco.quickInput.IQuickPick<MonacoQuickPickItem<T>>, protected readonly keybindingRegistry: KeybindingRegistry) {
+    constructor(protected override readonly wrapped: IQuickPick<MonacoQuickPickItem<T>, { useSeparators: true }>, protected readonly keybindingRegistry: KeybindingRegistry) {
         super(wrapped);
     }
 
@@ -414,53 +808,105 @@ class MonacoQuickPick<T extends QuickPickItem> extends MonacoQuickInput implemen
         this.wrapped.matchOnDetail = v;
     }
 
+    get keepScrollPosition(): boolean {
+        return this.wrapped.keepScrollPosition;
+    }
+
+    set keepScrollPosition(v: boolean) {
+        this.wrapped.keepScrollPosition = v;
+    }
+
     get items(): readonly (T | QuickPickSeparator)[] {
-        return this.wrapped.items.map(item => QuickPickSeparator.is(item) ? item : item.item);
+        // need to cast because of vscode issue https://github.com/microsoft/vscode/issues/190584
+        return this.wrapped.items.map(item => {
+            if (item instanceof MonacoQuickPickItem) {
+                return item.item;
+            } else {
+                return item;
+            }
+        });
     }
 
-    set items(itms: readonly (T | QuickPickSeparator)[]) {
-        this.wrapped.items = itms.map(item => QuickPickSeparator.is(item) ? item : new MonacoQuickPickItem<T>(item, this.keybindingRegistry));
+    get buttons(): ReadonlyArray<QuickInputButton> {
+        return this.wrapped.buttons as QuickInputButton[];
     }
 
-    set activeItems(itms: readonly T[]) {
-        this.wrapped.activeItems = itms.map(item => new MonacoQuickPickItem<T>(item, this.keybindingRegistry));
+    set buttons(buttons: ReadonlyArray<QuickInputButton>) {
+        this.wrapped.buttons = buttons;
+    }
+
+    set items(itemList: readonly (T | QuickPickSeparator)[]) {
+        // We need to store and apply the currently selected active items.
+        // Since monaco compares these items by reference equality, creating new wrapped items will unmark any active items.
+        // Assigning the `activeItems` again will restore all active items even after the items array has changed.
+        // See also the `findMonacoItemReferences` method.
+        const active = this.activeItems;
+        this.wrapped.items = itemList.map(item => QuickPickSeparator.is(item) ? item : new MonacoQuickPickItem<T>(item, this.keybindingRegistry));
+        if (active.length !== 0) {
+            this.activeItems = active; // If this is done with an empty activeItems array, then it will undo first item focus on quick menus.
+        }
+    }
+
+    set activeItems(itemList: readonly T[]) {
+        this.wrapped.activeItems = this.findMonacoItemReferences(this.wrapped.items, itemList);
     }
 
     get activeItems(): readonly (T)[] {
         return this.wrapped.activeItems.map(item => item.item);
     }
 
-    set selectedItems(itms: readonly T[]) {
-        this.wrapped.selectedItems = itms.map(item => new MonacoQuickPickItem<T>(item, this.keybindingRegistry));
+    set selectedItems(itemList: readonly T[]) {
+        this.wrapped.selectedItems = this.findMonacoItemReferences(this.wrapped.items, itemList);
     }
 
     get selectedItems(): readonly (T)[] {
         return this.wrapped.selectedItems.map(item => item.item);
     }
 
-    readonly onDidAccept: Event<void> = this.wrapped.onDidAccept;
+    readonly onDidAccept: Event<{ inBackground: boolean }> = this.wrapped.onDidAccept;
     readonly onDidChangeValue: Event<string> = this.wrapped.onDidChangeValue;
-    readonly onDidTriggerButton: Event<QuickInputButton> = this.wrapped.onDidTriggerButton;
+
+    // need to cast because of vscode issue https://github.com/microsoft/vscode/issues/190584
+    readonly onDidTriggerButton: Event<QuickInputButton> = this.wrapped.onDidTriggerButton as Event<QuickInputButton>;
     readonly onDidTriggerItemButton: Event<QuickPickItemButtonEvent<T>> =
-        Event.map(this.wrapped.onDidTriggerItemButton, (evt: monaco.quickInput.IQuickPickItemButtonEvent<MonacoQuickPickItem<T>>) => ({
+        Event.map(this.wrapped.onDidTriggerItemButton, (evt: IQuickPickItemButtonEvent<MonacoQuickPickItem<T>>) => ({
             item: evt.item.item,
             button: evt.button
-        }));
-    readonly onDidChangeActive: Event<T[]> = Event.map(this.wrapped.onDidChangeActive, (items: MonacoQuickPickItem<T>[]) => items.map(item => item.item));
-    readonly onDidChangeSelection: Event<T[]> = Event.map(this.wrapped.onDidChangeSelection, (items: MonacoQuickPickItem<T>[]) => items.map(item => item.item));
+        })) as Event<QuickPickItemButtonEvent<T>>;
+    readonly onDidChangeActive: Event<T[]> = Event.map(
+        this.wrapped.onDidChangeActive,
+        (items: MonacoQuickPickItem<T>[]) => items.map(item => item.item));
+    readonly onDidChangeSelection: Event<T[]> = Event.map(
+        this.wrapped.onDidChangeSelection, (items: MonacoQuickPickItem<T>[]) => items.map(item => item.item));
+
+    /**
+     * Monaco doesn't check for deep equality when setting the `activeItems` or `selectedItems`.
+     * Instead we have to find the references of the monaco wrappers that contain the selected/active items
+     */
+    protected findMonacoItemReferences(source: readonly (MonacoQuickPickItem<T> | IQuickPickSeparator)[], items: readonly QuickPickItem[]): MonacoQuickPickItem<T>[] {
+        const monacoReferences: MonacoQuickPickItem<T>[] = [];
+        for (const item of items) {
+            for (const wrappedItem of source) {
+                if (wrappedItem instanceof MonacoQuickPickItem && wrappedItem.item === item) {
+                    monacoReferences.push(wrappedItem);
+                }
+            }
+        }
+        return monacoReferences;
+    }
 }
 
-export class MonacoQuickPickItem<T extends QuickPickItem> implements monaco.quickInput.IQuickPickItem {
-    readonly type?: 'item' | 'separator';
+export class MonacoQuickPickItem<T extends QuickPickItem> implements IQuickPickItem {
+    readonly type?: 'item';
     readonly id?: string;
     readonly label: string;
     readonly meta?: string;
     readonly ariaLabel?: string;
     readonly description?: string;
     readonly detail?: string;
-    readonly keybinding?: monaco.keybindings.ResolvedKeybinding;
+    readonly keybinding?: ResolvedKeybinding;
     readonly iconClasses?: string[];
-    buttons?: monaco.quickInput.IQuickInputButton[];
+    buttons?: IQuickInputButton[];
     readonly alwaysShow?: boolean;
     readonly highlights?: QuickPickItemHighlights;
 
@@ -485,4 +931,3 @@ export class MonacoQuickPickItem<T extends QuickPickItem> implements monaco.quic
         }
     }
 }
-

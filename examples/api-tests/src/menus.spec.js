@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 // @ts-check
 describe('Menus', function () {
@@ -33,7 +33,6 @@ describe('Menus', function () {
     const { EXPLORER_VIEW_CONTAINER_ID } = require('@theia/navigator/lib/browser/navigator-widget-factory');
     const { FileNavigatorContribution } = require('@theia/navigator/lib/browser/navigator-contribution');
     const { ScmContribution } = require('@theia/scm/lib/browser/scm-contribution');
-    const { ScmHistoryContribution } = require('@theia/scm-extra/lib/browser/history/scm-history-contribution');
     const { OutlineViewContribution } = require('@theia/outline-view/lib/browser/outline-view-contribution');
     const { OutputContribution } = require('@theia/output/lib/browser/output-contribution');
     const { PluginFrontendViewContribution } = require('@theia/plugin-ext/lib/main/browser/plugin-frontend-view-contribution');
@@ -44,8 +43,8 @@ describe('Menus', function () {
 
     const container = window.theia.container;
     const shell = container.get(ApplicationShell);
+    /** @type {BrowserMenuBarContribution} */
     const menuBarContribution = container.get(BrowserMenuBarContribution);
-    const menuBar = /** @type {import('@theia/core/lib/browser/menu/browser-menu-plugin').MenuBarWidget} */ (menuBarContribution.menuBar);
     const pluginService = container.get(HostedPluginSupport);
     const menus = container.get(MenuModelRegistry);
     const commands = container.get(CommandRegistry);
@@ -54,6 +53,9 @@ describe('Menus', function () {
     before(async function () {
         await pluginService.didStart;
         await pluginService.activateByViewContainer('explorer');
+        // Updating the menu interferes with our ability to programmatically test it
+        // We simply disable the menu updating
+        menus.isReady = false;
     });
 
     const toTearDown = new DisposableCollection();
@@ -63,7 +65,6 @@ describe('Menus', function () {
         container.get(CallHierarchyContribution),
         container.get(FileNavigatorContribution),
         container.get(ScmContribution),
-        container.get(ScmHistoryContribution),
         container.get(OutlineViewContribution),
         container.get(OutputContribution),
         container.get(PluginFrontendViewContribution),
@@ -73,7 +74,7 @@ describe('Menus', function () {
     ]) {
         it(`should toggle '${contribution.viewLabel}' view`, async () => {
             await contribution.closeView();
-            await menuBar.triggerMenuItem('View', contribution.viewLabel);
+            await menuBarContribution.menuBar.triggerMenuItem('View', contribution.viewLabel);
             await shell.waitForActivation(contribution.viewId);
         });
     }

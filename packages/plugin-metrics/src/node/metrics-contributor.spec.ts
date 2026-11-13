@@ -1,30 +1,34 @@
-/********************************************************************************
- * Copyright (C) 2019 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { AnalyticsFromRequests } from '../common/plugin-metrics-types';
-import { PluginMetricsContributor } from './metrics-contributor';
+import { AnalyticsFromRequests } from '../common/plugin-metrics-types.js';
+import { PluginMetricsContributor } from './metrics-contributor.js';
 import { Container, ContainerModule } from '@theia/core/shared/inversify';
-import { PluginMetricsImpl } from './plugin-metrics-impl';
-import { PluginMetrics } from '../common/metrics-protocol';
+import { PluginMetricsImpl } from './plugin-metrics-impl.js';
+import { PluginMetrics } from '../common/metrics-protocol.js';
 import * as assert from 'assert';
+import { ILogger } from '@theia/core/lib/common/logger';
+import { MockLogger } from '@theia/core/lib/common/test/mock-logger';
 
 describe('Metrics contributor:', () => {
     let testContainer: Container;
     before(() => {
         testContainer = new Container();
+
+        testContainer.bind(ILogger).to(MockLogger).inSingletonScope();
 
         const module = new ContainerModule(bind => {
             bind(PluginMetrics).to(PluginMetricsImpl).inTransientScope();

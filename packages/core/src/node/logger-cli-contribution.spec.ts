@@ -1,38 +1,51 @@
-/********************************************************************************
- * Copyright (C) 2018 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { expect } from 'chai';
-import * as yargs from 'yargs';
+import yargs from '../../shared/yargs/index.cjs';
 import * as temp from 'temp';
 import * as fs from 'fs';
 import { ContainerModule, Container } from 'inversify';
-import { LogLevel } from '../common/logger';
-import { LogLevelCliContribution } from './logger-cli-contribution';
+import { LogLevel } from '../common/logger.js';
+import { LogLevelCliContribution } from './logger-cli-contribution.js';
 import * as sinon from 'sinon';
+import { Disposable, DisposableCollection } from '../common/index.js';
 
 // Allow creating temporary files, but remove them when we are done.
 const track = temp.track();
 
 let cli: LogLevelCliContribution;
 let consoleErrorSpy: sinon.SinonSpy;
+let container: Container;
+let toDisposeAfter: DisposableCollection;
 
 describe('log-level-cli-contribution', () => {
 
+    before(() => {
+        toDisposeAfter = new DisposableCollection(
+            Disposable.create(() => track.cleanupSync())
+        );
+    });
+
+    after(() => {
+        toDisposeAfter.dispose();
+    });
+
     beforeEach(() => {
-        const container = new Container();
+        container = new Container();
 
         const module = new ContainerModule(bind => {
             bind(LogLevelCliContribution).toSelf().inSingletonScope();
@@ -47,12 +60,14 @@ describe('log-level-cli-contribution', () => {
         consoleErrorSpy = sinon.spy(console, 'error');
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         consoleErrorSpy.restore();
+        await cli.dispose();
+        container.unload();
     });
 
     it('should use --log-level flag', async () => {
-        const args: yargs.Arguments = yargs.parse(['--log-level=debug']);
+        const args: yargs.Arguments = await yargs.parse(['--log-level=debug']);
         await cli.setArguments(args);
 
         expect(cli.defaultLogLevel).eq(LogLevel.DEBUG);
@@ -70,7 +85,7 @@ describe('log-level-cli-contribution', () => {
         fs.fsyncSync(file.fd);
         fs.closeSync(file.fd);
 
-        const args: yargs.Arguments = yargs.parse(['--log-config', file.path]);
+        const args: yargs.Arguments = await yargs.parse(['--log-config', file.path]);
         await cli.setArguments(args);
 
         expect(cli.defaultLogLevel).eq(LogLevel.INFO);
@@ -81,7 +96,7 @@ describe('log-level-cli-contribution', () => {
     });
 
     it('should use info as default log level', async () => {
-        const args: yargs.Arguments = yargs.parse([]);
+        const args: yargs.Arguments = await yargs.parse([]);
         await cli.setArguments(args);
 
         expect(cli.defaultLogLevel).eq(LogLevel.INFO);
@@ -98,7 +113,7 @@ describe('log-level-cli-contribution', () => {
             }
         }));
 
-        const args: yargs.Arguments = yargs.parse(['--log-config', file.path]);
+        const args: yargs.Arguments = await yargs.parse(['--log-config', file.path]);
         await cli.setArguments(args);
         sinon.assert.calledWithMatch(consoleErrorSpy, 'Unknown default log level in');
     });
@@ -113,13 +128,13 @@ describe('log-level-cli-contribution', () => {
             }
         }));
 
-        const args: yargs.Arguments = yargs.parse(['--log-config', file.path]);
+        const args: yargs.Arguments = await yargs.parse(['--log-config', file.path]);
         await cli.setArguments(args);
         sinon.assert.calledWithMatch(consoleErrorSpy, 'Unknown log level for logger hello in');
     });
 
     it('should reject nonexistent config files', async () => {
-        const args: yargs.Arguments = yargs.parse(['--log-config', '/tmp/cacaca']);
+        const args: yargs.Arguments = await yargs.parse(['--log-config', '/tmp/cacaca']);
         await cli.setArguments(args);
         sinon.assert.calledWithMatch(consoleErrorSpy, 'no such file or directory');
     });
@@ -135,9 +150,9 @@ describe('log-level-cli-contribution', () => {
         });
         fs.writeFileSync(file.fd, '{' + text);
 
-        const args: yargs.Arguments = yargs.parse(['--log-config', file.path]);
+        const args: yargs.Arguments = await yargs.parse(['--log-config', file.path]);
         await cli.setArguments(args);
-        sinon.assert.calledWithMatch(consoleErrorSpy, 'Unexpected token { in JSON at position 1');
+        sinon.assert.calledWithMatch(consoleErrorSpy, 'Error reading log config file');
     });
 
     // Skip this test because it is flaky, sometimes we don't receive the event.
@@ -160,7 +175,7 @@ describe('log-level-cli-contribution', () => {
             fs.fsyncSync(file.fd);
             fs.closeSync(file.fd);
 
-            const args: yargs.Arguments = yargs.parse(['--log-config', file.path]);
+            const args: yargs.Arguments = await yargs.parse(['--log-config', file.path]);
             await cli.setArguments(args);
         }
 
@@ -209,7 +224,7 @@ describe('log-level-cli-contribution', () => {
         }));
         fs.fsyncSync(file.fd);
 
-        const args: yargs.Arguments = yargs.parse(['--log-config', file.path]);
+        const args: yargs.Arguments = await yargs.parse(['--log-config', file.path]);
         await cli.setArguments(args);
 
         expect(cli.defaultLogLevel).eq(LogLevel.INFO);
@@ -240,6 +255,71 @@ describe('log-level-cli-contribution', () => {
         expect(cli.logLevels).eql({
             hello: LogLevel.DEBUG,
             world: LogLevel.FATAL,
+        });
+    });
+
+    describe('Wildcard Matching', () => {
+
+        async function setupLogLevels(levels: { [key: string]: string }): Promise<void> {
+            const file = track.openSync();
+            fs.writeFileSync(file.fd, JSON.stringify({
+                defaultLevel: 'info',
+                levels
+            }));
+            fs.fsyncSync(file.fd);
+            fs.closeSync(file.fd);
+
+            const args: yargs.Arguments = await yargs.parse(['--log-config', file.path]);
+            await cli.setArguments(args);
+        }
+
+        it('should respect exact matches without wildcards', async () => {
+            await setupLogLevels({
+                'unrelated:Service': 'debug'
+            });
+            expect(cli.logLevelFor('unrelated:Service')).to.equal(LogLevel.DEBUG);
+            expect(cli.logLevelFor('something-else')).to.equal(LogLevel.INFO);
+        });
+
+        it('should match prefix wildcards', async () => {
+            await setupLogLevels({
+                'ai-core*': 'error'
+            });
+            expect(cli.logLevelFor('ai-core:SomeOtherService')).to.equal(LogLevel.ERROR);
+        });
+
+        it('should match suffix wildcards', async () => {
+            await setupLogLevels({
+                '*TokenUsageFrontendServiceImpl': 'warn'
+            });
+            expect(cli.logLevelFor('my-package:MyTokenUsageFrontendServiceImpl')).to.equal(LogLevel.WARN);
+        });
+
+        it('should match middle wildcards', async () => {
+            await setupLogLevels({
+                '*ai*:*': 'warn'
+            });
+            expect(cli.logLevelFor('foo-ai-bar:SomeService')).to.equal(LogLevel.WARN);
+        });
+
+        it('should enforce perfect match first, then last wildcard wins', async () => {
+            await setupLogLevels({
+                'ai-core*': 'error',
+                '*ai*:*': 'warn',
+                'ai-core:SpecificService': 'debug'
+            });
+
+            expect(cli.logLevelFor('ai-core:SpecificService')).to.equal(LogLevel.DEBUG);
+
+            expect(cli.logLevelFor('ai-core:OtherService')).to.equal(LogLevel.WARN);
+        });
+
+        it('should properly escape regex specifics like periods', async () => {
+            await setupLogLevels({
+                '.*': 'error'
+            });
+            expect(cli.logLevelFor('anything-else')).to.equal(LogLevel.INFO);
+            expect(cli.logLevelFor('.*')).to.equal(LogLevel.ERROR);
         });
     });
 });

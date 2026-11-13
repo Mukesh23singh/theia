@@ -4,7 +4,6 @@
 // - Linux: $HOME/.config/Code/User/settings.json
 // - Mac: $HOME/Library/Application Support/Code/User/settings.json
 {
-  "tslint.enable": true,
   "editor.formatOnSave": true,
   "search.exclude": {
     "**/node_modules": true,
@@ -32,7 +31,7 @@
   "lcov.watch": [
     {
       "pattern": "**/*.spec.ts",
-      "command": "yarn test:theia"
+      "command": "npm run test:theia"
     }
   ],
   "editor.insertSpaces": true,
@@ -52,10 +51,25 @@
     "editor.tabSize": 2,
     "editor.defaultFormatter": "vscode.json-language-features",
   },
+  "[markdown]": {
+    "editor.defaultFormatter": "DavidAnson.vscode-markdownlint"
+  },
   "typescript.tsdk": "node_modules/typescript/lib",
   "files.insertFinalNewline": true,
   "clang-format.language.typescript.enable": false,
+  // ESLint `max-len` rule.
   "editor.rulers": [
     180
-  ], // ESLint `max-len` rule.
+  ],
+  "typescript.preferences.quoteStyle": "single",
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features",
+    "typescript.preferences.quoteStyle": "single",
+    "editor.tabSize": 4,
+  },
+  "markdownlint.config": {
+    "MD032": false, // don't require blank line around lists 
+    "MD033": false, // allow inline html
+    "MD041": false // don't require h1 in first line
+  },
 }

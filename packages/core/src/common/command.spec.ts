@@ -1,27 +1,25 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { CommandRegistry, CommandHandler, Command, CommandContribution } from './command';
-import { ContributionProvider } from './contribution-provider';
+import { CommandRegistry, CommandHandler, Command, CommandContribution } from './command.js';
+import { ContributionProvider } from './contribution-provider.js';
 import * as chai from 'chai';
 
 const expect = chai.expect;
 let commandRegistry: CommandRegistry;
-
-/* eslint-disable no-unused-expressions */
 
 describe('Commands', () => {
 
@@ -139,6 +137,131 @@ describe('Commands', () => {
         commandRegistry.registerHandler('id', new StubCommandHandler());
         commandRegistry.registerHandler('id', new NeverActiveStubCommandHandler());
         expect(commandRegistry.getAllHandlers('id').length).to.be.equal(2);
+    });
+
+    describe('registerAlias', () => {
+
+        it('onDidExecuteCommand fires for alias when target is executed', async () => {
+            commandRegistry.registerCommand({ id: 'target' }, new StubCommandHandler());
+            commandRegistry.registerAlias('alias', 'target');
+            const events: string[] = [];
+            commandRegistry.onDidExecuteCommand(e => events.push(e.commandId));
+            await commandRegistry.executeCommand('target');
+            expect(events).to.deep.equal(['target', 'alias']);
+        });
+
+        it('onDidExecuteCommand fires only for alias when alias is executed (no reverse)', async () => {
+            commandRegistry.registerCommand({ id: 'alias' }, new StubCommandHandler());
+            commandRegistry.registerAlias('alias', 'target');
+            const events: string[] = [];
+            commandRegistry.onDidExecuteCommand(e => events.push(e.commandId));
+            await commandRegistry.executeCommand('alias');
+            // Unidirectional: an alias fires for its target, but not the other way round
+            expect(events).to.deep.equal(['alias']);
+        });
+
+        it('onWillExecuteCommand fires for alias when target is executed', async () => {
+            commandRegistry.registerCommand({ id: 'target' }, new StubCommandHandler());
+            commandRegistry.registerAlias('alias', 'target');
+            const events: string[] = [];
+            commandRegistry.onWillExecuteCommand(e => events.push(e.commandId));
+            await commandRegistry.executeCommand('target');
+            expect(events).to.deep.equal(['target', 'alias']);
+        });
+
+        it('disposing the alias removes the event link', async () => {
+            commandRegistry.registerCommand({ id: 'target' }, new StubCommandHandler());
+            const disposable = commandRegistry.registerAlias('alias', 'target');
+            disposable.dispose();
+            const events: string[] = [];
+            commandRegistry.onDidExecuteCommand(e => events.push(e.commandId));
+            await commandRegistry.executeCommand('target');
+            expect(events).to.deep.equal(['target']);
+        });
+
+        it('getAliases returns the aliases registered for a target', () => {
+            commandRegistry.registerAlias('a', 'b');
+            expect(commandRegistry.getAliases('b')).to.deep.equal(['a']);
+        });
+
+        it('getAliases returns nothing for the alias direction (unidirectional)', () => {
+            commandRegistry.registerAlias('a', 'b');
+            expect(commandRegistry.getAliases('a')).to.be.empty;
+        });
+
+        it('getAliases returns nothing for unaliased commands', () => {
+            expect(commandRegistry.getAliases('nonexistent')).to.be.empty;
+        });
+
+        it('a target can carry several aliases', async () => {
+            commandRegistry.registerCommand({ id: 'target' }, new StubCommandHandler());
+            commandRegistry.registerAlias('alias1', 'target');
+            commandRegistry.registerAlias('alias2', 'target');
+            const events: string[] = [];
+            commandRegistry.onDidExecuteCommand(e => events.push(e.commandId));
+            await commandRegistry.executeCommand('target');
+            expect(events).to.deep.equal(['target', 'alias1', 'alias2']);
+        });
+
+        it('disposing one alias keeps the others', async () => {
+            commandRegistry.registerCommand({ id: 'target' }, new StubCommandHandler());
+            const first = commandRegistry.registerAlias('alias1', 'target');
+            commandRegistry.registerAlias('alias2', 'target');
+            first.dispose();
+            expect(commandRegistry.getAliases('target')).to.deep.equal(['alias2']);
+        });
+
+        it('alias events include correct args', async () => {
+            commandRegistry.registerCommand({ id: 'target' }, new ConcatCommandHandler());
+            commandRegistry.registerAlias('alias', 'target');
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const capturedArgs: any[][] = [];
+            commandRegistry.onDidExecuteCommand(e => capturedArgs.push(e.args));
+            await commandRegistry.executeCommand('target', 'x', 'y');
+            expect(capturedArgs.length).to.equal(2);
+            expect(capturedArgs[0]).to.deep.equal(['x', 'y']);
+            expect(capturedArgs[1]).to.deep.equal(['x', 'y']);
+        });
+
+        it('nested execution: alias handler delegating to target fires target and alias events', async () => {
+            commandRegistry.registerCommand({ id: 'target' }, new StubCommandHandler());
+            commandRegistry.registerCommand({ id: 'alias' }, {
+                execute: () => commandRegistry.executeCommand('target')
+            });
+            commandRegistry.registerAlias('alias', 'target');
+            const events: string[] = [];
+            commandRegistry.onDidExecuteCommand(e => events.push(e.commandId));
+            await commandRegistry.executeCommand('alias');
+            // The alias is on the stack while the target runs, so its event is only reported once.
+            expect(events).to.deep.equal(['target', 'alias']);
+        });
+
+        it('reports the alias once for the will execute event as well', async () => {
+            commandRegistry.registerCommand({ id: 'target' }, new StubCommandHandler());
+            commandRegistry.registerCommand({ id: 'alias' }, {
+                execute: () => commandRegistry.executeCommand('target')
+            });
+            commandRegistry.registerAlias('alias', 'target');
+            const events: string[] = [];
+            commandRegistry.onWillExecuteCommand(e => events.push(e.commandId));
+            await commandRegistry.executeCommand('alias');
+            expect(events).to.deep.equal(['alias', 'target']);
+        });
+
+        it('reports the alias again once the delegating execution finished', async () => {
+            commandRegistry.registerCommand({ id: 'target' }, new StubCommandHandler());
+            commandRegistry.registerCommand({ id: 'alias' }, {
+                execute: () => commandRegistry.executeCommand('target')
+            });
+            commandRegistry.registerAlias('alias', 'target');
+            await commandRegistry.executeCommand('alias');
+
+            const events: string[] = [];
+            commandRegistry.onDidExecuteCommand(e => events.push(e.commandId));
+            await commandRegistry.executeCommand('target');
+            expect(events).to.deep.equal(['target', 'alias']);
+        });
+
     });
 
     describe('compareCommands', () => {

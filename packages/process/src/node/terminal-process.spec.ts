@@ -1,24 +1,24 @@
-/********************************************************************************
- * Copyright (C) 2017 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 import * as chai from 'chai';
 import * as process from 'process';
 import * as stream from 'stream';
-import { createProcessTestContainer } from './test/process-test-container';
-import { TerminalProcessFactory } from './terminal-process';
-import { IProcessExitEvent, ProcessErrorEvent } from './process';
+import { createProcessTestContainer } from './test/process-test-container.js';
+import { TerminalProcessFactory } from './terminal-process.js';
+import { IProcessExitEvent, ProcessErrorEvent } from './process.js';
 import { isWindows } from '@theia/core/lib/common/os';
 
 /**
@@ -38,31 +38,46 @@ describe('TerminalProcess', function (): void {
     this.timeout(20_000);
 
     it('test error on non existent path', async function (): Promise<void> {
-        const error = await new Promise<ProcessErrorEvent>((resolve, reject) => {
+        const error = await new Promise<ProcessErrorEvent | IProcessExitEvent>((resolve, reject) => {
             const proc = terminalProcessFactory({ command: '/non-existent' });
-            proc.onStart(reject);
             proc.onError(resolve);
-            proc.onExit(reject);
-        });
-
-        expect(error.code).eq('ENOENT');
-    });
-
-    it('test error on trying to execute a directory', async function (): Promise<void> {
-        const error = await new Promise<ProcessErrorEvent>((resolve, reject) => {
-            const proc = terminalProcessFactory({ command: __dirname });
-            proc.onStart(reject);
-            proc.onError(resolve);
-            proc.onExit(reject);
+            proc.onExit(resolve);
         });
 
         if (isWindows) {
-            // On Windows, node-pty returns us a "File not found" message, so we can't really differentiate this case
-            // from trying to execute a non-existent file.  node's child_process.spawn also returns ENOENT, so it's
-            // probably the best we can get.
             expect(error.code).eq('ENOENT');
         } else {
-            expect(error.code).eq('EACCES');
+            expect(error.code).eq(1);
+        }
+    });
+
+    it('test implicit .exe (Windows only)', async function (): Promise<void> {
+        const match = /^(.+)\.exe$/.exec(process.execPath);
+        if (!isWindows || !match) {
+            this.skip();
+        }
+
+        const command = match[1];
+        const args = ['--version'];
+        const terminal = await new Promise<IProcessExitEvent>((resolve, reject) => {
+            const proc = terminalProcessFactory({ command, args });
+            proc.onExit(resolve);
+            proc.onError(reject);
+        });
+
+        expect(terminal.code).to.exist;
+    });
+
+    it('test error on trying to execute a directory', async function (): Promise<void> {
+        const error = await new Promise<ProcessErrorEvent | IProcessExitEvent>((resolve, reject) => {
+            const proc = terminalProcessFactory({ command: import.meta.dirname });
+            proc.onError(resolve);
+            proc.onExit(resolve);
+        });
+        if (isWindows) {
+            expect(error.code).eq('ENOENT');
+        } else {
+            expect(error.code).eq(1);
         }
     });
 

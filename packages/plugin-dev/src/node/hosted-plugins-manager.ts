@@ -1,27 +1,27 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { inject, injectable } from '@theia/core/shared/inversify';
 import * as cp from 'child_process';
-import * as processTree from 'ps-tree';
 import * as fs from '@theia/core/shared/fs-extra';
 import * as path from 'path';
 import { FileUri } from '@theia/core/lib/node';
 import { HostedPluginSupport } from '@theia/plugin-ext/lib/hosted/node/hosted-plugin';
 import { LogType } from '@theia/plugin-ext/lib/common/types';
+import { ProcessUtils } from '@theia/core/lib/node/process-utils';
 
 export const HostedPluginsManager = Symbol('HostedPluginsManager');
 
@@ -55,6 +55,9 @@ export class HostedPluginsManagerImpl implements HostedPluginsManager {
     @inject(HostedPluginSupport)
     protected readonly hostedPluginSupport: HostedPluginSupport;
 
+    @inject(ProcessUtils)
+    protected readonly processUtils: ProcessUtils;
+
     protected watchCompilationRegistry: Map<string, cp.ChildProcess>;
 
     constructor() {
@@ -80,12 +83,7 @@ export class HostedPluginsManagerImpl implements HostedPluginsManager {
     }
 
     private killProcessTree(parentPid: number): void {
-        processTree(parentPid, (err: Error, childProcesses: Array<processTree.PS>) => {
-            childProcesses.forEach((p: processTree.PS) => {
-                process.kill(parseInt(p.PID));
-            });
-            process.kill(parentPid);
-        });
+        this.processUtils.terminateProcessTree(parentPid);
     }
 
     stopWatchCompilation(uri: string): Promise<void> {
@@ -96,7 +94,7 @@ export class HostedPluginsManagerImpl implements HostedPluginsManager {
             throw new Error('Watcher is not running in ' + pluginPath);
         }
 
-        this.killProcessTree(watchProcess.pid);
+        this.killProcessTree(watchProcess.pid!);
         return Promise.resolve();
     }
 
@@ -107,7 +105,7 @@ export class HostedPluginsManagerImpl implements HostedPluginsManager {
     }
 
     protected runWatchScript(pluginRootPath: string): Promise<void> {
-        const watchProcess = cp.spawn('yarn', ['run', 'watch'], { cwd: pluginRootPath, shell: true });
+        const watchProcess = cp.spawn('npm', ['run', 'watch'], { cwd: pluginRootPath, shell: true });
         watchProcess.on('exit', () => this.unregisterWatchScript(pluginRootPath));
 
         this.watchCompilationRegistry.set(pluginRootPath, watchProcess);
@@ -131,15 +129,15 @@ export class HostedPluginsManagerImpl implements HostedPluginsManager {
      *
      * @param pluginPath path to plugin's root directory
      */
-    protected checkWatchScript(pluginPath: string): boolean {
+    protected async checkWatchScript(pluginPath: string): Promise<boolean> {
         const pluginPackageJsonPath = path.join(pluginPath, 'package.json');
-        if (fs.existsSync(pluginPackageJsonPath)) {
-            const packageJson = fs.readJSONSync(pluginPackageJsonPath);
+        try {
+            const packageJson = await fs.readJSON(pluginPackageJsonPath);
             const scripts = packageJson['scripts'];
             if (scripts && scripts['watch']) {
                 return true;
             }
-        }
+        } catch { }
         return false;
     }
 

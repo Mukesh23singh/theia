@@ -1,23 +1,28 @@
-/********************************************************************************
- * Copyright (C) 2019 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable } from 'inversify';
-import { Emitter } from '../common/event';
+import { Emitter, Event } from '../common/event.js';
+import { Disposable } from '../common/index.js';
 
-export interface ContextKey<T> {
+export type ContextKeyValue = null | undefined | boolean | number | string
+    | Array<null | undefined | boolean | number | string>
+    | Record<string, null | undefined | boolean | number | string>;
+
+export interface ContextKey<T extends ContextKeyValue = ContextKeyValue> {
     set(value: T | undefined): void;
     reset(): void;
     get(): T | undefined;
@@ -33,19 +38,89 @@ export namespace ContextKey {
 }
 
 export interface ContextKeyChangeEvent {
-    affects(keys: Set<string>): boolean;
+    affects(keys: { has(key: string): boolean }): boolean;
 }
 
-@injectable()
-export class ContextKeyService {
+export interface Context {
+    getValue<T extends ContextKeyValue = ContextKeyValue>(key: string): T | undefined;
+    readonly onDidChange?: Event<ContextKeyChangeEvent>;
+}
 
+export const ContextKeyService = Symbol('ContextKeyService');
+
+export interface ContextMatcher {
+    /**
+     * Whether the expression is satisfied. If `context` provided, the service will attempt to retrieve a context object associated with that element.
+     */
+    match(expression: string, context?: HTMLElement): boolean;
+}
+
+export interface ContextKeyService extends ContextMatcher {
+    readonly onDidChange: Event<ContextKeyChangeEvent>;
+
+    createKey<T extends ContextKeyValue>(key: string, defaultValue: T | undefined): ContextKey<T>;
+
+    /**
+     * @returns a Set of the keys used by the given `expression` or `undefined` if none are used or the expression cannot be parsed.
+     */
+    parseKeys(expression: string): Set<string> | undefined;
+
+    /**
+     * Creates a temporary context that will use the `values` passed in when evaluating {@link callback}.
+     * {@link callback | The callback} must be synchronous.
+     */
+    with<T>(values: Record<string, unknown>, callback: () => T): T;
+
+    /**
+     * Evaluates {@link callback} against the context of the given element or context object
+     * rather than the context of the currently focused element.
+     * {@link callback | The callback} must be synchronous.
+     */
+    withContext<T>(context: HTMLElement | Context, callback: () => T): T;
+
+    /**
+     * Creates a child service with a separate context scoped to the HTML element passed in.
+     * Useful for e.g. setting the {view} context value for particular widgets.
+     */
+    createScoped(target: HTMLElement): ScopedValueStore;
+
+    /**
+     * @param overlay values to be used in the new {@link ContextKeyService}. These values will be static.
+     * Creates a child service with a separate context and a set of fixed values to override parent values.
+     */
+    createOverlay(overlay: Iterable<[string, unknown]>): ContextMatcher;
+
+    /**
+     * Set or modify a value in the service's context.
+     */
+    setContext(key: string, value: unknown): void;
+
+    /**
+     * Gets the context keys that are locally defined (not inherited from parent contexts)
+     * at or above the given element. This is useful for determining which context keys
+     * are specific to a particular DOM element's scope.
+     *
+     * @param element The DOM element to get local context keys for
+     * @returns A Set of context key names that are locally defined, or an empty Set if none
+     */
+    getLocalContextKeys(element: HTMLElement): Set<string>;
+}
+
+export type ScopedValueStore = Omit<ContextKeyService, 'onDidChange' | 'match' | 'parseKeys' | 'with' | 'createOverlay'> & Disposable & {
+    onDidChangeContext: Event<ContextKeyChangeEvent>;
+};
+
+@injectable()
+export class ContextKeyServiceDummyImpl implements ContextKeyService {
     protected readonly onDidChangeEmitter = new Emitter<ContextKeyChangeEvent>();
     readonly onDidChange = this.onDidChangeEmitter.event;
     protected fireDidChange(event: ContextKeyChangeEvent): void {
         this.onDidChangeEmitter.fire(event);
     }
 
-    createKey<T>(key: string, defaultValue: T | undefined): ContextKey<T> {
+    onDidChangeContext: Event<ContextKeyChangeEvent> = this.onDidChangeEmitter.event;
+
+    createKey<T extends ContextKeyValue>(key: string, defaultValue: T | undefined): ContextKey<T> {
         return ContextKey.None;
     }
     /**
@@ -62,4 +137,47 @@ export class ContextKeyService {
         return new Set<string>();
     }
 
+    /**
+     * Details should be implemented by an extension, e.g. by the monaco extension.
+     * Callback must be synchronous.
+     */
+    with<T>(values: Record<string, unknown>, callback: () => T): T {
+        return callback();
+    }
+
+    /**
+     * Details should be implemented by an extension, e.g. by the monaco extension.
+     * Callback must be synchronous.
+     */
+    withContext<T>(context: HTMLElement | Context, callback: () => T): T {
+        return callback();
+    }
+
+    /**
+     * Details should implemented by an extension, e.g. by the monaco extension.
+     */
+    createScoped(target: HTMLElement): ScopedValueStore {
+        return this;
+    }
+
+    /**
+     * Details should be implemented by an extension, e.g. the monaco extension.
+     */
+    createOverlay(overlay: Iterable<[string, unknown]>): ContextMatcher {
+        return this;
+    }
+
+    /**
+     * Details should be implemented by an extension, e.g. by the monaco extension.
+     */
+    setContext(key: string, value: unknown): void { }
+
+    /**
+     * It should be implemented by an extension, e.g. by the monaco extension.
+     */
+    getLocalContextKeys(element: HTMLElement): Set<string> {
+        return new Set<string>();
+    }
+
+    dispose(): void { }
 }

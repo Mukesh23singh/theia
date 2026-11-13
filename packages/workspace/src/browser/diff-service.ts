@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { inject, injectable } from '@theia/core/shared/inversify';
 import URI from '@theia/core/lib/common/uri';
@@ -20,6 +20,7 @@ import { DiffUris } from '@theia/core/lib/browser/diff-uris';
 import { open, OpenerService, OpenerOptions } from '@theia/core/lib/browser';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
+import { nls } from '@theia/core';
 
 @injectable()
 export class DiffService {
@@ -39,18 +40,11 @@ export class DiffService {
                         const uri = DiffUris.encode(left, right, label);
                         await open(this.openerService, uri, options);
                     } else {
-                        const details = (() => {
-                            if (leftStat.isDirectory && rightStat.isDirectory) {
-                                return 'Both resource were a directory.';
-                            } else {
-                                if (leftStat.isDirectory) {
-                                    return `'${left.path.base}' was a directory.`;
-                                } else {
-                                    return `'${right.path.base}' was a directory.`;
-                                }
-                            }
-                        });
-                        this.messageService.warn(`Directories cannot be compared. ${details()}`);
+                        const details =
+                            leftStat.isDirectory && rightStat.isDirectory ?
+                                nls.localize('theia/workspace/bothAreDirectories', 'Both resources are directories.') :
+                                nls.localize('theia/workspace/isDirectory', "'{0}' is a directory.", leftStat.isDirectory ? left.path.base : right.path.base);
+                        this.messageService.warn(nls.localize('theia/workspace/directoriesCannotBeCompared', 'Directories cannot be compared. {0}', details));
                     }
                 }
             }

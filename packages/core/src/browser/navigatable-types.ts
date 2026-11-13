@@ -1,22 +1,21 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import URI from '../common/uri';
-import { MaybeArray } from '../common/types';
-import { Widget, BaseWidget } from './widgets';
+import { URI, isObject, MaybeArray } from '../common/index.js';
+import { Widget, BaseWidget } from './widgets/index.js';
 
 /**
  * `Navigatable` provides an access to an URI of an underlying instance of `Resource`.
@@ -33,17 +32,17 @@ export interface Navigatable {
 }
 
 export namespace Navigatable {
-    export function is(arg: Object | undefined): arg is Navigatable {
-        return !!arg && 'getResourceUri' in arg && 'createMoveToUri' in arg;
+    export function is(arg: unknown): arg is Navigatable {
+        return isObject(arg) && 'getResourceUri' in arg && 'createMoveToUri' in arg;
     }
 }
 
 export type NavigatableWidget = BaseWidget & Navigatable;
 export namespace NavigatableWidget {
-    export function is(arg: Object | undefined): arg is NavigatableWidget {
+    export function is(arg: unknown): arg is NavigatableWidget {
         return arg instanceof BaseWidget && Navigatable.is(arg);
     }
-    export function* getAffected<T extends Widget>(
+    export function getAffected<T extends Widget>(
         widgets: Iterable<T>,
         context: MaybeArray<URI>
     ): IterableIterator<[URI, T & NavigatableWidget]> {
@@ -63,16 +62,20 @@ export namespace NavigatableWidget {
             }
         }
     }
+    export function getUri(widget?: Widget): URI | undefined {
+        if (is(widget)) {
+            return widget.getResourceUri();
+        }
+    }
 }
 
 export interface NavigatableWidgetOptions {
-    kind: 'navigatable',
-    uri: string,
-    counter?: number,
+    kind: 'navigatable';
+    uri: string;
+    counter?: number;
 }
 export namespace NavigatableWidgetOptions {
-    export function is(arg: Object | undefined): arg is NavigatableWidgetOptions {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return !!arg && 'kind' in arg && (arg as any).kind === 'navigatable';
+    export function is(arg: unknown): arg is NavigatableWidgetOptions {
+        return isObject(arg) && arg.kind === 'navigatable';
     }
 }

@@ -1,25 +1,27 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as React from '@theia/core/shared/react';
-import { CancellationTokenSource, Emitter, Event } from '@theia/core';
-import { DebugProtocol } from 'vscode-debugprotocol/lib/debugProtocol';
+import { CancellationTokenSource, Emitter, Event, MessageType, nls } from '@theia/core';
+import { DebugProtocol } from '@vscode/debugprotocol/lib/debugProtocol.js';
 import { TreeElement } from '@theia/core/lib/browser/source-tree';
-import { DebugStackFrame } from './debug-stack-frame';
-import { DebugSession } from '../debug-session';
+import { DebugStackFrame } from './debug-stack-frame.js';
+import { DebugSession } from '../debug-session.js';
+import * as monaco from '@theia/monaco-editor-core';
+import URI from '@theia/core/lib/common/uri';
 
 export type StoppedDetails = DebugProtocol.StoppedEvent['body'] & {
     framesErrorMessage?: string
@@ -41,6 +43,10 @@ export class DebugThread extends DebugThreadData implements TreeElement {
 
     protected readonly onDidChangedEmitter = new Emitter<void>();
     readonly onDidChanged: Event<void> = this.onDidChangedEmitter.event;
+    protected readonly onDidFocusStackFrameEmitter = new Emitter<DebugStackFrame | undefined>();
+    get onDidFocusStackFrame(): Event<DebugStackFrame | undefined> {
+        return this.onDidFocusStackFrameEmitter.event;
+    }
 
     constructor(
         readonly session: DebugSession
@@ -52,13 +58,21 @@ export class DebugThread extends DebugThreadData implements TreeElement {
         return this.session.id + ':' + this.raw.id;
     }
 
+    get threadId(): number {
+        return this.raw.id;
+    }
+
     protected _currentFrame: DebugStackFrame | undefined;
     get currentFrame(): DebugStackFrame | undefined {
         return this._currentFrame;
     }
     set currentFrame(frame: DebugStackFrame | undefined) {
+        if (this._currentFrame?.id === frame?.id) {
+            return;
+        }
         this._currentFrame = frame;
         this.onDidChangedEmitter.fire(undefined);
+        this.onDidFocusStackFrameEmitter.fire(frame);
     }
 
     get stopped(): boolean {
@@ -99,6 +113,28 @@ export class DebugThread extends DebugThreadData implements TreeElement {
         return this.session.sendRequest('pause', this.toArgs());
     }
 
+    get supportsGoto(): boolean {
+        return !!this.session.capabilities.supportsGotoTargetsRequest;
+    }
+
+    async jumpToCursor(uri: URI, position: monaco.Position): Promise<DebugProtocol.GotoResponse | undefined> {
+        const source = await this.session?.toDebugSource(uri);
+
+        if (!source) {
+            return undefined;
+        }
+
+        const response: DebugProtocol.GotoTargetsResponse = await this.session.sendRequest('gotoTargets', { source, line: position.lineNumber, column: position.column });
+
+        if (response && response.body.targets.length === 0) {
+            this.session.showMessage(MessageType.Warning, nls.localizeByDefault('No executable code is associated at the current cursor position.'));
+            return;
+        }
+
+        const targetId = response.body.targets[0].id;
+        return this.session.sendRequest('goto', this.toArgs({ targetId }));
+    }
+
     async getExceptionInfo(): Promise<DebugExceptionInfo | undefined> {
         if (this.stoppedDetails && this.stoppedDetails.reason === 'exception') {
             if (this.session.capabilities.supportsExceptionInfoRequest) {
@@ -128,7 +164,7 @@ export class DebugThread extends DebugThreadData implements TreeElement {
         }
     }
 
-    protected readonly _frames = new Map<number, DebugStackFrame>();
+    protected readonly _frames = new Map<string, DebugStackFrame>();
     get frames(): IterableIterator<DebugStackFrame> {
         return this._frames.values();
     }
@@ -153,7 +189,7 @@ export class DebugThread extends DebugThreadData implements TreeElement {
                 if (cancel.isCancellationRequested) {
                     return [];
                 }
-                return this.doUpdateFrames(frames);
+                return this.doUpdateFrames(start, frames);
             } catch (e) {
                 console.error('fetchFrames failed:', e);
                 return [];
@@ -183,15 +219,19 @@ export class DebugThread extends DebugThreadData implements TreeElement {
             return [];
         }
     }
-    protected doUpdateFrames(frames: DebugProtocol.StackFrame[]): DebugStackFrame[] {
+    protected doUpdateFrames(startFrame: number, frames: DebugProtocol.StackFrame[]): DebugStackFrame[] {
         const result = new Set<DebugStackFrame>();
-        for (const raw of frames) {
-            const id = raw.id;
-            const frame = this._frames.get(id) || new DebugStackFrame(this, this.session);
+        frames.forEach((raw, index) => {
+            // Similarly to VS Code, we no longer use `raw.frameId` in computation of the DebugStackFrame id.
+            // The `raw.frameId` was changing in every step and was not allowing us to correlate stack frames between step events.
+            // Refs: https://github.com/microsoft/vscode/commit/18fc2bcf718e22265b5e09bb7fd0e9c090264cd2, https://github.com/microsoft/vscode/issues/93230#issuecomment-642558395
+            const source = raw.source && this.session.getSource(raw.source);
+            const id = `${this.id}:${startFrame + index}:${source?.name}`;
+            const frame = this._frames.get(id) || new DebugStackFrame(this, this.session, id);
             this._frames.set(id, frame);
             frame.update({ raw });
             result.add(frame);
-        }
+        });
         this.updateCurrentFrame();
         return [...result.values()];
     }
@@ -211,9 +251,9 @@ export class DebugThread extends DebugThreadData implements TreeElement {
     }
     protected updateCurrentFrame(): void {
         const { currentFrame } = this;
-        const frameId = currentFrame && currentFrame.raw.id;
-        this.currentFrame = typeof frameId === 'number' &&
-            this._frames.get(frameId) ||
+        const id = currentFrame && currentFrame.id;
+        this.currentFrame = typeof id === 'string' &&
+            this._frames.get(id) ||
             this._frames.values().next().value;
     }
 
@@ -224,12 +264,57 @@ export class DebugThread extends DebugThreadData implements TreeElement {
     }
 
     render(): React.ReactNode {
-        const reason = this.stoppedDetails && this.stoppedDetails.reason;
-        const status = this.stoppedDetails ? reason ? `Paused on ${reason}` : 'Paused' : 'Running';
-        return <div className='theia-debug-thread' title='Thread'>
-            <span className='label'>{this.raw.name}</span>
-            <span className='status'>{status}</span>
-        </div>;
+        return (
+            <div className="theia-debug-thread" title={nls.localizeByDefault('Session')}>
+                <span className="label">{this.raw.name}</span>
+                <span className="status">{this.threadStatus()}</span>
+            </div>
+        );
     }
 
+    protected threadStatus(): string {
+
+        if (!this.stoppedDetails) {
+            return nls.localizeByDefault('Running');
+        }
+
+        const description = this.stoppedDetails.description;
+
+        if (description) {
+            // According to DAP we must show description as is. Translation is made by debug adapter
+            return description;
+        }
+
+        const reason = this.stoppedDetails.reason;
+        const localizedReason = this.getLocalizedReason(reason);
+
+        return reason
+            ? nls.localizeByDefault('Paused on {0}', localizedReason)
+            : nls.localizeByDefault('Paused');
+    }
+
+    protected getLocalizedReason(reason: string | undefined): string {
+        switch (reason) {
+            case 'step':
+                return nls.localize('theia/debug/step', 'step');
+            case 'breakpoint':
+                return nls.localize('theia/debug/breakpoint', 'breakpoint');
+            case 'exception':
+                return nls.localize('theia/debug/exception', 'exception');
+            case 'pause':
+                return nls.localize('theia/debug/pause', 'pause');
+            case 'entry':
+                return nls.localize('theia/debug/entry', 'entry');
+            case 'goto':
+                return nls.localize('theia/debug/goto', 'goto');
+            case 'function breakpoint':
+                return nls.localize('theia/debug/functionBreakpoint', 'function breakpoint');
+            case 'data breakpoint':
+                return nls.localize('theia/debug/dataBreakpoint', 'data breakpoint');
+            case 'instruction breakpoint':
+                return nls.localize('theia/debug/instructionBreakpoint', 'instruction breakpoint');
+            default:
+                return '';
+        }
+    }
 }

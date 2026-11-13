@@ -1,47 +1,50 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import {
     LanguagesExt,
     PLUGIN_RPC_CONTEXT,
     LanguagesMain,
     SerializedLanguageConfiguration,
-    SerializedRegExp,
-    SerializedOnEnterRule,
-    SerializedIndentationRule,
     Position,
     Selection,
     RawColorInfo,
     WorkspaceEditDto,
-    PluginInfo
-} from '../common/plugin-api-rpc';
-import { RPCProtocol } from '../common/rpc-protocol';
+    PluginInfo,
+    Plugin,
+    InlayHintsDto,
+    InlayHintDto,
+    IdentifiableInlineCompletions,
+    HoverWithId,
+} from '../common/plugin-api-rpc.js';
+import { RPCProtocol } from '../common/rpc-protocol.js';
 import * as theia from '@theia/plugin';
-import { DocumentsExtImpl } from './documents';
-import { PluginModel } from '../common/plugin-protocol';
-import { Disposable, URI } from './types-impl';
-import { UriComponents } from '../common/uri-components';
+import { DocumentsExtImpl } from './documents.js';
+import { PluginModel } from '../common/plugin-protocol.js';
+import { Disposable, URI, LanguageStatusSeverity } from './types-impl.js';
+import { UriComponents } from '../common/uri-components.js';
 import {
+    CodeActionProviderDocumentation,
     CompletionContext,
     CompletionResultDto,
     Completion,
     SerializedDocumentFilter,
     SignatureHelp,
-    Hover,
     DocumentHighlight,
+    MultiDocumentHighlightDto,
     Range,
     TextEdit,
     FormattingOptions,
@@ -58,44 +61,70 @@ import {
     CodeAction,
     FoldingRange,
     SelectionRange,
-    CallHierarchyDefinition,
-    CallHierarchyReference,
-    ChainedCacheId
-} from '../common/plugin-api-rpc-model';
-import { CompletionAdapter } from './languages/completion';
-import { Diagnostics } from './languages/diagnostics';
-import { SignatureHelpAdapter } from './languages/signature';
-import { HoverAdapter } from './languages/hover';
-import { DocumentHighlightAdapter } from './languages/document-highlight';
-import { DocumentFormattingAdapter } from './languages/document-formatting';
-import { RangeFormattingAdapter } from './languages/range-formatting';
-import { OnTypeFormattingAdapter } from './languages/on-type-formatting';
-import { DefinitionAdapter } from './languages/definition';
-import { ImplementationAdapter } from './languages/implementation';
-import { TypeDefinitionAdapter } from './languages/type-definition';
-import { CodeActionAdapter } from './languages/code-action';
-import { LinkProviderAdapter } from './languages/link-provider';
-import { CodeLensAdapter } from './languages/lens';
-import { OutlineAdapter } from './languages/outline';
-import { ReferenceAdapter } from './languages/reference';
-import { WorkspaceSymbolAdapter } from './languages/workspace-symbol';
-import { SymbolInformation } from '@theia/core/shared/vscode-languageserver-types';
-import { FoldingProviderAdapter } from './languages/folding';
-import { SelectionRangeProviderAdapter } from './languages/selection-range';
-import { ColorProviderAdapter } from './languages/color';
-import { RenameAdapter } from './languages/rename';
+    ChainedCacheId,
+    CallHierarchyItem,
+    CallHierarchyIncomingCall,
+    CallHierarchyOutgoingCall,
+    LinkedEditingRanges,
+    EvaluatableExpression,
+    InlineValue,
+    InlineValueContext,
+    TypeHierarchyItem,
+    InlineCompletionContext,
+    DocumentDropEdit,
+    DataTransferDTO,
+    HoverContext
+} from '../common/plugin-api-rpc-model.js';
+import { CompletionAdapter } from './languages/completion.js';
+import { Diagnostics } from './languages/diagnostics.js';
+import { SignatureHelpAdapter } from './languages/signature.js';
+import { HoverAdapter } from './languages/hover.js';
+import { EvaluatableExpressionAdapter } from './languages/evaluatable-expression.js';
+import { InlineValuesAdapter } from './languages/inline-values.js';
+import { DocumentHighlightAdapter } from './languages/document-highlight.js';
+import { MultiDocumentHighlightAdapter } from './languages/multi-document-highlight.js';
+import { DocumentFormattingAdapter } from './languages/document-formatting.js';
+import { RangeFormattingAdapter } from './languages/range-formatting.js';
+import { OnTypeFormattingAdapter } from './languages/on-type-formatting.js';
+import { DefinitionAdapter } from './languages/definition.js';
+import { ImplementationAdapter } from './languages/implementation.js';
+import { TypeDefinitionAdapter } from './languages/type-definition.js';
+import { CodeActionAdapter } from './languages/code-action.js';
+import { LinkProviderAdapter } from './languages/link-provider.js';
+import { CodeLensAdapter } from './languages/lens.js';
+import { OutlineAdapter } from './languages/outline.js';
+import { ReferenceAdapter } from './languages/reference.js';
+import { WorkspaceSymbolAdapter } from './languages/workspace-symbol.js';
+import { SymbolInformation } from '@theia/core/shared/vscode-languageserver-protocol';
+import { FoldingProviderAdapter } from './languages/folding.js';
+import { SelectionRangeProviderAdapter } from './languages/selection-range.js';
+import { ColorProviderAdapter } from './languages/color.js';
+import { RenameAdapter } from './languages/rename.js';
 import { Event } from '@theia/core/lib/common/event';
-import { CommandRegistryImpl } from './command-registry';
-import { DeclarationAdapter } from './languages/declaration';
-import { CallHierarchyAdapter } from './languages/call-hierarchy';
+import { CommandRegistryImpl } from './command-registry.js';
+import { DeclarationAdapter } from './languages/declaration.js';
+import { CallHierarchyAdapter } from './languages/call-hierarchy.js';
+import { TypeHierarchyAdapter } from './languages/type-hierarchy.js';
 import { BinaryBuffer } from '@theia/core/lib/common/buffer';
-import { DocumentSemanticTokensAdapter, DocumentRangeSemanticTokensAdapter } from './languages/semantic-highlighting';
-import { isReadonlyArray } from '../common/arrays';
+import { DocumentSemanticTokensAdapter, DocumentRangeSemanticTokensAdapter } from './languages/semantic-highlighting.js';
+import { isReadonlyArray } from '../common/arrays.js';
+import { DisposableCollection, disposableTimeout, Disposable as TheiaDisposable } from '@theia/core/lib/common/disposable';
+import { Severity } from '@theia/core/lib/common/severity';
+import { LinkedEditingRangeAdapter } from './languages/linked-editing-range.js';
+import { serializeAutoClosingPairs, serializeEnterRules, serializeIndentation, serializeRegExp } from './languages-utils.js';
+import { InlayHintsAdapter } from './languages/inlay-hints.js';
+import { InlineCompletionAdapter, InlineCompletionAdapterBase } from './languages/inline-completion.js';
+import { DocumentDropEditAdapter } from './languages/document-drop-edit.js';
+import { IDisposable } from '@theia/monaco-editor-core';
+import { FileSystemExtImpl, FsLinkProvider } from './file-system-ext-impl.js';
 
 type Adapter = CompletionAdapter |
     SignatureHelpAdapter |
     HoverAdapter |
+    EvaluatableExpressionAdapter |
+    InlineValuesAdapter |
     DocumentHighlightAdapter |
+    MultiDocumentHighlightAdapter |
     DocumentFormattingAdapter |
     RangeFormattingAdapter |
     OnTypeFormattingAdapter |
@@ -112,10 +141,15 @@ type Adapter = CompletionAdapter |
     FoldingProviderAdapter |
     SelectionRangeProviderAdapter |
     ColorProviderAdapter |
+    InlayHintsAdapter |
     RenameAdapter |
     CallHierarchyAdapter |
     DocumentRangeSemanticTokensAdapter |
-    DocumentSemanticTokensAdapter;
+    DocumentSemanticTokensAdapter |
+    LinkedEditingRangeAdapter |
+    TypeHierarchyAdapter |
+    InlineCompletionAdapter |
+    DocumentDropEditAdapter;
 
 export class LanguagesExtImpl implements LanguagesExt {
 
@@ -123,15 +157,25 @@ export class LanguagesExtImpl implements LanguagesExt {
 
     private readonly diagnostics: Diagnostics;
 
+    private linkProviderRegistration?: IDisposable;
+
     private callId = 0;
     private adaptersMap = new Map<number, Adapter>();
 
     constructor(
         rpc: RPCProtocol,
         private readonly documents: DocumentsExtImpl,
-        private readonly commands: CommandRegistryImpl) {
+        private readonly commands: CommandRegistryImpl,
+        private readonly filesSystem: FileSystemExtImpl) {
         this.proxy = rpc.getProxy(PLUGIN_RPC_CONTEXT.LANGUAGES_MAIN);
         this.diagnostics = new Diagnostics(rpc);
+        filesSystem.onWillRegisterFileSystemProvider(linkProvider => this.registerLinkProviderIfNotYetRegistered(linkProvider));
+    }
+
+    dispose(): void {
+        if (this.linkProviderRegistration) {
+            this.linkProviderRegistration.dispose();
+        }
     }
 
     get onDidChangeDiagnostics(): Event<theia.DiagnosticChangeEvent> {
@@ -168,7 +212,8 @@ export class LanguagesExtImpl implements LanguagesExt {
             comments: configuration.comments,
             onEnterRules: serializeEnterRules(configuration.onEnterRules),
             wordPattern: serializeRegExp(configuration.wordPattern),
-            indentationRules: serializeIndentation(configuration.indentationRules)
+            indentationRules: serializeIndentation(configuration.indentationRules),
+            autoClosingPairs: serializeAutoClosingPairs(configuration.autoClosingPairs)
         };
 
         this.proxy.$setLanguageConfiguration(callId, language, config);
@@ -179,10 +224,11 @@ export class LanguagesExtImpl implements LanguagesExt {
         return this.callId++;
     }
 
-    private createDisposable(callId: number): theia.Disposable {
+    private createDisposable(callId: number, onDispose?: () => void): theia.Disposable {
         return new Disposable(() => {
             this.adaptersMap.delete(callId);
             this.proxy.$unregister(callId);
+            onDispose?.();
         });
     }
 
@@ -225,11 +271,21 @@ export class LanguagesExtImpl implements LanguagesExt {
                 $serialized: true,
                 language: selector.language,
                 scheme: selector.scheme,
-                pattern: selector.pattern
+                pattern: selector.pattern,
+                notebookType: selector.notebookType
             };
         }
 
         return undefined;
+    }
+
+    private registerLinkProviderIfNotYetRegistered(linkProvider: FsLinkProvider): void {
+        if (!this.linkProviderRegistration) {
+            this.linkProviderRegistration = this.registerDocumentLinkProvider('*', linkProvider, {
+                id: 'theia.fs-ext-impl',
+                name: 'fs-ext-impl'
+            });
+        }
     }
 
     // ### Completion begin
@@ -253,6 +309,28 @@ export class LanguagesExtImpl implements LanguagesExt {
         return this.createDisposable(callId);
     }
     // ### Completion end
+
+    // ### Inline completion provider begin
+    registerInlineCompletionsProvider(selector: theia.DocumentSelector, provider: theia.InlineCompletionItemProvider): theia.Disposable {
+        const callId = this.addNewAdapter(new InlineCompletionAdapter(this.documents, provider, this.commands));
+        this.proxy.$registerInlineCompletionsSupport(callId, this.transformDocumentSelector(selector));
+        return this.createDisposable(callId);
+    }
+
+    $provideInlineCompletions(
+        handle: number,
+        resource: UriComponents,
+        position: Position,
+        context: InlineCompletionContext,
+        token: theia.CancellationToken
+    ): Promise<IdentifiableInlineCompletions | undefined> {
+        return this.withAdapter(handle, InlineCompletionAdapterBase, adapter => adapter.provideInlineCompletions(URI.revive(resource), position, context, token), undefined);
+    }
+
+    $freeInlineCompletionsList(handle: number, pid: number): void {
+        this.withAdapter(handle, InlineCompletionAdapterBase, async adapter => { adapter.disposeCompletions(pid); }, undefined);
+    }
+    // ### Inline completion provider end
 
     // ### Definition provider begin
     $provideDefinition(handle: number, resource: UriComponents, position: Position, token: theia.CancellationToken): Promise<Definition | undefined> {
@@ -338,10 +416,46 @@ export class LanguagesExtImpl implements LanguagesExt {
         return this.createDisposable(callId);
     }
 
-    $provideHover(handle: number, resource: UriComponents, position: Position, token: theia.CancellationToken): Promise<Hover | undefined> {
-        return this.withAdapter(handle, HoverAdapter, adapter => adapter.provideHover(URI.revive(resource), position, token), undefined);
+    $provideHover(handle: number, resource: UriComponents, position: Position, context: HoverContext<{ id: number }> | undefined,
+        token: theia.CancellationToken): Promise<HoverWithId | undefined> {
+        return this.withAdapter(handle, HoverAdapter, adapter => adapter.provideHover(URI.revive(resource), position, context, token), undefined);
+    }
+
+    $releaseHover(handle: number, id: number): void {
+        this.withAdapter(handle, HoverAdapter, adapter => Promise.resolve(adapter.releaseHover(id)), undefined);
     }
     // ### Hover Provider end
+
+    // ### EvaluatableExpression Provider begin
+    registerEvaluatableExpressionProvider(selector: theia.DocumentSelector, provider: theia.EvaluatableExpressionProvider, pluginInfo: PluginInfo): theia.Disposable {
+        const callId = this.addNewAdapter(new EvaluatableExpressionAdapter(provider, this.documents));
+        this.proxy.$registerEvaluatableExpressionProvider(callId, pluginInfo, this.transformDocumentSelector(selector));
+        return this.createDisposable(callId);
+    }
+
+    $provideEvaluatableExpression(handle: number, resource: UriComponents, position: Position, token: theia.CancellationToken): Promise<EvaluatableExpression | undefined> {
+        return this.withAdapter(handle, EvaluatableExpressionAdapter, adapter => adapter.provideEvaluatableExpression(URI.revive(resource), position, token), undefined);
+    }
+    // ### EvaluatableExpression Provider end
+
+    // ### InlineValues Provider begin
+    registerInlineValuesProvider(selector: theia.DocumentSelector, provider: theia.InlineValuesProvider, pluginInfo: PluginInfo): theia.Disposable {
+        const eventHandle = typeof provider.onDidChangeInlineValues === 'function' ? this.nextCallId() : undefined;
+        const callId = this.addNewAdapter(new InlineValuesAdapter(provider, this.documents));
+        this.proxy.$registerInlineValuesProvider(callId, pluginInfo, this.transformDocumentSelector(selector));
+        let result = this.createDisposable(callId);
+
+        if (eventHandle !== undefined) {
+            const subscription = provider.onDidChangeInlineValues!(_ => this.proxy.$emitInlineValuesEvent(eventHandle));
+            result = Disposable.from(result, subscription);
+        }
+        return result;
+    }
+
+    $provideInlineValues(handle: number, resource: UriComponents, range: Range, context: InlineValueContext, token: theia.CancellationToken): Promise<InlineValue[] | undefined> {
+        return this.withAdapter(handle, InlineValuesAdapter, adapter => adapter.provideInlineValues(URI.revive(resource), range, context, token), undefined);
+    }
+    // ### InlineValue Provider end
 
     // ### Document Highlight Provider begin
     registerDocumentHighlightProvider(selector: theia.DocumentSelector, provider: theia.DocumentHighlightProvider, pluginInfo: PluginInfo): theia.Disposable {
@@ -354,6 +468,23 @@ export class LanguagesExtImpl implements LanguagesExt {
         return this.withAdapter(handle, DocumentHighlightAdapter, adapter => adapter.provideDocumentHighlights(URI.revive(resource), position, token), undefined);
     }
     // ### Document Highlight Provider end
+
+    // ### Multi Document Highlight Provider begin
+    registerMultiDocumentHighlightProvider(
+        selector: theia.DocumentSelector, provider: theia.MultiDocumentHighlightProvider, pluginInfo: PluginInfo
+    ): theia.Disposable {
+        const callId = this.addNewAdapter(new MultiDocumentHighlightAdapter(provider, this.documents));
+        this.proxy.$registerMultiDocumentHighlightProvider(callId, pluginInfo, this.transformDocumentSelector(selector));
+        return this.createDisposable(callId);
+    }
+
+    $provideMultiDocumentHighlights(
+        handle: number, resource: UriComponents, position: Position, otherResources: UriComponents[], token: theia.CancellationToken
+    ): Promise<MultiDocumentHighlightDto[] | undefined> {
+        return this.withAdapter(handle, MultiDocumentHighlightAdapter,
+            adapter => adapter.provideMultiDocumentHighlights(URI.revive(resource), position, otherResources, token), undefined);
+    }
+    // ### Multi Document Highlight Provider end
 
     // ### WorkspaceSymbol Provider begin
     registerWorkspaceSymbolProvider(provider: theia.WorkspaceSymbolProvider, pluginInfo: PluginInfo): theia.Disposable {
@@ -383,6 +514,23 @@ export class LanguagesExtImpl implements LanguagesExt {
         return this.withAdapter(handle, DocumentFormattingAdapter, adapter => adapter.provideDocumentFormattingEdits(URI.revive(resource), options, token), undefined);
     }
     // ### Document Formatting Edit end
+
+    // ### Drop Edit Provider start
+    $provideDocumentDropEdits(handle: number, resource: UriComponents, position: Position,
+        dataTransfer: DataTransferDTO, token: theia.CancellationToken): Promise<DocumentDropEdit | undefined> {
+        return this.withAdapter(handle, DocumentDropEditAdapter, adapter => adapter.provideDocumentDropEdits(URI.revive(resource), position, dataTransfer, token), undefined);
+    }
+
+    registerDocumentDropEditProvider(
+        selector: theia.DocumentSelector,
+        provider: theia.DocumentDropEditProvider,
+        metadata?: theia.DocumentDropEditProviderMetadata
+    ): theia.Disposable {
+        const callId = this.addNewAdapter(new DocumentDropEditAdapter(provider, this.documents, this.filesSystem));
+        this.proxy.$registerDocumentDropEditProvider(callId, this.transformDocumentSelector(selector), metadata);
+        return this.createDisposable(callId);
+    }
+    // ### Drop Edit Provider end
 
     // ### Document Range Formatting Edit begin
     registerDocumentRangeFormattingEditProvider(selector: theia.DocumentSelector, provider: theia.DocumentRangeFormattingEditProvider,
@@ -446,16 +594,30 @@ export class LanguagesExtImpl implements LanguagesExt {
         metadata?: theia.CodeActionProviderMetadata
     ): theia.Disposable {
         const callId = this.addNewAdapter(new CodeActionAdapter(provider, this.documents, this.diagnostics, pluginModel ? pluginModel.id : '', this.commands));
+
+        let documentation: CodeActionProviderDocumentation | undefined;
+        let disposables: DisposableCollection | undefined;
+        if (metadata && metadata.documentation) {
+            disposables = new DisposableCollection();
+            documentation = metadata.documentation.map(doc => ({
+                kind: doc.kind.value,
+                command: this.commands.converter.toSafeCommand(doc.command, disposables!)
+            }));
+        }
+
         this.proxy.$registerQuickFixProvider(
             callId,
             pluginInfo,
             this.transformDocumentSelector(selector),
-            metadata && metadata.providedCodeActionKinds ? metadata.providedCodeActionKinds.map(kind => kind.value!) : undefined
+            metadata && metadata.providedCodeActionKinds ? metadata.providedCodeActionKinds.map(kind => kind.value) : undefined,
+            documentation
         );
-        return this.createDisposable(callId);
+
+        return this.createDisposable(callId, disposables?.dispose);
     }
 
-    $provideCodeActions(handle: number,
+    $provideCodeActions(
+        handle: number,
         resource: UriComponents,
         rangeOrSelection: Range | Selection,
         context: CodeActionContext,
@@ -463,6 +625,15 @@ export class LanguagesExtImpl implements LanguagesExt {
     ): Promise<CodeAction[] | undefined> {
         return this.withAdapter(handle, CodeActionAdapter, adapter => adapter.provideCodeAction(URI.revive(resource), rangeOrSelection, context, token), undefined);
     }
+
+    $releaseCodeActions(handle: number, cacheIds: number[]): void {
+        this.withAdapter(handle, CodeActionAdapter, adapter => adapter.releaseCodeActions(cacheIds), undefined);
+    }
+
+    $resolveCodeAction(handle: number, cacheId: number, token: theia.CancellationToken): Promise<WorkspaceEditDto | undefined> {
+        return this.withAdapter(handle, CodeActionAdapter, adapter => adapter.resolveCodeAction(cacheId, token), undefined);
+    };
+
     // ### Code Actions Provider end
 
     // ### Code Lens Provider begin
@@ -506,9 +677,11 @@ export class LanguagesExtImpl implements LanguagesExt {
     // ### Code Reference Provider end
 
     // ### Document Symbol Provider begin
-    registerDocumentSymbolProvider(selector: theia.DocumentSelector, provider: theia.DocumentSymbolProvider, pluginInfo: PluginInfo): theia.Disposable {
+    registerDocumentSymbolProvider(selector: theia.DocumentSelector, provider: theia.DocumentSymbolProvider, pluginInfo: PluginInfo,
+        metadata?: theia.DocumentSymbolProviderMetadata): theia.Disposable {
         const callId = this.addNewAdapter(new OutlineAdapter(this.documents, provider));
-        this.proxy.$registerOutlineSupport(callId, pluginInfo, this.transformDocumentSelector(selector));
+        const displayName = (metadata && metadata.label) || getPluginLabel(pluginInfo);
+        this.proxy.$registerOutlineSupport(callId, pluginInfo, this.transformDocumentSelector(selector), displayName);
         return this.createDisposable(callId);
     }
 
@@ -533,11 +706,48 @@ export class LanguagesExtImpl implements LanguagesExt {
     }
     // ### Color Provider end
 
+    // ### InlayHints Provider begin
+    registerInlayHintsProvider(selector: theia.DocumentSelector, provider: theia.InlayHintsProvider, pluginInfo: PluginInfo): theia.Disposable {
+        const eventHandle = typeof provider.onDidChangeInlayHints === 'function' ? this.nextCallId() : undefined;
+        const callId = this.addNewAdapter(new InlayHintsAdapter(provider, this.documents, this.commands));
+        this.proxy.$registerInlayHintsProvider(callId, pluginInfo, this.transformDocumentSelector(selector));
+
+        let result = this.createDisposable(callId);
+
+        if (eventHandle !== undefined) {
+            const subscription = provider.onDidChangeInlayHints!(() => this.proxy.$emitInlayHintsEvent(eventHandle));
+            result = Disposable.from(result, subscription);
+        }
+
+        return result;
+    }
+
+    $provideInlayHints(handle: number, resource: UriComponents, range: Range, token: theia.CancellationToken): Promise<InlayHintsDto | undefined> {
+        return this.withAdapter(handle, InlayHintsAdapter, adapter => adapter.provideInlayHints(URI.revive(resource), range, token), undefined);
+    }
+
+    $resolveInlayHint(handle: number, id: ChainedCacheId, token: theia.CancellationToken): Promise<InlayHintDto | undefined> {
+        return this.withAdapter(handle, InlayHintsAdapter, adapter => adapter.resolveInlayHint(id, token), undefined);
+    }
+
+    $releaseInlayHints(handle: number, id: number): void {
+        this.withAdapter(handle, InlayHintsAdapter, async adapter => adapter.releaseHints(id), undefined);
+    }
+    // ### InlayHints Provider end
+
     // ### Folding Range Provider begin
     registerFoldingRangeProvider(selector: theia.DocumentSelector, provider: theia.FoldingRangeProvider, pluginInfo: PluginInfo): theia.Disposable {
         const callId = this.addNewAdapter(new FoldingProviderAdapter(provider, this.documents));
-        this.proxy.$registerFoldingRangeProvider(callId, pluginInfo, this.transformDocumentSelector(selector));
-        return this.createDisposable(callId);
+        const eventHandle = typeof provider.onDidChangeFoldingRanges === 'function' ? this.nextCallId() : undefined;
+
+        this.proxy.$registerFoldingRangeProvider(callId, pluginInfo, this.transformDocumentSelector(selector), eventHandle);
+        let result = this.createDisposable(callId);
+
+        if (eventHandle !== undefined) {
+            const subscription = provider.onDidChangeFoldingRanges!(() => this.proxy.$emitFoldingRangeEvent(eventHandle));
+            result = Disposable.from(result, subscription);
+        }
+        return result;
     }
 
     $provideFoldingRange(
@@ -583,36 +793,99 @@ export class LanguagesExtImpl implements LanguagesExt {
         return this.createDisposable(callId);
     }
 
-    $provideRootDefinition(handle: number, resource: UriComponents, location: Position, token: theia.CancellationToken): Promise<CallHierarchyDefinition | undefined> {
+    $provideRootDefinition(
+        handle: number, resource: UriComponents, location: Position, token: theia.CancellationToken
+    ): Promise<CallHierarchyItem[] | undefined> {
         return this.withAdapter(handle, CallHierarchyAdapter, adapter => adapter.provideRootDefinition(URI.revive(resource), location, token), undefined);
     }
 
-    $provideCallers(handle: number, definition: CallHierarchyDefinition, token: theia.CancellationToken): Promise<CallHierarchyReference[] | undefined> {
+    $provideCallers(handle: number, definition: CallHierarchyItem, token: theia.CancellationToken): Promise<CallHierarchyIncomingCall[] | undefined> {
         return this.withAdapter(handle, CallHierarchyAdapter, adapter => adapter.provideCallers(definition, token), undefined);
     }
 
-    $provideCallees(handle: number, definition: CallHierarchyDefinition, token: theia.CancellationToken): Promise<CallHierarchyReference[] | undefined> {
+    $provideCallees(handle: number, definition: CallHierarchyItem, token: theia.CancellationToken): Promise<CallHierarchyOutgoingCall[] | undefined> {
         return this.withAdapter(handle, CallHierarchyAdapter, adapter => adapter.provideCallees(definition, token), undefined);
     }
+
+    $releaseCallHierarchy(handle: number, session?: string): Promise<boolean> {
+        return this.withAdapter(handle, CallHierarchyAdapter, adapter => adapter.releaseSession(session), false);
+    }
     // ### Call Hierarchy Provider end
+
+    // ### Type hierarchy Provider begin
+    registerTypeHierarchyProvider(selector: theia.DocumentSelector, provider: theia.TypeHierarchyProvider): theia.Disposable {
+        const callId = this.addNewAdapter(new TypeHierarchyAdapter(provider, this.documents));
+        this.proxy.$registerTypeHierarchyProvider(callId, this.transformDocumentSelector(selector));
+        return this.createDisposable(callId);
+    }
+
+    $prepareTypeHierarchy(handle: number, resource: UriComponents, location: Position, token: theia.CancellationToken
+    ): Promise<TypeHierarchyItem[] | undefined> {
+        return this.withAdapter(
+            handle,
+            TypeHierarchyAdapter,
+            adapter => adapter.prepareSession(URI.revive(resource), location, token),
+            undefined
+        );
+    }
+
+    $provideSuperTypes(handle: number, sessionId: string, itemId: string, token: theia.CancellationToken):
+        Promise<TypeHierarchyItem[] | undefined> {
+        return this.withAdapter(
+            handle,
+            TypeHierarchyAdapter,
+            adapter => adapter.provideSupertypes(sessionId, itemId, token),
+            undefined
+        );
+    }
+
+    $provideSubTypes(handle: number, sessionId: string, itemId: string, token: theia.CancellationToken):
+        Promise<TypeHierarchyItem[] | undefined> {
+        return this.withAdapter(
+            handle,
+            TypeHierarchyAdapter,
+            adapter => adapter.provideSubtypes(sessionId, itemId, token),
+            undefined
+        );
+    }
+
+    $releaseTypeHierarchy(handle: number, session?: string): Promise<boolean> {
+        return this.withAdapter(
+            handle,
+            TypeHierarchyAdapter,
+            adapter => adapter.releaseSession(session),
+            false);
+    }
+
+    // ### Type hierarchy Provider end
+
+    // ### Linked Editing Range Provider begin
+    registerLinkedEditingRangeProvider(selector: theia.DocumentSelector, provider: theia.LinkedEditingRangeProvider): theia.Disposable {
+        const handle = this.addNewAdapter(new LinkedEditingRangeAdapter(this.documents, provider));
+        this.proxy.$registerLinkedEditingRangeProvider(handle, this.transformDocumentSelector(selector));
+        return this.createDisposable(handle);
+    }
+
+    $provideLinkedEditingRanges(handle: number, resource: UriComponents, position: Position, token: theia.CancellationToken): Promise<LinkedEditingRanges | undefined> {
+        return this.withAdapter(handle, LinkedEditingRangeAdapter, async adapter => adapter.provideRanges(URI.revive(resource), position, token), undefined);
+    }
+
+    // ### Linked Editing Range Provider end
 
     // #region semantic coloring
 
     registerDocumentSemanticTokensProvider(selector: theia.DocumentSelector, provider: theia.DocumentSemanticTokensProvider, legend: theia.SemanticTokensLegend,
         pluginInfo: PluginInfo): theia.Disposable {
-        const eventHandle = (typeof provider.onDidChangeSemanticTokens === 'function' ? this.nextCallId() : undefined);
-
         const handle = this.addNewAdapter(new DocumentSemanticTokensAdapter(this.documents, provider));
-        this.proxy.$registerDocumentSemanticTokensProvider(handle, pluginInfo, this.transformDocumentSelector(selector), legend, eventHandle);
-        let result = this.createDisposable(handle);
-
-        if (eventHandle) {
-            // eslint-disable-next-line no-unsanitized/method
-            const subscription = provider.onDidChangeSemanticTokens!(_ => this.proxy.$emitDocumentSemanticTokensEvent(eventHandle));
-            result = Disposable.from(result, subscription);
+        const unregister = this.createDisposable(handle);
+        if (typeof provider.onDidChangeSemanticTokens === 'function') {
+            const eventHandle = this.nextCallId();
+            const subscription = provider.onDidChangeSemanticTokens!(_ => this.proxy.$emitDocumentSemanticTokensEvent(handle));
+            this.proxy.$registerDocumentSemanticTokensProvider(handle, pluginInfo, this.transformDocumentSelector(selector), legend, eventHandle);
+            return Disposable.from(unregister, subscription);
         }
-
-        return result;
+        this.proxy.$registerDocumentSemanticTokensProvider(handle, pluginInfo, this.transformDocumentSelector(selector), legend, undefined);
+        return unregister;
     }
 
     $provideDocumentSemanticTokens(handle: number, resource: UriComponents, previousResultId: number, token: theia.CancellationToken): Promise<BinaryBuffer | null> {
@@ -626,50 +899,154 @@ export class LanguagesExtImpl implements LanguagesExt {
     registerDocumentRangeSemanticTokensProvider(selector: theia.DocumentSelector, provider: theia.DocumentRangeSemanticTokensProvider,
         legend: theia.SemanticTokensLegend, pluginInfo: PluginInfo): theia.Disposable {
         const handle = this.addNewAdapter(new DocumentRangeSemanticTokensAdapter(this.documents, provider));
-        this.proxy.$registerDocumentRangeSemanticTokensProvider(handle, pluginInfo, this.transformDocumentSelector(selector), legend);
-        return this.createDisposable(handle);
+        const unregister = this.createDisposable(handle);
+        if (typeof provider.onDidChangeSemanticTokens === 'function') {
+            const eventHandle = this.nextCallId();
+            const subscription = provider.onDidChangeSemanticTokens!(_ => this.proxy.$emitDocumentSemanticTokensEvent(handle));
+            this.proxy.$registerDocumentRangeSemanticTokensProvider(handle, pluginInfo, this.transformDocumentSelector(selector), legend, eventHandle);
+            return Disposable.from(unregister, subscription);
+        }
+        this.proxy.$registerDocumentRangeSemanticTokensProvider(handle, pluginInfo, this.transformDocumentSelector(selector), legend, undefined);
+        return unregister;
     }
 
     $provideDocumentRangeSemanticTokens(handle: number, resource: UriComponents, range: Range, token: theia.CancellationToken): Promise<BinaryBuffer | null> {
         return this.withAdapter(handle, DocumentRangeSemanticTokensAdapter, adapter => adapter.provideDocumentRangeSemanticTokens(URI.revive(resource), range, token), null);
     }
 
+    // Copied from https://github.com/microsoft/vscode/blob/7d9b1c37f8e5ae3772782ba3b09d827eb3fdd833/src/vs/workbench/api/common/extHostLanguages.ts
+    protected statusItemHandlePool = 0;
+    protected readonly statusItemIds = new Set<string>();
+    createLanguageStatusItem(extension: Plugin, id: string, selector: theia.DocumentSelector): theia.LanguageStatusItem {
+
+        const handle = this.statusItemHandlePool++;
+        const proxy = this.proxy;
+        const ids = this.statusItemIds;
+
+        // enforce extension unique identifier
+        const fullyQualifiedId = `${extension.model.id}/${id}`;
+        if (ids.has(fullyQualifiedId)) {
+            throw new Error(`LanguageStatusItem with id '${id}' ALREADY exists`);
+        }
+        ids.add(fullyQualifiedId);
+
+        const data: Omit<theia.LanguageStatusItem, 'dispose'> = {
+            selector,
+            id,
+            name: extension.model.displayName ?? extension.model.name,
+            severity: LanguageStatusSeverity.Information,
+            command: undefined,
+            text: '',
+            detail: '',
+            busy: false
+        };
+
+        let soonHandle: TheiaDisposable | undefined;
+        const commandDisposables = new DisposableCollection();
+        const updateAsync = () => {
+            soonHandle?.dispose();
+            soonHandle = disposableTimeout(() => {
+                commandDisposables.dispose();
+                commandDisposables.push({ dispose: () => { } }); // Mark disposable as undisposed.
+                this.proxy.$setLanguageStatus(handle, {
+                    id: fullyQualifiedId,
+                    name: data.name ?? extension.model.displayName ?? extension.model.name,
+                    source: extension.model.displayName ?? extension.model.name,
+                    selector: this.transformDocumentSelector(data.selector),
+                    label: data.text,
+                    detail: data.detail ?? '',
+                    severity: data.severity === LanguageStatusSeverity.Error ? Severity.Error : data.severity === LanguageStatusSeverity.Warning ? Severity.Warning : Severity.Info,
+                    command: data.command && this.commands.converter.toSafeCommand(data.command, commandDisposables),
+                    accessibilityInfo: data.accessibilityInformation,
+                    busy: data.busy
+                });
+            }, 0);
+        };
+
+        const result: theia.LanguageStatusItem = {
+            dispose(): void {
+                commandDisposables.dispose();
+                soonHandle?.dispose();
+                proxy.$removeLanguageStatus(handle);
+                ids.delete(fullyQualifiedId);
+            },
+            get id(): string {
+                return data.id;
+            },
+            get name(): string | undefined {
+                return data.name;
+            },
+            set name(value) {
+                data.name = value;
+                updateAsync();
+            },
+            get selector(): theia.DocumentSelector {
+                return data.selector;
+            },
+            set selector(value) {
+                data.selector = value;
+                updateAsync();
+            },
+            get text(): string {
+                return data.text;
+            },
+            set text(value) {
+                data.text = value;
+                updateAsync();
+            },
+            get detail(): string | undefined {
+                return data.detail;
+            },
+            set detail(value) {
+                data.detail = value;
+                updateAsync();
+            },
+            get severity(): theia.LanguageStatusSeverity {
+                return data.severity;
+            },
+            set severity(value) {
+                data.severity = value;
+                updateAsync();
+            },
+            get accessibilityInformation(): theia.AccessibilityInformation | undefined {
+                return data.accessibilityInformation;
+            },
+            set accessibilityInformation(value) {
+                data.accessibilityInformation = value;
+                updateAsync();
+            },
+            get command(): theia.Command | undefined {
+                return data.command;
+            },
+            set command(value) {
+                data.command = value;
+                updateAsync();
+            },
+            get busy(): boolean {
+                return data.busy;
+            },
+            set busy(value: boolean) {
+                data.busy = value;
+                updateAsync();
+            }
+        };
+        updateAsync();
+        return result;
+    }
+    // #endregion
+
+    // region DocumentPaste
+
+    /** @stubbed */
+    registerDocumentPasteEditProvider(
+        extension: Plugin, selector: theia.DocumentSelector, provider: theia.DocumentPasteEditProvider, metadata: theia.DocumentPasteProviderMetadata
+    ): theia.Disposable {
+        return Disposable.NULL;
+    }
     // #endregion
 }
 
-function serializeEnterRules(rules?: theia.OnEnterRule[]): SerializedOnEnterRule[] | undefined {
-    if (typeof rules === 'undefined' || rules === null) {
-        return undefined;
-    }
-
-    return rules.map(r =>
-    ({
-        action: r.action,
-        beforeText: serializeRegExp(r.beforeText),
-        afterText: serializeRegExp(r.afterText)
-    } as SerializedOnEnterRule));
+function getPluginLabel(pluginInfo: PluginInfo): string {
+    return pluginInfo.displayName || pluginInfo.name;
 }
 
-function serializeRegExp(regexp?: RegExp): SerializedRegExp | undefined {
-    if (typeof regexp === 'undefined' || regexp === null) {
-        return undefined;
-    }
-
-    return {
-        pattern: regexp.source,
-        flags: (regexp.global ? 'g' : '') + (regexp.ignoreCase ? 'i' : '') + (regexp.multiline ? 'm' : '')
-    };
-}
-
-function serializeIndentation(indentationRules?: theia.IndentationRule): SerializedIndentationRule | undefined {
-    if (typeof indentationRules === 'undefined' || indentationRules === null) {
-        return undefined;
-    }
-
-    return {
-        increaseIndentPattern: serializeRegExp(indentationRules.increaseIndentPattern),
-        decreaseIndentPattern: serializeRegExp(indentationRules.decreaseIndentPattern),
-        indentNextLinePattern: serializeRegExp(indentationRules.indentNextLinePattern),
-        unIndentedLinePattern: serializeRegExp(indentationRules.unIndentedLinePattern)
-    };
-}

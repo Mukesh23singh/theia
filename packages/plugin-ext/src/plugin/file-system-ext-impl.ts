@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -24,28 +24,28 @@
  */
 
 /* eslint-disable arrow-body-style */
-/* eslint-disable @typescript-eslint/quotes */
-/* eslint-disable @typescript-eslint/tslint/config */
+/* eslint-disable @stylistic/quotes */
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @theia/explicit-return-type */
 
-import { UriComponents } from '@theia/core/shared/vscode-uri';
-import { URI } from './types-impl';
-import { RPCProtocol } from '../common/rpc-protocol';
-import { PLUGIN_RPC_CONTEXT, FileSystemExt, FileSystemMain, IFileChangeDto } from '../common/plugin-api-rpc';
+import { Schemes as Schemas, UriComponents } from '../common/uri-components.js';
+import { FileChangeType, FileSystemError, URI } from './types-impl.js';
+import { RPCProtocol } from '../common/rpc-protocol.js';
+import { PLUGIN_RPC_CONTEXT, FileSystemExt, FileSystemMain, IFileChangeDto } from '../common/plugin-api-rpc.js';
 import * as vscode from '@theia/plugin';
 import * as files from '@theia/filesystem/lib/common/files';
-import { FileChangeType, FileSystemError } from './types-impl';
-import * as typeConverter from './type-converters';
-import { LanguagesExtImpl } from './languages';
-import { Schemes as Schemas } from '../common/uri-components';
-import { State, StateMachine, LinkComputer, Edge } from '../common/link-computer';
+import * as typeConverter from './type-converters.js';
+import { State, StateMachine, LinkComputer, Edge } from '../common/link-computer.js';
 import { commonPrefixLength } from '@theia/core/lib/common/strings';
 import { CharCode } from '@theia/core/lib/common/char-code';
 import { BinaryBuffer } from '@theia/core/lib/common/buffer';
+import { MarkdownString } from '../common/plugin-api-rpc-model.js';
+import { Emitter } from '@theia/core/lib/common';
+import { createAPIObject } from './plugin-context.js';
 
 type IDisposable = vscode.Disposable;
 
-class FsLinkProvider {
+export class FsLinkProvider {
 
     private _schemes: string[] = [];
     private _stateMachine?: StateMachine;
@@ -137,8 +137,11 @@ class FsLinkProvider {
 }
 
 class ConsumerFileSystem implements vscode.FileSystem {
+    apiObject: vscode.FileSystem;
 
-    constructor(private _proxy: FileSystemMain) { }
+    constructor(private _proxy: FileSystemMain, private _capabilities: Map<string, number>) {
+        this.apiObject = createAPIObject(this);
+    }
 
     stat(uri: vscode.Uri): Promise<vscode.FileStat> {
         return this._proxy.$stat(uri).catch(ConsumerFileSystem._handleError);
@@ -149,7 +152,7 @@ class ConsumerFileSystem implements vscode.FileSystem {
     createDirectory(uri: vscode.Uri): Promise<void> {
         return this._proxy.$mkdir(uri).catch(ConsumerFileSystem._handleError);
     }
-    async readFile(uri: vscode.Uri): Promise<Uint8Array> {
+    readFile(uri: vscode.Uri): Promise<Uint8Array> {
         return this._proxy.$readFile(uri).then(buff => buff.buffer).catch(ConsumerFileSystem._handleError);
     }
     writeFile(uri: vscode.Uri, content: Uint8Array): Promise<void> {
@@ -163,6 +166,13 @@ class ConsumerFileSystem implements vscode.FileSystem {
     }
     copy(source: vscode.Uri, destination: vscode.Uri, options?: { overwrite?: boolean }): Promise<void> {
         return this._proxy.$copy(source, destination, { ...{ overwrite: false }, ...options }).catch(ConsumerFileSystem._handleError);
+    }
+    isWritableFileSystem(scheme: string): boolean | undefined {
+        const capabilities = this._capabilities.get(scheme);
+        if (typeof capabilities === 'number') {
+            return (capabilities & files.FileSystemProviderCapabilities.Readonly) === 0;
+        }
+        return undefined;
     }
     private static _handleError(err: any): never {
         // generic error
@@ -194,45 +204,36 @@ export class FileSystemExtImpl implements FileSystemExt {
     private readonly _proxy: FileSystemMain;
     private readonly _linkProvider = new FsLinkProvider();
     private readonly _fsProvider = new Map<number, vscode.FileSystemProvider>();
+    private readonly _capabilities = new Map<string, number>();
     private readonly _usedSchemes = new Set<string>();
     private readonly _watches = new Map<number, IDisposable>();
 
-    private _linkProviderRegistration?: IDisposable;
+    private readonly onWillRegisterFileSystemProviderEmitter = new Emitter<FsLinkProvider>();
+    readonly onWillRegisterFileSystemProvider = this.onWillRegisterFileSystemProviderEmitter.event;
+
     private _handlePool: number = 0;
 
-    readonly fileSystem: vscode.FileSystem;
+    readonly fileSystem: ConsumerFileSystem;
 
-    constructor(rpc: RPCProtocol, private _extHostLanguageFeatures: LanguagesExtImpl) {
+    constructor(rpc: RPCProtocol) {
         this._proxy = rpc.getProxy(PLUGIN_RPC_CONTEXT.FILE_SYSTEM_MAIN);
-        this.fileSystem = new ConsumerFileSystem(this._proxy);
+        this.fileSystem = new ConsumerFileSystem(this._proxy, this._capabilities);
 
         // register used schemes
         Object.keys(Schemas).forEach(scheme => this._usedSchemes.add(scheme));
     }
 
     dispose(): void {
-        if (this._linkProviderRegistration) {
-            this._linkProviderRegistration.dispose();
-        }
+        this.onWillRegisterFileSystemProviderEmitter.dispose();
     }
 
-    private _registerLinkProviderIfNotYetRegistered(): void {
-        if (!this._linkProviderRegistration) {
-            this._linkProviderRegistration = this._extHostLanguageFeatures.registerDocumentLinkProvider('*', this._linkProvider, {
-                id: 'theia.fs-ext-impl',
-                name: 'fs-ext-impl'
-            });
-        }
-    }
-
-    registerFileSystemProvider(scheme: string, provider: vscode.FileSystemProvider, options: { isCaseSensitive?: boolean, isReadonly?: boolean } = {}) {
+    registerFileSystemProvider(scheme: string, provider: vscode.FileSystemProvider, options: { isCaseSensitive?: boolean, isReadonly?: boolean | MarkdownString } = {}) {
 
         if (this._usedSchemes.has(scheme)) {
             throw new Error(`a provider for the scheme '${scheme}' is already registered`);
         }
 
-        //
-        this._registerLinkProviderIfNotYetRegistered();
+        this.onWillRegisterFileSystemProviderEmitter.fire(this._linkProvider);
 
         const handle = this._handlePool++;
         this._linkProvider.add(scheme);
@@ -255,7 +256,19 @@ export class FileSystemExtImpl implements FileSystemExt {
             capabilities += files.FileSystemProviderCapabilities.FileOpenReadWriteClose;
         }
 
-        this._proxy.$registerFileSystemProvider(handle, scheme, capabilities);
+        let readonlyMessage: MarkdownString | undefined;
+        if (options.isReadonly && MarkdownString.is(options.isReadonly)) {
+            readonlyMessage = {
+                value: options.isReadonly.value,
+                isTrusted: options.isReadonly.isTrusted,
+                supportThemeIcons: options.isReadonly.supportThemeIcons,
+                supportHtml: options.isReadonly.supportHtml,
+                baseUri: options.isReadonly.baseUri,
+                uris: options.isReadonly.uris
+            };
+        }
+
+        this._proxy.$registerFileSystemProvider(handle, scheme, capabilities, readonlyMessage);
 
         const subscription = provider.onDidChangeFile(event => {
             const mapped: IFileChangeDto[] = [];
@@ -296,8 +309,16 @@ export class FileSystemExtImpl implements FileSystemExt {
     }
 
     private static _asIStat(stat: vscode.FileStat): files.Stat {
-        const { type, ctime, mtime, size } = stat;
-        return { type, ctime, mtime, size };
+        const { type, ctime, mtime, size, permissions } = stat;
+        return { type, ctime, mtime, size, permissions };
+    }
+
+    $acceptProviderInfos(scheme: string, capabilities?: files.FileSystemProviderCapabilities): void {
+        if (typeof capabilities === 'number') {
+            this._capabilities.set(scheme, capabilities);
+        } else {
+            this._capabilities.delete(scheme);
+        }
     }
 
     $stat(handle: number, resource: UriComponents): Promise<files.Stat> {

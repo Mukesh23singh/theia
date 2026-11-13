@@ -33,13 +33,25 @@
       "path": "../navigator"
     },
     {
+      "path": "../outline-view"
+    },
+    {
       "path": "../plugin"
     },
     {
       "path": "../plugin-ext"
     },
     {
+      "path": "../plugin-utils"
+    },
+    {
+      "path": "../scm"
+    },
+    {
       "path": "../terminal"
+    },
+    {
+      "path": "../typehierarchy"
     },
     {
       "path": "../userstorage"

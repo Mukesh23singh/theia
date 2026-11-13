@@ -1,40 +1,44 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { interfaces } from '@theia/core/shared/inversify';
-import { MAIN_RPC_CONTEXT, TreeViewsMain, TreeViewsExt, TreeViewRevealOptions } from '../../../common/plugin-api-rpc';
-import { RPCProtocol } from '../../../common/rpc-protocol';
-import { PluginViewRegistry, PLUGIN_VIEW_DATA_FACTORY_ID } from './plugin-view-registry';
+import { MAIN_RPC_CONTEXT, TreeViewsMain, TreeViewsExt, TreeViewRevealOptions, RegisterTreeDataProviderOptions } from '../../../common/plugin-api-rpc.js';
+import { RPCProtocol } from '../../../common/rpc-protocol.js';
+import { PluginViewRegistry, PLUGIN_VIEW_DATA_FACTORY_ID } from './plugin-view-registry.js';
 import {
     SelectableTreeNode,
     ExpandableTreeNode,
     CompositeTreeNode,
-    WidgetManager
+    WidgetManager,
+    BadgeService
 } from '@theia/core/lib/browser';
-import { ViewContextKeyService } from './view-context-key-service';
 import { Disposable, DisposableCollection } from '@theia/core';
-import { TreeViewWidget, TreeViewNode, PluginTreeModel } from './tree-view-widget';
-import { PluginViewWidget } from './plugin-view-widget';
+import { TreeViewWidget, TreeViewNode, PluginTreeModel, TreeViewWidgetOptions } from './tree-view-widget.js';
+import { PluginViewWidget } from './plugin-view-widget.js';
+import { BinaryBuffer } from '@theia/core/lib/common/buffer';
+import { DnDFileContentStore } from './dnd-file-content-store.js';
+import { ViewBadge } from '@theia/plugin';
 
 export class TreeViewsMainImpl implements TreeViewsMain, Disposable {
 
     private readonly proxy: TreeViewsExt;
     private readonly viewRegistry: PluginViewRegistry;
-    private readonly contextKeys: ViewContextKeyService;
     private readonly widgetManager: WidgetManager;
+    private readonly fileContentStore: DnDFileContentStore;
+    private readonly badgeService: BadgeService;
 
     private readonly treeViewProviders = new Map<string, Disposable>();
 
@@ -46,17 +50,26 @@ export class TreeViewsMainImpl implements TreeViewsMain, Disposable {
         this.proxy = rpc.getProxy(MAIN_RPC_CONTEXT.TREE_VIEWS_EXT);
         this.viewRegistry = container.get(PluginViewRegistry);
 
-        this.contextKeys = this.container.get(ViewContextKeyService);
         this.widgetManager = this.container.get(WidgetManager);
+        this.fileContentStore = this.container.get(DnDFileContentStore);
+        this.badgeService = this.container.get(BadgeService);
     }
 
     dispose(): void {
         this.toDispose.dispose();
     }
 
-    async $registerTreeDataProvider(treeViewId: string): Promise<void> {
+    async $registerTreeDataProvider(treeViewId: string, $options: RegisterTreeDataProviderOptions): Promise<void> {
         this.treeViewProviders.set(treeViewId, this.viewRegistry.registerViewDataProvider(treeViewId, async ({ state, viewInfo }) => {
-            const widget = await this.widgetManager.getOrCreateWidget<TreeViewWidget>(PLUGIN_VIEW_DATA_FACTORY_ID, { id: treeViewId });
+            const options: TreeViewWidgetOptions = {
+                id: treeViewId,
+                manageCheckboxStateManually: $options.manageCheckboxStateManually,
+                showCollapseAll: $options.showCollapseAll,
+                multiSelect: $options.canSelectMany,
+                dragMimeTypes: $options.dragMimeTypes,
+                dropMimeTypes: $options.dropMimeTypes
+            };
+            const widget = await this.widgetManager.getOrCreateWidget<TreeViewWidget>(PLUGIN_VIEW_DATA_FACTORY_ID, options);
             widget.model.viewInfo = viewInfo;
             if (state) {
                 widget.restoreState(state);
@@ -80,7 +93,7 @@ export class TreeViewsMainImpl implements TreeViewsMain, Disposable {
                 this.toDispose.push(Disposable.create(() => widget.model.proxy = undefined));
                 this.handleTreeEvents(widget.id, widget);
             }
-            await widget.model.refresh();
+            widget.model.refresh();
             return widget;
         }));
         this.toDispose.push(Disposable.create(() => this.$unregisterTreeDataProvider(treeViewId)));
@@ -94,11 +107,17 @@ export class TreeViewsMainImpl implements TreeViewsMain, Disposable {
         }
     }
 
-    async $refresh(treeViewId: string): Promise<void> {
+    async $readDroppedFile(contentId: string): Promise<BinaryBuffer> {
+        const file = this.fileContentStore.getFile(contentId);
+        const buffer = await file.arrayBuffer();
+        return BinaryBuffer.wrap(new Uint8Array(buffer));
+    }
+
+    async $refresh(treeViewId: string, items?: string[]): Promise<void> {
         const viewPanel = await this.viewRegistry.getView(treeViewId);
         const widget = viewPanel && viewPanel.widgets[0];
         if (widget instanceof TreeViewWidget) {
-            await widget.model.refresh();
+            await widget.refresh(items);
         }
     }
 
@@ -157,20 +176,26 @@ export class TreeViewsMainImpl implements TreeViewsMain, Disposable {
         }
     }
 
+    async $setBadge(treeViewId: string, badge: ViewBadge | undefined): Promise<void> {
+        const viewPanel = await this.viewRegistry.getView(treeViewId);
+        if (viewPanel) {
+            this.badgeService.showBadge(viewPanel, badge);
+        }
+    }
+
+    async setChecked(treeViewWidget: TreeViewWidget, changedNodes: TreeViewNode[]): Promise<void> {
+        await this.proxy.$checkStateChanged(treeViewWidget.id, changedNodes.map(node => ({
+            id: node.id,
+            checked: !!node.checkboxInfo?.checked
+        })));
+    }
+
     protected handleTreeEvents(treeViewId: string, treeViewWidget: TreeViewWidget): void {
         this.toDispose.push(treeViewWidget.model.onExpansionChanged(event => {
             this.proxy.$setExpanded(treeViewId, event.id, event.expanded);
         }));
 
         this.toDispose.push(treeViewWidget.model.onSelectionChanged(event => {
-            if (event.length === 1) {
-                const { contextValue } = event[0] as TreeViewNode;
-                this.contextKeys.viewItem.set(contextValue);
-            } else {
-                this.contextKeys.viewItem.set('');
-            }
-            this.contextKeys.view.set(treeViewId);
-
             this.proxy.$setSelection(treeViewId, event.map((node: TreeViewNode) => node.id));
         }));
 

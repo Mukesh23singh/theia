@@ -1,35 +1,42 @@
-/********************************************************************************
- * Copyright (C) 2020 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
-import { interfaces, Container } from '@theia/core/shared/inversify';
-import { WidgetFactory, createTreeContainer, TreeWidget, TreeProps, defaultTreeProps, TreeModel, LabelProviderContribution } from '@theia/core/lib/browser';
-import { PreferenceNodeRendererFactory, PreferenceHeaderRenderer } from './components/preference-node-renderer';
-import { PreferencesWidget } from './preference-widget';
-import { PreferencesTreeWidget } from './preference-tree-widget';
-import { PreferencesEditorWidget } from './preference-editor-widget';
-import { PreferencesSearchbarWidget } from './preference-searchbar-widget';
-import { PreferencesScopeTabBar } from './preference-scope-tabbar-widget';
-import { PreferenceTreeModel } from '../preference-tree-model';
-import { PreferenceTreeLabelProvider } from '../util/preference-tree-label-provider';
-import { Preference } from '../util/preference-types';
-import { PreferenceStringInputRenderer } from './components/preference-string-input';
-import { PreferenceBooleanInputRenderer } from './components/preference-boolean-input';
-import { PreferenceJSONLinkRenderer } from './components/preference-json-input';
-import { PreferenceSelectInputRenderer } from './components/preference-select-input';
-import { PreferenceNumberInputRenderer } from './components/preference-number-input';
-import { PreferenceArrayInputRenderer } from './components/preference-array-input';
+// *****************************************************************************
+// Copyright (C) 2020 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+import { createTreeContainer, LabelProviderContribution, WidgetFactory } from '@theia/core/lib/browser';
+import { bindRootContributionProvider } from '@theia/core/lib/common/contribution-provider';
+import { Container, interfaces } from '@theia/core/shared/inversify';
+import { PreferenceTreeModel } from '../preference-tree-model.js';
+import { PreferenceTreeLabelProvider } from '../util/preference-tree-label-provider.js';
+import { Preference } from '../util/preference-types.js';
+import { PreferenceArrayInputRenderer, PreferenceArrayInputRendererContribution } from './components/preference-array-input.js';
+import { PreferenceBooleanInputRenderer, PreferenceBooleanInputRendererContribution } from './components/preference-boolean-input.js';
+import { PreferenceSingleFilePathInputRenderer, PreferenceSingleFilePathInputRendererContribution } from './components/preference-file-input.js';
+import { PreferenceJSONLinkRenderer, PreferenceJSONLinkRendererContribution } from './components/preference-json-input.js';
+import { PreferenceHeaderRenderer, PreferenceNodeRendererFactory } from './components/preference-node-renderer.js';
+import {
+    DefaultPreferenceNodeRendererCreatorRegistry, PreferenceHeaderRendererContribution, PreferenceNodeRendererContribution, PreferenceNodeRendererCreatorRegistry
+} from './components/preference-node-renderer-creator.js';
+import { PreferenceNumberInputRenderer, PreferenceNumberInputRendererContribution } from './components/preference-number-input.js';
+import { PreferenceSelectInputRenderer, PreferenceSelectInputRendererContribution } from './components/preference-select-input.js';
+import { PreferenceStringInputRenderer, PreferenceStringInputRendererContribution } from './components/preference-string-input.js';
+import { PreferenceMarkdownRenderer } from './components/preference-markdown-renderer.js';
+import { PreferencesEditorWidget } from './preference-editor-widget.js';
+import { PreferencesScopeTabBar } from './preference-scope-tabbar-widget.js';
+import { PreferencesSearchbarWidget } from './preference-searchbar-widget.js';
+import { PreferencesTreeWidget } from './preference-tree-widget.js';
+import { PreferencesWidget } from './preference-widget.js';
+import { PreferenceNullInputRenderer, PreferenceNullRendererContribution } from './components/preference-null-input.js';
 
 export function bindPreferencesWidgets(bind: interfaces.Bind): void {
     bind(PreferenceTreeLabelProvider).toSelf().inSingletonScope();
@@ -41,22 +48,45 @@ export function bindPreferencesWidgets(bind: interfaces.Bind): void {
         id: PreferencesWidget.ID,
         createWidget: () => container.get(PreferencesWidget)
     })).inSingletonScope();
+
+    bindRootContributionProvider(bind, PreferenceNodeRendererContribution);
+
     bind(PreferenceSelectInputRenderer).toSelf();
+    bind(PreferenceNodeRendererContribution).to(PreferenceSelectInputRendererContribution).inSingletonScope();
+
     bind(PreferenceArrayInputRenderer).toSelf();
+    bind(PreferenceNodeRendererContribution).to(PreferenceArrayInputRendererContribution).inSingletonScope();
+
     bind(PreferenceStringInputRenderer).toSelf();
+    bind(PreferenceNodeRendererContribution).to(PreferenceStringInputRendererContribution).inSingletonScope();
+    bind(PreferenceNullInputRenderer).toSelf();
+    bind(PreferenceNodeRendererContribution).to(PreferenceNullRendererContribution).inSingletonScope();
+
     bind(PreferenceBooleanInputRenderer).toSelf();
+    bind(PreferenceNodeRendererContribution).to(PreferenceBooleanInputRendererContribution).inSingletonScope();
+
     bind(PreferenceNumberInputRenderer).toSelf();
+    bind(PreferenceNodeRendererContribution).to(PreferenceNumberInputRendererContribution).inSingletonScope();
+
     bind(PreferenceJSONLinkRenderer).toSelf();
+    bind(PreferenceNodeRendererContribution).to(PreferenceJSONLinkRendererContribution).inSingletonScope();
+
     bind(PreferenceHeaderRenderer).toSelf();
+    bind(PreferenceNodeRendererContribution).to(PreferenceHeaderRendererContribution).inSingletonScope();
+
+    bind(PreferenceSingleFilePathInputRenderer).toSelf();
+    bind(PreferenceNodeRendererContribution).to(PreferenceSingleFilePathInputRendererContribution).inSingletonScope();
+
+    bind(DefaultPreferenceNodeRendererCreatorRegistry).toSelf().inSingletonScope();
+    bind(PreferenceNodeRendererCreatorRegistry).toService(DefaultPreferenceNodeRendererCreatorRegistry);
 }
 
-function createPreferencesWidgetContainer(parent: interfaces.Container): Container {
-    const child = createTreeContainer(parent);
-    child.bind(PreferenceTreeModel).toSelf();
-    child.rebind(TreeModel).toService(PreferenceTreeModel);
-    child.unbind(TreeWidget);
-    child.bind(PreferencesTreeWidget).toSelf();
-    child.rebind(TreeProps).toConstantValue({ ...defaultTreeProps, search: false });
+export function createPreferencesWidgetContainer(parent: interfaces.Container): Container {
+    const child = createTreeContainer(parent, {
+        model: PreferenceTreeModel,
+        widget: PreferencesTreeWidget,
+        props: { search: false }
+    });
     child.bind(PreferencesEditorWidget).toSelf();
 
     child.bind(PreferencesSearchbarWidget).toSelf();
@@ -64,31 +94,12 @@ function createPreferencesWidgetContainer(parent: interfaces.Container): Contain
     child.bind(PreferencesWidget).toSelf();
 
     child.bind(PreferenceNodeRendererFactory).toFactory(({ container }) => (node: Preference.TreeNode) => {
-        const grandchild = container.createChild();
-        grandchild.bind(Preference.Node).toConstantValue(node);
-        if (Preference.LeafNode.is(node)) {
-            if (node.preference.data.enum) {
-                return grandchild.get(PreferenceSelectInputRenderer);
-            }
-            const type = Array.isArray(node.preference.data.type) ? node.preference.data.type[0] : node.preference.data.type;
-            if (type === 'array' && node.preference.data.items?.type === 'string') {
-                return grandchild.get(PreferenceArrayInputRenderer);
-            }
-            switch (type) {
-                case 'string':
-                    return grandchild.get(PreferenceStringInputRenderer);
-                case 'boolean':
-                    return grandchild.get(PreferenceBooleanInputRenderer);
-                case 'number':
-                case 'integer':
-                    return grandchild.get(PreferenceNumberInputRenderer);
-                default:
-                    return grandchild.get(PreferenceJSONLinkRenderer);
-            }
-        } else {
-            return grandchild.get(PreferenceHeaderRenderer);
-        }
+        const registry = container.get<PreferenceNodeRendererCreatorRegistry>(PreferenceNodeRendererCreatorRegistry);
+        const creator = registry.getPreferenceNodeRendererCreator(node);
+        return creator.createRenderer(node, container);
     });
+
+    child.bind(PreferenceMarkdownRenderer).toSelf().inSingletonScope();
 
     return child;
 }

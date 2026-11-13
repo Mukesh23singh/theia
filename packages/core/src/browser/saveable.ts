@@ -1,51 +1,199 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { Widget } from '@phosphor/widgets';
-import { Message } from '@phosphor/messaging';
-import { Event } from '../common/event';
-import { MaybePromise } from '../common/types';
-import { Key } from './keyboard/keys';
-import { AbstractDialog } from './dialogs';
-import { waitForClosed } from './widgets';
+import { Widget } from '@lumino/widgets';
+import { Message } from '@lumino/messaging';
+import { Emitter, Event } from '../common/event.js';
+import { MaybePromise } from '../common/types.js';
+import { Key } from './keyboard/keys.js';
+import { AbstractDialog } from './dialogs.js';
+import { nls } from '../common/nls.js';
+import { Disposable, DisposableCollection, isObject, URI } from '../common/index.js';
+import { BinaryBuffer } from '../common/buffer.js';
+
+export type AutoSaveMode = 'off' | 'afterDelay' | 'onFocusChange' | 'onWindowChange';
 
 export interface Saveable {
     readonly dirty: boolean;
+    /** If false, the saveable will not participate in autosaving. */
+    readonly autosaveable?: boolean;
+    /**
+     * This event is fired when the content of the `dirty` variable changes.
+     */
     readonly onDirtyChanged: Event<void>;
-    readonly autoSave: 'on' | 'off';
+    /**
+     * This event is fired when the content of the saveable changes.
+     * While `onDirtyChanged` is fired to notify the UI that the widget is dirty,
+     * `onContentChanged` is used for the auto save throttling.
+     */
+    readonly onContentChanged: Event<void>;
     /**
      * Saves dirty changes.
      */
     save(options?: SaveOptions): MaybePromise<void>;
     /**
+     * Performs the save operation with a new file name.
+     */
+    saveAs?(options: SaveAsOptions): MaybePromise<void>;
+    /**
      * Reverts dirty changes.
      */
     revert?(options?: Saveable.RevertOptions): Promise<void>;
     /**
-     * Creates a snapshot of the dirty state.
+     * Creates a snapshot of the dirty state. See also {@link Saveable.Snapshot}.
      */
-    createSnapshot?(): object;
+    createSnapshot?(): Saveable.Snapshot;
     /**
      * Applies the given snapshot to the dirty state.
      */
     applySnapshot?(snapshot: object): void;
+    /**
+     * Serializes the full state of the saveable item to a binary buffer.
+     */
+    serialize?(): Promise<BinaryBuffer>;
+
+    /**
+     * Optionally return file filters for the "Save As" dialog.
+     * The keys of the returned object are the names of the filters and the values are arrays of file extensions.
+     * For example: `{ 'Text Files': ['txt', 'text'], 'All Files': ['*'] }`
+     * If no filters are provided, a default filter of `All Files (*.*)` will be used.
+     */
+    filters?(): { [name: string]: string[] };
 }
 
 export interface SaveableSource {
     readonly saveable: Saveable;
+}
+
+export class DelegatingSaveable implements Saveable {
+    dirty = false;
+    protected readonly onDirtyChangedEmitter = new Emitter<void>();
+    protected readonly onContentChangedEmitter = new Emitter<void>();
+
+    get onDirtyChanged(): Event<void> {
+        return this.onDirtyChangedEmitter.event;
+    }
+
+    get onContentChanged(): Event<void> {
+        return this.onContentChangedEmitter.event;
+    }
+
+    async save(options?: SaveOptions): Promise<void> {
+        await this._delegate?.save(options);
+    }
+
+    revert?(options?: Saveable.RevertOptions): Promise<void>;
+    createSnapshot?(): Saveable.Snapshot;
+    applySnapshot?(snapshot: object): void;
+    serialize?(): Promise<BinaryBuffer>;
+    saveAs?(options: SaveAsOptions): MaybePromise<void>;
+
+    protected _delegate?: Saveable;
+    protected toDispose = new DisposableCollection();
+
+    set delegate(delegate: Saveable) {
+        this.toDispose.dispose();
+        this.toDispose = new DisposableCollection();
+        this._delegate = delegate;
+        this.toDispose.push(delegate.onDirtyChanged(() => {
+            this.dirty = delegate.dirty;
+            this.onDirtyChangedEmitter.fire();
+        }));
+        this.toDispose.push(delegate.onContentChanged(() => {
+            this.onContentChangedEmitter.fire();
+        }));
+        if (this.dirty !== delegate.dirty) {
+            this.dirty = delegate.dirty;
+            this.onDirtyChangedEmitter.fire();
+        }
+        this.revert = delegate.revert?.bind(delegate);
+        this.createSnapshot = delegate.createSnapshot?.bind(delegate);
+        this.applySnapshot = delegate.applySnapshot?.bind(delegate);
+        this.serialize = delegate.serialize?.bind(delegate);
+        this.saveAs = delegate.saveAs?.bind(delegate);
+    }
+
+}
+
+export class CompositeSaveable implements Saveable {
+    protected isDirty = false;
+    protected readonly onDirtyChangedEmitter = new Emitter<void>();
+    protected readonly onContentChangedEmitter = new Emitter<void>();
+    protected readonly toDispose = new DisposableCollection(this.onDirtyChangedEmitter, this.onContentChangedEmitter);
+    protected readonly saveablesMap = new Map<Saveable, Disposable>();
+
+    get dirty(): boolean {
+        return this.isDirty;
+    }
+
+    get onDirtyChanged(): Event<void> {
+        return this.onDirtyChangedEmitter.event;
+    }
+
+    get onContentChanged(): Event<void> {
+        return this.onContentChangedEmitter.event;
+    }
+
+    async save(options?: SaveOptions): Promise<void> {
+        await Promise.all(this.saveables.map(saveable => saveable.save(options)));
+    }
+
+    async revert(options?: Saveable.RevertOptions): Promise<void> {
+        await Promise.all(this.saveables.map(saveable => saveable.revert?.(options)));
+    }
+
+    get saveables(): readonly Saveable[] {
+        return Array.from(this.saveablesMap.keys());
+    }
+
+    add(saveable: Saveable): void {
+        if (this.saveablesMap.has(saveable)) {
+            return;
+        }
+        const toDispose = new DisposableCollection();
+        this.toDispose.push(toDispose);
+        this.saveablesMap.set(saveable, toDispose);
+        toDispose.push(Disposable.create(() => {
+            this.saveablesMap.delete(saveable);
+        }));
+        toDispose.push(saveable.onDirtyChanged(() => {
+            const wasDirty = this.isDirty;
+            this.isDirty = this.saveables.some(s => s.dirty);
+            if (this.isDirty !== wasDirty) {
+                this.onDirtyChangedEmitter.fire();
+            }
+        }));
+        toDispose.push(saveable.onContentChanged(() => {
+            this.onContentChangedEmitter.fire();
+        }));
+        if (saveable.dirty && !this.isDirty) {
+            this.isDirty = true;
+            this.onDirtyChangedEmitter.fire();
+        }
+    }
+
+    remove(saveable: Saveable): boolean {
+        const toDispose = this.saveablesMap.get(saveable);
+        toDispose?.dispose();
+        return !!toDispose;
+    }
+
+    dispose(): void {
+        this.toDispose.dispose();
+    }
 }
 
 export namespace Saveable {
@@ -56,16 +204,24 @@ export namespace Saveable {
          */
         soft?: boolean
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    export function isSource(arg: any): arg is SaveableSource {
-        return !!arg && ('saveable' in arg) && is(arg.saveable);
+
+    /**
+     * A snapshot of a saveable item.
+     * Applying a snapshot of a saveable on another (of the same type) using the `applySnapshot` should yield the state of the original saveable.
+     */
+    export type Snapshot = { value: string } | { read(): string | null };
+    export namespace Snapshot {
+        export function read(snapshot: Snapshot): string | undefined {
+            return 'value' in snapshot ? snapshot.value : (snapshot.read() ?? undefined);
+        }
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    export function is(arg: any): arg is Saveable {
-        return !!arg && ('dirty' in arg) && ('onDirtyChanged' in arg);
+    export function isSource(arg: unknown): arg is SaveableSource {
+        return isObject<SaveableSource>(arg) && is(arg.saveable);
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    export function get(arg: any): Saveable | undefined {
+    export function is(arg: unknown): arg is Saveable {
+        return isObject(arg) && 'dirty' in arg && 'onDirtyChanged' in arg;
+    }
+    export function get(arg: unknown): Saveable | undefined {
         if (is(arg)) {
             return arg;
         }
@@ -74,95 +230,74 @@ export namespace Saveable {
         }
         return undefined;
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    export function getDirty(arg: any): Saveable | undefined {
+    export function getDirty(arg: unknown): Saveable | undefined {
         const saveable = get(arg);
         if (saveable && saveable.dirty) {
             return saveable;
         }
         return undefined;
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    export function isDirty(arg: any): boolean {
+    export function isDirty(arg: unknown): boolean {
         return !!getDirty(arg);
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    export async function save(arg: any, options?: SaveOptions): Promise<void> {
+    export async function save(arg: unknown, options?: SaveOptions): Promise<void> {
         const saveable = get(arg);
         if (saveable) {
             await saveable.save(options);
         }
     }
-    export function apply(widget: Widget): SaveableWidget | undefined {
-        if (SaveableWidget.is(widget)) {
-            return widget;
-        }
-        const saveable = Saveable.get(widget);
-        if (!saveable) {
-            return undefined;
-        }
-        setDirty(widget, saveable.dirty);
-        saveable.onDirtyChanged(() => setDirty(widget, saveable.dirty));
-        const closeWidget = widget.close.bind(widget);
-        const closeWithoutSaving: SaveableWidget['closeWithoutSaving'] = async () => {
-            if (saveable.dirty && saveable.revert) {
-                await saveable.revert();
-            }
-            closeWidget();
-            return waitForClosed(widget);
-        };
-        let closing = false;
-        const closeWithSaving: SaveableWidget['closeWithSaving'] = async options => {
-            if (closing) {
-                return;
-            }
-            closing = true;
-            try {
-                const result = await shouldSave(saveable, () => {
-                    if (options && options.shouldSave) {
-                        return options.shouldSave();
-                    }
-                    return new ShouldSaveDialog(widget).open();
-                });
-                if (typeof result === 'boolean') {
-                    if (result) {
-                        await Saveable.save(widget);
-                    }
-                    await closeWithoutSaving();
+
+    export async function confirmSaveBeforeClose(toClose: Iterable<Widget>, others: Widget[]): Promise<boolean | undefined> {
+        for (const widget of toClose) {
+            const saveable = Saveable.get(widget);
+            if (saveable?.dirty) {
+                if (!closingWidgetWouldLoseSaveable(widget, others)) {
+                    continue;
                 }
-            } finally {
-                closing = false;
+                const userWantsToSave = await new ShouldSaveDialog(widget).open();
+                if (userWantsToSave === undefined) { // User clicked cancel.
+                    return undefined;
+                } else if (userWantsToSave) {
+                    await saveable.save();
+                } else {
+                    await saveable.revert?.();
+                }
             }
-        };
-        return Object.assign(widget, {
-            closeWithoutSaving,
-            closeWithSaving,
-            close: () => closeWithSaving()
-        });
+        }
+        return true;
     }
-    export async function shouldSave(saveable: Saveable, cb: () => MaybePromise<boolean | undefined>): Promise<boolean | undefined> {
-        if (!saveable.dirty) {
-            return false;
-        }
 
-        if (saveable.autoSave === 'on') {
-            return true;
-        }
-
-        return cb();
+    export function closingWidgetWouldLoseSaveable(widget: Widget, others: Widget[]): boolean {
+        const saveable = Saveable.get(widget);
+        return !!saveable && !others.some(otherWidget => otherWidget !== widget && Saveable.get(otherWidget) === saveable);
     }
 }
 
 export interface SaveableWidget extends Widget {
-    closeWithoutSaving(): Promise<void>;
+    /**
+     * @param doRevert whether the saveable should be reverted before being saved. Defaults to `true`.
+     */
+    closeWithoutSaving(doRevert?: boolean): Promise<void>;
     closeWithSaving(options?: SaveableWidget.CloseOptions): Promise<void>;
+}
+
+export const close = Symbol('close');
+/**
+ * An interface describing saveable widgets that are created by the `Saveable.apply` function.
+ * The original `close` function is reassigned to a locally-defined `Symbol`
+ */
+export interface PostCreationSaveableWidget extends SaveableWidget {
+    /**
+     * The original `close` function of the widget
+     */
+    [close](): void;
 }
 export namespace SaveableWidget {
     export function is(widget: Widget | undefined): widget is SaveableWidget {
         return !!widget && 'closeWithoutSaving' in widget;
     }
     export function getDirty<T extends Widget>(widgets: Iterable<T>): IterableIterator<SaveableWidget & T> {
-        return get(widgets, Saveable.isDirty);
+        return get<T>(widgets, Saveable.isDirty);
     }
     export function* get<T extends Widget>(
         widgets: Iterable<T>,
@@ -197,11 +332,31 @@ export const enum FormatType {
     DIRTY
 };
 
+export enum SaveReason {
+    Manual = 1,
+    AfterDelay = 2,
+    FocusChange = 3
+}
+
+export namespace SaveReason {
+    export function isManual(reason?: number): reason is typeof SaveReason.Manual {
+        return reason === SaveReason.Manual;
+    }
+}
+
 export interface SaveOptions {
     /**
      * Formatting type to apply when saving.
      */
     readonly formatType?: FormatType;
+    /**
+     * The reason for saving the resource.
+     */
+    readonly saveReason?: SaveReason;
+}
+
+export interface SaveAsOptions extends SaveOptions {
+    readonly target: URI;
 }
 
 /**
@@ -224,26 +379,28 @@ export class ShouldSaveDialog extends AbstractDialog<boolean> {
 
     constructor(widget: Widget) {
         super({
-            title: `Do you want to save the changes you made to ${widget.title.label || widget.title.caption}?`
+            title: nls.localizeByDefault('Do you want to save the changes you made to {0}?', widget.title.label || widget.title.caption)
+        }, {
+            node: widget.node.ownerDocument.createElement('div')
         });
 
-        const messageNode = document.createElement('div');
-        messageNode.textContent = "Your changes will be lost if you don't save them.";
+        const messageNode = this.node.ownerDocument.createElement('div');
+        messageNode.textContent = nls.localizeByDefault("Your changes will be lost if you don't save them.");
         messageNode.setAttribute('style', 'flex: 1 100%; padding-bottom: calc(var(--theia-ui-padding)*3);');
         this.contentNode.appendChild(messageNode);
-        this.dontSaveButton = this.appendDontSaveButton();
         this.appendCloseButton();
-        this.appendAcceptButton('Save');
+        this.dontSaveButton = this.appendDontSaveButton();
+        this.appendAcceptButton(nls.localizeByDefault('Save'));
     }
 
     protected appendDontSaveButton(): HTMLButtonElement {
-        const button = this.createButton("Don't save");
+        const button = this.createButton(nls.localizeByDefault("Don't Save"));
         this.controlPanel.appendChild(button);
         button.classList.add('secondary');
         return button;
     }
 
-    protected onAfterAttach(msg: Message): void {
+    protected override onAfterAttach(msg: Message): void {
         super.onAfterAttach(msg);
         this.addKeyListener(this.dontSaveButton, Key.ENTER, () => {
             this.shouldSave = false;
@@ -255,4 +412,7 @@ export class ShouldSaveDialog extends AbstractDialog<boolean> {
         return this.shouldSave;
     }
 
+    override async open(disposeOnResolve?: boolean): Promise<boolean | undefined> {
+        return super.open(disposeOnResolve);
+    }
 }

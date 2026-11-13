@@ -1,26 +1,26 @@
-/********************************************************************************
- * Copyright (C) 2017-2018 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017-2018 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
+import { injectable, inject, postConstruct, named } from '@theia/core/shared/inversify';
 import {
     SearchInWorkspaceServer,
     SearchInWorkspaceClient,
     SearchInWorkspaceResult,
     SearchInWorkspaceOptions
-} from '../common/search-in-workspace-interface';
+} from '../common/search-in-workspace-interface.js';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { ILogger } from '@theia/core';
 
@@ -56,7 +56,7 @@ export class SearchInWorkspaceService implements SearchInWorkspaceClient {
 
     // All the searches that we have started, that are not done yet (onDone
     // with that searchId has not been called).
-    private pendingSearches = new Map<number, SearchInWorkspaceCallbacks>();
+    protected pendingSearches = new Map<number, SearchInWorkspaceCallbacks>();
 
     // Due to the asynchronicity of the node backend, it's possible that we
     // start a search, receive an event for that search, and then receive
@@ -64,14 +64,16 @@ export class SearchInWorkspaceService implements SearchInWorkspaceClient {
     // events until we get the search id and return it to the caller.
     // Otherwise the caller would discard the event because it doesn't know
     // the search id yet.
-    private pendingOnDones: Map<number, string | undefined> = new Map();
+    protected pendingOnDones: Map<number, string | undefined> = new Map();
 
-    private lastKnownSearchId: number = -1;
+    protected lastKnownSearchId: number = -1;
 
     @inject(SearchInWorkspaceServer) protected readonly searchServer: SearchInWorkspaceServer;
     @inject(SearchInWorkspaceClientImpl) protected readonly client: SearchInWorkspaceClientImpl;
     @inject(WorkspaceService) protected readonly workspaceService: WorkspaceService;
-    @inject(ILogger) protected readonly logger: ILogger;
+
+    @inject(ILogger) @named('search-in-workspace:SearchInWorkspaceService')
+    protected readonly logger: ILogger;
 
     @postConstruct()
     protected init(): void {
@@ -117,8 +119,9 @@ export class SearchInWorkspaceService implements SearchInWorkspaceClient {
         return this.doSearch(what, roots.map(r => r.resource.toString()), callbacks, opts);
     }
 
-    protected async doSearch(what: string, rootsUris: string[], callbacks: SearchInWorkspaceCallbacks, opts?: SearchInWorkspaceOptions): Promise<number> {
-        const searchId = await this.searchServer.search(what, rootsUris, opts);
+    protected async doSearch(what: string, rootUris: string[], callbacks: SearchInWorkspaceCallbacks, opts?: SearchInWorkspaceOptions): Promise<number> {
+        const searchId = await this.searchServer.search(what, rootUris, opts);
+
         this.pendingSearches.set(searchId, callbacks);
         this.lastKnownSearchId = searchId;
 
@@ -140,8 +143,8 @@ export class SearchInWorkspaceService implements SearchInWorkspaceClient {
         return searchId;
     }
 
-    async searchWithCallback(what: string, rootsUris: string[], callbacks: SearchInWorkspaceClient, opts?: SearchInWorkspaceOptions | undefined): Promise<number> {
-        return this.doSearch(what, rootsUris, callbacks, opts);
+    async searchWithCallback(what: string, rootUris: string[], callbacks: SearchInWorkspaceClient, opts?: SearchInWorkspaceOptions | undefined): Promise<number> {
+        return this.doSearch(what, rootUris, callbacks, opts);
     }
 
     // Cancel an ongoing search.

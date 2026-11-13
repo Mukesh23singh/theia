@@ -1,0 +1,47 @@
+// *****************************************************************************
+// Copyright (C) 2026 EclipseSource GmbH.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+
+import { AbstractStreamParsingChatAgent } from '@theia/ai-chat/lib/common/chat-agents';
+import { LanguageModelRequirement } from '@theia/ai-core/lib/common';
+import { ILogger, nls } from '@theia/core';
+import { inject, injectable, named } from '@theia/core/shared/inversify';
+import { exploreSystemPrompt, EXPLORE_SYSTEM_PROMPT_ID } from './explore-prompt-template.js';
+import { ExploreAgentId } from '../common/agent-ids.js';
+
+export { ExploreAgentId };
+
+@injectable()
+export class ExploreAgent extends AbstractStreamParsingChatAgent {
+    @inject(ILogger) @named('ai-ide:ExploreAgent')
+    protected override readonly logger: ILogger;
+
+    name = 'Explore';
+    id = ExploreAgentId;
+    languageModelRequirements: LanguageModelRequirement[] = [{
+        purpose: 'chat',
+        identifier: 'default/fast',
+    }];
+    protected defaultLanguageModelPurpose: string = 'chat';
+    override description = nls.localize('theia/ai/ide/exploreAgent/description',
+        'A codebase exploration assistant that extracts and distills information from the codebase. \
+        Reports facts about what exists, provides code excerpts, and describes observed patterns. \
+        Delegate to it when the design is clear but facts must be gathered across files: call sites, data flow, patterns, ripple checks. \
+        It does not plan. For 1-2 known files or a single targeted search, use tools directly instead.');
+
+    override prompts = [{ id: EXPLORE_SYSTEM_PROMPT_ID, defaultVariant: exploreSystemPrompt, variants: [] }];
+    protected override systemPromptId: string = EXPLORE_SYSTEM_PROMPT_ID;
+    override iconClass: string = 'codicon codicon-compass';
+}

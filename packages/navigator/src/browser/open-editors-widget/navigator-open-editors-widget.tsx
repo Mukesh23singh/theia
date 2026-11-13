@@ -1,29 +1,31 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as React from '@theia/core/shared/react';
 import { injectable, interfaces, Container, postConstruct, inject } from '@theia/core/shared/inversify';
 import {
     ApplicationShell,
+    codicon,
     ContextMenuRenderer,
     defaultTreeProps,
     NavigatableWidget,
     NodeProps,
     Saveable,
     TabBar,
+    TreeDecoration,
     TreeDecoratorService,
     TreeModel,
     TreeNode,
@@ -32,29 +34,34 @@ import {
     TREE_NODE_CONTENT_CLASS,
     Widget,
 } from '@theia/core/lib/browser';
-import { OpenEditorNode, OpenEditorsModel } from './navigator-open-editors-tree-model';
+import { OpenEditorNode, OpenEditorsModel } from './navigator-open-editors-tree-model.js';
 import { createFileTreeContainer, FileTreeModel, FileTreeWidget } from '@theia/filesystem/lib/browser';
-import { OpenEditorsTreeDecoratorService } from './navigator-open-editors-decorator-service';
-import { OPEN_EDITORS_CONTEXT_MENU } from './navigator-open-editors-menus';
+import { OpenEditorsTreeDecoratorService } from './navigator-open-editors-decorator-service.js';
+import { OPEN_EDITORS_CONTEXT_MENU } from './navigator-open-editors-menus.js';
 import { CommandService } from '@theia/core/lib/common';
-import { OpenEditorsCommands } from './navigator-open-editors-commands';
+import { OpenEditorsCommands } from './navigator-open-editors-commands.js';
+import { nls } from '@theia/core/lib/common/nls';
+import { WorkspaceService } from '@theia/workspace/lib/browser';
+import { AbstractNavigatorTreeWidget } from '../abstract-navigator-tree-widget.js';
 
 export const OPEN_EDITORS_PROPS: TreeProps = {
     ...defaultTreeProps,
     virtualized: false,
     contextMenuPath: OPEN_EDITORS_CONTEXT_MENU,
+    leftPadding: 22
 };
 
 export interface OpenEditorsNodeRow extends TreeWidget.NodeRow {
     node: OpenEditorNode;
 }
 @injectable()
-export class OpenEditorsWidget extends FileTreeWidget {
+export class OpenEditorsWidget extends AbstractNavigatorTreeWidget {
     static ID = 'theia-open-editors-widget';
-    static LABEL = 'Open Editors';
+    static LABEL = nls.localizeByDefault('Open Editors');
 
     @inject(ApplicationShell) protected readonly applicationShell: ApplicationShell;
     @inject(CommandService) protected readonly commandService: CommandService;
+    @inject(WorkspaceService) protected readonly workspaceService: WorkspaceService;
 
     static createContainer(parent: interfaces.Container): Container {
         const child = createFileTreeContainer(parent);
@@ -78,15 +85,15 @@ export class OpenEditorsWidget extends FileTreeWidget {
     }
 
     constructor(
-        @inject(TreeProps) readonly props: TreeProps,
-        @inject(OpenEditorsModel) readonly model: OpenEditorsModel,
-        @inject(ContextMenuRenderer) protected readonly contextMenuRenderer: ContextMenuRenderer
+        @inject(TreeProps) props: TreeProps,
+        @inject(OpenEditorsModel) override readonly model: OpenEditorsModel,
+        @inject(ContextMenuRenderer) contextMenuRenderer: ContextMenuRenderer
     ) {
         super(props, model, contextMenuRenderer);
     }
 
     @postConstruct()
-    init(): void {
+    override init(): void {
         super.init();
         this.id = OpenEditorsWidget.ID;
         this.title.label = OpenEditorsWidget.LABEL;
@@ -101,7 +108,7 @@ export class OpenEditorsWidget extends FileTreeWidget {
     // eslint-disable-next-line no-null/no-null
     protected activeTreeNodePrefixElement: string | undefined | null;
 
-    protected renderNode(node: OpenEditorNode, props: NodeProps): React.ReactNode {
+    protected override renderNode(node: OpenEditorNode, props: NodeProps): React.ReactNode {
         if (!TreeNode.isVisible(node)) {
             return undefined;
         }
@@ -111,13 +118,31 @@ export class OpenEditorsWidget extends FileTreeWidget {
             {this.renderExpansionToggle(node, props)}
             {isEditorNode && this.renderPrefixIcon(node)}
             {this.decorateIcon(node, this.renderIcon(node, props))}
-            {this.renderCaptionAffixes(node, props, 'captionPrefixes')}
-            {this.renderCaption(node, props)}
-            {this.renderCaptionAffixes(node, props, 'captionSuffixes')}
+            <div className='noWrapInfo theia-TreeNodeSegmentGrow'>
+                {this.renderCaptionAffixes(node, props, 'captionPrefixes')}
+                {this.renderCaption(node, props)}
+                {this.renderCaptionAffixes(node, props, 'captionSuffixes')}
+            </div>
             {this.renderTailDecorations(node, props)}
             {(this.isGroupNode(node) || this.isAreaNode(node)) && this.renderInteractables(node, props)}
-        </div >;
+        </div>;
         return React.createElement('div', attributes, content);
+    }
+
+    protected override getDecorationData<K extends keyof TreeDecoration.Data>(node: TreeNode, key: K): Required<Pick<TreeDecoration.Data, K>>[K][] {
+        const contributed = super.getDecorationData(node, key);
+        if (key === 'captionSuffixes' && OpenEditorNode.is(node)) {
+            (contributed as Array<Array<TreeDecoration.CaptionAffix>>).push(this.getWorkspaceDecoration(node));
+        }
+        return contributed;
+    }
+
+    protected getWorkspaceDecoration(node: OpenEditorNode): TreeDecoration.CaptionAffix[] {
+        const color = this.getDecorationData(node, 'fontData').find(data => data.color)?.color;
+        return [{
+            fontData: { color },
+            data: this.labelProvider.getDetails(node.fileStat),
+        }];
     }
 
     protected isGroupNode(node: OpenEditorNode): boolean {
@@ -128,7 +153,7 @@ export class OpenEditorsWidget extends FileTreeWidget {
         return node.id.startsWith(OpenEditorsModel.AREA_NODE_ID_PREFIX);
     }
 
-    protected doRenderNodeRow({ node, depth }: OpenEditorsNodeRow): React.ReactNode {
+    protected override doRenderNodeRow({ node, depth }: OpenEditorsNodeRow): React.ReactNode {
         let groupClass = '';
         if (this.isGroupNode(node)) {
             groupClass = 'group-node';
@@ -195,11 +220,11 @@ export class OpenEditorsWidget extends FileTreeWidget {
         return (
             <div className='open-editors-prefix-icon-container'>
                 <div data-id={node.id}
-                    className='open-editors-prefix-icon dirty codicon codicon-circle-filled'
+                    className={`open-editors-prefix-icon dirty ${codicon('circle-filled', true)}`}
                 />
                 <div data-id={node.id}
                     onClick={this.closeEditor}
-                    className='open-editors-prefix-icon close codicon codicon-close'
+                    className={`open-editors-prefix-icon close ${codicon('close', true)}`}
                 />
             </div>);
     }
@@ -220,15 +245,14 @@ export class OpenEditorsWidget extends FileTreeWidget {
         }
     }
 
-    protected handleClickEvent(node: OpenEditorNode | undefined, event: React.MouseEvent<HTMLElement>): void {
+    protected override tapNode(node?: TreeNode): void {
         if (OpenEditorNode.is(node)) {
-            const { widget } = node;
-            this.applicationShell.activateWidget(widget.id);
+            this.applicationShell.activateWidget(node.widget.id);
         }
-        super.handleClickEvent(node, event);
+        super.tapNode(node);
     }
 
-    protected handleContextMenuEvent(node: OpenEditorNode | undefined, event: React.MouseEvent<HTMLElement>): void {
+    protected override handleContextMenuEvent(node: OpenEditorNode | undefined, event: React.MouseEvent<HTMLElement>): void {
         super.handleContextMenuEvent(node, event);
         if (node) {
             // Since the CommonCommands used in the context menu act on the shell's activeWidget, this is necessary to ensure
@@ -236,4 +260,15 @@ export class OpenEditorsWidget extends FileTreeWidget {
             this.applicationShell.activateWidget(node.widget.id);
         }
     }
+
+    protected override getPaddingLeft(node: TreeNode): number {
+        if (node.id.startsWith(OpenEditorsModel.AREA_NODE_ID_PREFIX)) {
+            return 0;
+        }
+        return this.props.leftPadding;
+    }
+
+    // The state of this widget is derived from external factors. No need to store or restore it.
+    override storeState(): object { return {}; }
+    override restoreState(): void { }
 }

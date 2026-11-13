@@ -1,28 +1,30 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { injectable } from 'inversify';
-import { MaybePromise } from '../../common/types';
-import { TreeImpl, CompositeTreeNode, TreeNode, SelectableTreeNode, ExpandableTreeNode } from '../tree';
-import { TreeElement, CompositeTreeElement, TreeSource } from './tree-source';
+import { MaybePromise } from '../../common/types.js';
+import { TreeImpl, CompositeTreeNode, TreeNode, SelectableTreeNode, ExpandableTreeNode } from '../tree/index.js';
+import { TreeElement, CompositeTreeElement, TreeSource } from './tree-source.js';
 
 @injectable()
 export class SourceTree extends TreeImpl {
 
-    async resolveChildren(parent: TreeElementNodeParent): Promise<TreeNode[]> {
+    override async resolveChildren(parent: TreeElementNodeParent): Promise<TreeNode[]> {
         const elements = await this.resolveElements(parent);
         const nodes: TreeNode[] = [];
         let index = 0;
@@ -47,9 +49,10 @@ export class SourceTree extends TreeImpl {
         const existing = this.getNode(id);
         const updated = existing && <TreeElementNode>Object.assign(existing, { element, parent });
         if (CompositeTreeElement.hasElements(element)) {
+            const expand = element.expandByDefault ? element.expandByDefault() : false;
             if (updated) {
                 if (!ExpandableTreeNode.is(updated)) {
-                    Object.assign(updated, { expanded: false });
+                    Object.assign(updated, { expanded: expand });
                 }
                 if (!CompositeTreeNode.is(updated)) {
                     Object.assign(updated, { children: [] });
@@ -62,20 +65,20 @@ export class SourceTree extends TreeImpl {
                 id,
                 name,
                 selected: false,
-                expanded: false,
+                expanded: expand,
                 children: []
             } as TreeElementNode;
         }
         if (CompositeTreeElementNode.is(updated)) {
-            delete updated.expanded;
-            delete updated.children;
+            delete (updated as any).expanded;
+            delete (updated as any).children;
         }
         if (updated) {
             if (ExpandableTreeNode.is(updated)) {
-                delete updated.expanded;
+                delete (updated as any).expanded;
             }
             if (CompositeTreeNode.is(updated)) {
-                delete updated.children;
+                delete (updated as any).children;
             }
             return updated;
         }

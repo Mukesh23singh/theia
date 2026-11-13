@@ -1,25 +1,26 @@
-/********************************************************************************
- * Copyright (C) 2020 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { Container } from 'inversify';
-import { ContributionProvider } from '../../common';
-import { CorePreferences } from '../core-preferences';
-import { FrontendApplicationContribution } from '../frontend-application';
-import { DefaultWindowService } from './default-window-service';
-import assert = require('assert');
+import { ContributionProvider, ILogger } from '../../common/index.js';
+import { CorePreferences } from '../../common/core-preferences.js';
+import { FrontendApplicationContribution } from '../frontend-application-contribution.js';
+import { DefaultWindowService } from './default-window-service.js';
+import assert from 'assert';
+import { MockLogger } from '../../common/test/mock-logger.js';
 
 describe('DefaultWindowService', () => {
     class TestFrontendApplicationContribution implements FrontendApplicationContribution {
@@ -42,6 +43,7 @@ describe('DefaultWindowService', () => {
             .toConstantValue({
                 'application.confirmExit': confirmExit,
             });
+        container.bind(ILogger).to(MockLogger).inSingletonScope();
         return container.get(DefaultWindowService);
     }
     it('onWillStop should be called on every contribution (never)', () => {
@@ -51,7 +53,7 @@ describe('DefaultWindowService', () => {
         ];
         const windowService = setupWindowService('never', frontendContributions);
         assert(frontendContributions.every(contribution => !contribution.onWillStopCalled), 'contributions should not be called yet');
-        assert(windowService.canUnload(), 'canUnload should return true');
+        assert(windowService['collectContributionUnloadVetoes']().length === 0, 'there should be no vetoes');
         assert(frontendContributions.every(contribution => contribution.onWillStopCalled), 'contributions should have been called');
     });
     it('onWillStop should be called on every contribution (ifRequired)', () => {
@@ -62,7 +64,7 @@ describe('DefaultWindowService', () => {
         ];
         const windowService = setupWindowService('ifRequired', frontendContributions);
         assert(frontendContributions.every(contribution => !contribution.onWillStopCalled), 'contributions should not be called yet');
-        assert(!windowService.canUnload(), 'canUnload should return false');
+        assert(windowService['collectContributionUnloadVetoes']().length > 0, 'There should be vetoes');
         assert(frontendContributions.every(contribution => contribution.onWillStopCalled), 'contributions should have been called');
     });
     it('onWillStop should be called on every contribution (always)', () => {
@@ -72,7 +74,29 @@ describe('DefaultWindowService', () => {
         ];
         const windowService = setupWindowService('always', frontendContributions);
         assert(frontendContributions.every(contribution => !contribution.onWillStopCalled), 'contributions should not be called yet');
-        assert(!windowService.canUnload(), 'canUnload should return false');
+        assert(windowService['collectContributionUnloadVetoes']().length > 0, 'there should be vetoes');
         assert(frontendContributions.every(contribution => contribution.onWillStopCalled), 'contributions should have been called');
+    });
+    it('should reload unconditionally when restored from the back/forward cache', () => {
+        const frontendContributions: TestFrontendApplicationContribution[] = [
+            new TestFrontendApplicationContribution(true),
+        ];
+        const windowService = setupWindowService('always', frontendContributions);
+        let reloaded = 0;
+        windowService.reload = () => { reloaded++; };
+        windowService['handlePageShow']({ persisted: false } as PageTransitionEvent);
+        const reloadsBeforeRestore = reloaded;
+        windowService['handlePageShow']({ persisted: true } as PageTransitionEvent);
+        assert(reloadsBeforeRestore === 0, 'a regular page show should not reload');
+        assert(reloaded === 1, 'a restored page should reload');
+        assert(windowService['collectContributionUnloadVetoes']().length === 0, 'the recovery reload should not be vetoed');
+    });
+    it('onUnload should fire at most once, even if `pagehide` fires repeatedly', () => {
+        const windowService = setupWindowService('never', []);
+        let fired = 0;
+        windowService.onUnload(() => fired++);
+        windowService['handlePageHide']();
+        windowService['handlePageHide']();
+        assert(fired === 1, `onUnload should have fired once, but fired ${fired} time(s)`);
     });
 });

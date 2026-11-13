@@ -1,16 +1,19 @@
 {
   "name": "@theia/search-in-workspace",
-  "version": "1.18.0",
+  "version": "1.77.0",
   "description": "Theia - Search in workspace",
+  "type": "module",
   "dependencies": {
-    "@theia/core": "1.18.0",
-    "@theia/editor": "1.18.0",
-    "@theia/filesystem": "1.18.0",
-    "@theia/navigator": "1.18.0",
-    "@theia/process": "1.18.0",
-    "@theia/workspace": "1.18.0",
-    "minimatch": "^3.0.4",
-    "vscode-ripgrep": "^1.2.4"
+    "@theia/core": "1.77.0",
+    "@theia/editor": "1.77.0",
+    "@theia/filesystem": "1.77.0",
+    "@theia/navigator": "1.77.0",
+    "@theia/process": "1.77.0",
+    "@theia/workspace": "1.77.0",
+    "@vscode/ripgrep": "^1.18.0",
+    "minimatch": "^10.2.6",
+    "react-textarea-autosize": "^8.5.9",
+    "tslib": "^2.8.1"
   },
   "publishConfig": {
     "access": "public"
@@ -19,12 +22,15 @@
     {
       "frontend": "lib/browser/search-in-workspace-frontend-module",
       "backend": "lib/node/search-in-workspace-backend-module"
+    },
+    {
+      "frontendOnly": "lib/browser-only/search-in-workspace-frontend-only-module"
     }
   ],
   "keywords": [
     "theia-extension"
   ],
-  "license": "EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0",
+  "license": "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/eclipse-theia/theia.git"
@@ -46,6 +52,14 @@
     "watch": "theiaext watch"
   },
   "devDependencies": {
-    "@theia/ext-scripts": "1.18.0"
+    "@theia/ext-scripts": "1.77.0"
+  },
+  "gitHead": "21358137e41342742707f660b8e222f940a27652",
+  "exports": {
+    "./package.json": "./package.json",
+    "./lib/*.json": "./lib/*.json",
+    "./lib/*.js": "./lib/*.js",
+    "./lib/*": "./lib/*.js",
+    "./*": "./*"
   }
 }

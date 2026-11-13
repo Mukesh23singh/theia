@@ -1,26 +1,28 @@
-/********************************************************************************
- * Copyright (C) 2019 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import * as React from '@theia/core/shared/react';
 import '../../../src/browser/style/terminal-search.css';
-import { Terminal } from 'xterm';
+// A CommonJS module whose exports cannot be detected statically, so it is imported as a whole.
+import xterm, { type Terminal } from 'xterm';
 import { SearchAddon, ISearchOptions } from 'xterm-addon-search';
 import { codicon, Key } from '@theia/core/lib/browser';
+import { nls } from '@theia/core';
 
 export const TERMINAL_SEARCH_WIDGET_FACTORY_ID = 'terminal-search';
 export const TerminalSearchWidgetFactory = Symbol('TerminalSearchWidgetFactory');
@@ -34,7 +36,7 @@ export class TerminalSearchWidget extends ReactWidget {
     private searchOptions: ISearchOptions = {};
     private searchAddon: SearchAddon;
 
-    @inject(Terminal)
+    @inject(xterm.Terminal)
     protected terminal: Terminal;
 
     @postConstruct()
@@ -50,24 +52,39 @@ export class TerminalSearchWidget extends ReactWidget {
 
     protected render(): React.ReactNode {
         return <div className='theia-search-terminal-widget'>
-            <div className='theia-search-elem-box' ref={searchBox => this.searchBox = searchBox} >
+            <div className='theia-search-elem-box' ref={searchBox => { this.searchBox = searchBox; }} >
                 <input
-                    title='Find'
+                    title={nls.localizeByDefault('Find')}
                     type='text'
                     spellCheck='false'
-                    placeholder='Find'
-                    ref={ip => this.searchInput = ip}
+                    placeholder={nls.localizeByDefault('Find')}
+                    ref={ip => { this.searchInput = ip; }}
                     onKeyUp={this.onInputChanged}
                     onFocus={this.onSearchInputFocus}
                     onBlur={this.onSearchInputBlur}
                 />
-                <div title='Match case' tabIndex={0} className={'search-elem ' + codicon('case-sensitive')} onClick={this.handleCaseSensitiveOptionClicked}></div>
-                <div title='Match whole word' tabIndex={0} className={'search-elem ' + codicon('whole-word')} onClick={this.handleWholeWordOptionClicked}></div>
-                <div title='Use regular expression' tabIndex={0} className={'search-elem ' + codicon('regex')} onClick={this.handleRegexOptionClicked}></div>
+                <div
+                    title={nls.localizeByDefault('Match Case')}
+                    tabIndex={0}
+                    className={'search-elem ' + codicon('case-sensitive')}
+                    onClick={this.handleCaseSensitiveOptionClicked}
+                />
+                <div
+                    title={nls.localizeByDefault('Match Whole Word')}
+                    tabIndex={0}
+                    className={'search-elem ' + codicon('whole-word')}
+                    onClick={this.handleWholeWordOptionClicked}
+                />
+                <div
+                    title={nls.localizeByDefault('Use Regular Expression')}
+                    tabIndex={0}
+                    className={'search-elem ' + codicon('regex')}
+                    onClick={this.handleRegexOptionClicked}
+                />
             </div>
-            <button title='Previous match' className={'search-elem ' + codicon('arrow-up')} onClick={this.handlePreviousButtonClicked}></button>
-            <button title='Next match' className={'search-elem ' + codicon('arrow-down')} onClick={this.handleNextButtonClicked}></button>
-            <button title='Close' className={'search-elem ' + codicon('close')} onClick={this.handleHide}></button>
+            <button title={nls.localizeByDefault('Previous Match')} className={'search-elem ' + codicon('arrow-up')} onClick={this.handlePreviousButtonClicked}></button>
+            <button title={nls.localizeByDefault('Next Match')} className={'search-elem ' + codicon('arrow-down')} onClick={this.handleNextButtonClicked}></button>
+            <button title={nls.localizeByDefault('Close')} className={'search-elem ' + codicon('close')} onClick={this.handleHide}></button>
         </div>;
     }
 
@@ -149,11 +166,11 @@ export class TerminalSearchWidget extends ReactWidget {
         this.search(false, 'previous');
     };
 
-    onAfterHide(): void {
+    override onAfterHide(): void {
         this.terminal.focus();
     }
 
-    onAfterShow(): void {
+    override onAfterShow(): void {
         if (this.searchInput) {
             this.searchInput.select();
         }

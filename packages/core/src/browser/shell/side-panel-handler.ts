@@ -1,38 +1,41 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, inject } from 'inversify';
-import { find, map, toArray, some } from '@phosphor/algorithm';
-import { TabBar, Widget, DockPanel, Title, Panel, BoxPanel, BoxLayout, SplitPanel, PanelLayout } from '@phosphor/widgets';
-import { MimeData } from '@phosphor/coreutils';
-import { Drag } from '@phosphor/dragdrop';
-import { AttachedProperty } from '@phosphor/properties';
-import { TabBarRendererFactory, TabBarRenderer, SHELL_TABBAR_CONTEXT_MENU, SideTabBar } from './tab-bars';
-import { SidebarMenuWidget, SidebarMenu, SidebarBottomMenuWidgetFactory, SidebarTopMenuWidgetFactory } from './sidebar-menu-widget';
-import { SplitPositionHandler, SplitPositionOptions } from './split-panels';
-import { animationFrame } from '../browser';
-import { FrontendApplicationStateService } from '../frontend-application-state';
-import { TheiaDockPanel } from './theia-dock-panel';
-import { SidePanelToolbar } from './side-panel-toolbar';
-import { TabBarToolbarRegistry, TabBarToolbarFactory, TabBarToolbar } from './tab-bar-toolbar';
-import { DisposableCollection, Disposable } from '../../common/disposable';
-import { ContextMenuRenderer } from '../context-menu-renderer';
-import { MenuPath } from '../../common/menu';
-import { SidebarBottomMenuWidget } from './sidebar-bottom-menu-widget';
-import { SidebarTopMenuWidget } from './sidebar-top-menu-widget';
+import { find, map, toArray, some } from '@lumino/algorithm';
+import { TabBar, Widget, DockPanel, Title, Panel, BoxPanel, BoxLayout, SplitPanel, PanelLayout } from '@lumino/widgets';
+import { MimeData } from '@lumino/coreutils';
+import { Drag } from '@lumino/dragdrop';
+import { AttachedProperty } from '@lumino/properties';
+import { TabBarRendererFactory, TabBarRenderer, SHELL_TABBAR_CONTEXT_MENU, SideTabBar } from './tab-bars.js';
+import { SidebarMenuWidget, SidebarMenu, SidebarBottomMenuWidgetFactory, SidebarTopMenuWidgetFactory } from './sidebar-menu-widget.js';
+import { SplitPositionHandler, SplitPositionOptions } from './split-panels.js';
+import { animationFrame } from '../browser.js';
+import { FrontendApplicationStateService } from '../frontend-application-state.js';
+import { TheiaDockPanel } from './theia-dock-panel.js';
+import { SidePanelToolbar } from './side-panel-toolbar.js';
+import { TabBarToolbarRegistry, TabBarToolbarFactory, TabBarToolbar } from './tab-bar-toolbar/index.js';
+import { DisposableCollection, Disposable } from '../../common/disposable.js';
+import { ContextMenuRenderer } from '../context-menu-renderer.js';
+import { CommandMenu, GroupImpl, MenuPath } from '../../common/menu/index.js';
+import { SidebarBottomMenuWidget } from './sidebar-bottom-menu-widget.js';
+import { SidebarTopMenuWidget } from './sidebar-top-menu-widget.js';
+import { PINNED_CLASS } from '../widgets/index.js';
+import { AdditionalViewsMenuWidget, AdditionalViewsMenuWidgetFactory } from './additional-views-menu-widget.js';
+import { SidePanelItemVisibility } from './side-panel-item-visibility.js';
 
 /** The class name added to the left and right area panels. */
 export const LEFT_RIGHT_AREA_CLASS = 'theia-app-sides';
@@ -67,6 +70,11 @@ export class SidePanelHandler {
      * tab bar itself remains visible as long as there is at least one widget.
      */
     tabBar: SideTabBar;
+    /**
+     * Conditional menu placed below the tabBar. Manages overflowing/hidden tabs.
+     * Is only visible if there are overflowing tabs.
+     */
+    additionalViewsMenu: AdditionalViewsMenuWidget;
     /**
      * The menu placed on the sidebar top.
      * Displayed as icons.
@@ -117,11 +125,16 @@ export class SidePanelHandler {
     @inject(TabBarRendererFactory) protected tabBarRendererFactory: () => TabBarRenderer;
     @inject(SidebarTopMenuWidgetFactory) protected sidebarTopWidgetFactory: () => SidebarTopMenuWidget;
     @inject(SidebarBottomMenuWidgetFactory) protected sidebarBottomWidgetFactory: () => SidebarBottomMenuWidget;
+    @inject(AdditionalViewsMenuWidgetFactory) protected additionalViewsMenuFactory: AdditionalViewsMenuWidgetFactory;
     @inject(SplitPositionHandler) protected splitPositionHandler: SplitPositionHandler;
     @inject(FrontendApplicationStateService) protected readonly applicationStateService: FrontendApplicationStateService;
+    @inject(TheiaDockPanel.Factory) protected readonly dockPanelFactory: TheiaDockPanel.Factory;
 
     @inject(ContextMenuRenderer)
     protected readonly contextMenuRenderer: ContextMenuRenderer;
+
+    @inject(SidePanelItemVisibility)
+    protected readonly itemVisibility: SidePanelItemVisibility;
 
     /**
      * Create the side bar and dock panel widgets.
@@ -131,6 +144,7 @@ export class SidePanelHandler {
         this.options = options;
         this.topMenu = this.createSidebarTopMenu();
         this.tabBar = this.createSideBar();
+        this.additionalViewsMenu = this.createAdditionalViewsWidget();
         this.bottomMenu = this.createSidebarBottomMenu();
         this.toolBar = this.createToolbar();
         this.dockPanel = this.createSidePanel();
@@ -173,11 +187,20 @@ export class SidePanelHandler {
         sideBar.collapseRequested.connect(() => this.collapse(), this);
         sideBar.currentChanged.connect(this.onCurrentTabChanged, this);
         sideBar.tabDetachRequested.connect(this.onTabDetachRequested, this);
+        sideBar.tabsOverflowChanged.connect(this.onTabsOverflowChanged, this);
+        sideBar.shouldHideTitle = title => this.itemVisibility.isHidden(title.owner.id);
+        sideBar.node.addEventListener('contextmenu', e => this.showItemsContextMenu(e));
+        this.itemVisibility.onDidChange(widgetId => this.onItemVisibilityChanged(widgetId));
+        // A reset or the stored choices loading only change what renders: the current item stays current
+        // even when it turns out hidden, the same as opening a hidden item.
+        this.itemVisibility.onDidReset(() => sideBar.update());
+        this.itemVisibility.ready.then(() => sideBar.update());
+        sideBar.widgetDropped.connect(this.onWidgetDropped, this);
         return sideBar;
     }
 
     protected createSidePanel(): TheiaDockPanel {
-        const sidePanel = new TheiaDockPanel({
+        const sidePanel = this.dockPanelFactory({
             mode: 'single-document'
         });
         sidePanel.id = 'theia-' + this.side + '-side-panel';
@@ -195,6 +218,13 @@ export class SidePanelHandler {
         const toolbar = new SidePanelToolbar(this.tabBarToolBarRegistry, this.tabBarToolBarFactory, this.side);
         toolbar.onContextMenu(e => this.showContextMenu(e));
         return toolbar;
+    }
+
+    protected createAdditionalViewsWidget(): AdditionalViewsMenuWidget {
+        const widget = this.additionalViewsMenuFactory(this.side);
+        widget.addClass('theia-sidebar-menu');
+        widget.addClass('theia-additional-views-menu');
+        return widget;
     }
 
     protected createSidebarTopMenu(): SidebarTopMenuWidget {
@@ -222,8 +252,72 @@ export class SidePanelHandler {
         this.contextMenuRenderer.render({
             args: [title.owner],
             menuPath: SIDE_PANEL_TOOLBAR_CONTEXT_MENU,
-            anchor: e
+            anchor: e,
+            context: e.currentTarget instanceof HTMLElement ? e.currentTarget : this.tabBar.node
         });
+    }
+
+    protected onItemVisibilityChanged(widgetId: string): void {
+        const current = this.tabBar.currentTitle;
+        if (current?.owner.id === widgetId && this.itemVisibility.isHidden(widgetId)) {
+            this.moveOffHiddenItem(current);
+        }
+        this.tabBar.update();
+    }
+
+    /**
+     * Makes the next item that is not hidden current, else the previous one, or collapses the panel
+     * if there is none.
+     */
+    protected moveOffHiddenItem(title: Title<Widget>): void {
+        const titles = this.tabBar.titles;
+        const index = titles.indexOf(title);
+        const isShown = (other: Title<Widget>) => !this.itemVisibility.isHidden(other.owner.id);
+        const next = titles.slice(index + 1).find(isShown) ?? titles.slice(0, index).reverse().find(isShown);
+        if (next) {
+            this.tabBar.currentTitle = next;
+        } else {
+            this.collapse();
+        }
+    }
+
+    protected showItemsContextMenu(e: MouseEvent): void {
+        if (this.tabBar.titles.length === 0) {
+            return;
+        }
+        e.stopPropagation();
+        e.preventDefault();
+        const menu = new GroupImpl('sidePanelItems');
+        menu.addNode(...this.tabBar.titles.map((title, index) => this.createItemMenuNode(title, index)));
+        this.contextMenuRenderer.render({
+            menu,
+            menuPath: ['side-panel-items'],
+            anchor: e,
+            context: this.tabBar.node
+        });
+    }
+
+    protected createItemMenuNode(title: Title<Widget>, index: number): CommandMenu {
+        const widgetId = title.owner.id;
+        return {
+            id: widgetId,
+            label: title.label || title.caption,
+            sortString: index.toString().padStart(4, '0'),
+            isVisible: () => true,
+            isEnabled: () => this.itemVisibility.isHidden(widgetId) || this.tabBar.canHideTitle(title),
+            isToggled: () => !this.itemVisibility.isHidden(widgetId),
+            run: async () => this.toggleItem(title)
+        };
+    }
+
+    protected toggleItem(title: Title<Widget>): void {
+        const id = title.owner.id;
+        if (this.itemVisibility.isHidden(id)) {
+            this.itemVisibility.setHidden(id, false);
+            this.activate(id);
+        } else {
+            this.itemVisibility.setHidden(id, true);
+        }
     }
 
     protected createContainer(): Panel {
@@ -252,6 +346,7 @@ export class SidePanelHandler {
         sidebarContainer.addClass('theia-app-sidebar-container');
         sidebarContainerLayout.addWidget(this.topMenu);
         sidebarContainerLayout.addWidget(this.tabBar);
+        sidebarContainerLayout.addWidget(this.additionalViewsMenu);
         sidebarContainerLayout.addWidget(this.bottomMenu);
 
         BoxPanel.setStretch(sidebarContainer, 0);
@@ -272,7 +367,8 @@ export class SidePanelHandler {
         const items = toArray(map(this.tabBar.titles, title => <SidePanel.WidgetItem>{
             widget: title.owner,
             rank: SidePanelHandler.rankProperty.get(title.owner),
-            expanded: title === currentTitle
+            expanded: title === currentTitle,
+            pinned: title.className.includes(PINNED_CLASS)
         }));
         // eslint-disable-next-line no-null/no-null
         const size = currentTitle !== null ? this.getPanelSize() : this.state.lastPanelSize;
@@ -288,13 +384,17 @@ export class SidePanelHandler {
 
         let currentTitle: Title<Widget> | undefined;
         if (layoutData.items) {
-            for (const { widget, rank, expanded } of layoutData.items) {
+            for (const { widget, rank, expanded, pinned } of layoutData.items) {
                 if (widget) {
                     if (rank) {
                         SidePanelHandler.rankProperty.set(widget, rank);
                     }
                     if (expanded) {
                         currentTitle = widget.title;
+                    }
+                    if (pinned) {
+                        widget.title.className += ` ${PINNED_CLASS}`;
+                        widget.title.closable = false;
                     }
                     // Add the widgets directly to the tab bar in the same order as they are stored
                     this.tabBar.addTab(widget.title);
@@ -458,6 +558,7 @@ export class SidePanelHandler {
         const currentTitle = tabBar.currentTitle;
         // eslint-disable-next-line no-null/no-null
         const hideDockPanel = currentTitle === null;
+        this.updateSashState(this.container, hideDockPanel);
         let relativeSizes: number[] | undefined;
 
         if (hideDockPanel) {
@@ -531,12 +632,12 @@ export class SidePanelHandler {
             const index = parent.widgets.indexOf(this.container);
             if (this.side === 'left') {
                 const handle = parent.handles[index];
-                if (!handle.classList.contains('p-mod-hidden')) {
+                if (!handle.classList.contains('lm-mod-hidden')) {
                     return handle.offsetLeft;
                 }
             } else if (this.side === 'right') {
                 const handle = parent.handles[index - 1];
-                if (!handle.classList.contains('p-mod-hidden')) {
+                if (!handle.classList.contains('lm-mod-hidden')) {
                     const parentWidth = parent.node.clientWidth;
                     return parentWidth - handle.offsetLeft;
                 }
@@ -607,13 +708,13 @@ export class SidePanelHandler {
         const clonedTab = tab.cloneNode(true) as HTMLElement;
         clonedTab.style.width = '';
         clonedTab.style.height = '';
-        const label = clonedTab.getElementsByClassName('p-TabBar-tabLabel')[0] as HTMLElement;
+        const label = clonedTab.getElementsByClassName('lm-TabBar-tabLabel')[0] as HTMLElement;
         label.style.width = '';
         label.style.height = '';
 
         // Create and start a drag to move the selected tab to another panel
         const mimeData = new MimeData();
-        mimeData.setData('application/vnd.phosphor.widget-factory', () => title.owner);
+        mimeData.setData('application/vnd.lumino.widget-factory', () => title.owner);
         const drag = new Drag({
             mimeData,
             dragImage: clonedTab,
@@ -621,11 +722,33 @@ export class SidePanelHandler {
             supportedActions: 'move',
         });
 
-        tab.classList.add('p-mod-hidden');
+        tab.classList.add('lm-mod-hidden');
         drag.start(clientX, clientY).then(() => {
             // The promise is resolved when the drag has ended
-            tab.classList.remove('p-mod-hidden');
+            tab.classList.remove('lm-mod-hidden');
         });
+    }
+
+    /**
+     * Handle a `widgetDropped` signal from the sidebar. The widget is moved to this side panel, if necessary,
+     * and its tab is moved to the position where it was dropped.
+     */
+    protected onWidgetDropped(sender: SideTabBar, { widget, index }: { widget: Widget, index: number }): void {
+        const previousIndex = this.tabBar.titles.indexOf(widget.title);
+        if (previousIndex === -1) {
+            // inserts the tab according to the widget's rank, see `onWidgetAdded`
+            this.dockPanel.addWidget(widget);
+        }
+        this.tabBar.insertTab(previousIndex !== -1 && index > previousIndex ? index - 1 : index, widget.title);
+        this.activate(widget.id);
+    }
+
+    protected onTabsOverflowChanged(sender: SideTabBar, event: { titles: Title<Widget>[], startIndex: number }): void {
+        if (event.startIndex > 0 && event.startIndex <= sender.currentIndex) {
+            sender.revealTab(sender.currentIndex);
+        } else {
+            this.additionalViewsMenu.updateAdditionalViews(sender, event);
+        }
     }
 
     /*
@@ -657,6 +780,17 @@ export class SidePanelHandler {
     protected onWidgetRemoved(sender: DockPanel, widget: Widget): void {
         this.tabBar.removeTab(widget.title);
         this.refresh();
+    }
+
+    protected updateSashState(sidePanelElement: Panel | null, sidePanelCollapsed: boolean): void {
+        if (sidePanelElement) {
+            // Hide the sash when the left/right side panel is collapsed
+            if (sidePanelElement.id === 'theia-left-content-panel' && sidePanelElement.node.nextElementSibling) {
+                sidePanelElement.node.nextElementSibling.classList.toggle('sash-hidden', sidePanelCollapsed);
+            } else if (sidePanelElement.id === 'theia-right-content-panel' && sidePanelElement.node.previousElementSibling) {
+                sidePanelElement.node.previousElementSibling.classList.toggle('sash-hidden', sidePanelCollapsed);
+            }
+        }
     }
 
 }
@@ -713,6 +847,7 @@ export namespace SidePanel {
         /** Can be undefined in case the widget could not be restored. */
         widget?: Widget;
         expanded?: boolean;
+        pinned?: boolean;
     }
 
     export interface State {

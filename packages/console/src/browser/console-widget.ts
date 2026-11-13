@@ -1,31 +1,35 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { ElementExt } from '@theia/core/shared/@phosphor/domutils';
+import { ElementExt } from '@theia/core/shared/@lumino/domutils';
 import { injectable, inject, postConstruct, interfaces, Container } from '@theia/core/shared/inversify';
 import { TreeSourceNode } from '@theia/core/lib/browser/source-tree';
-import { ContextKey } from '@theia/core/lib/browser/context-key-service';
+import { ContextKeyService, ContextKey } from '@theia/core/lib/browser/context-key-service';
 import { BaseWidget, PanelLayout, Widget, Message, MessageLoop, StatefulWidget, CompositeTreeNode } from '@theia/core/lib/browser';
 import { MonacoEditor } from '@theia/monaco/lib/browser/monaco-editor';
 import URI from '@theia/core/lib/common/uri';
 import { MonacoEditorProvider } from '@theia/monaco/lib/browser/monaco-editor-provider';
-import { ConsoleHistory } from './console-history';
-import { ConsoleContentWidget } from './console-content-widget';
-import { ConsoleSession } from './console-session';
-import { ConsoleSessionManager } from './console-session-manager';
+import { ConsoleHistory } from './console-history.js';
+import { ConsoleContentWidget } from './console-content-widget.js';
+import { ConsoleSession } from './console-session.js';
+import { ConsoleSessionManager } from './console-session-manager.js';
+import * as monaco from '@theia/monaco-editor-core';
+import { Disposable } from '@theia/core/lib/common/disposable';
+import { EditorManager } from '@theia/editor/lib/browser';
+import { MonacoEditorService } from '@theia/monaco/lib/browser/monaco-editor-service';
 
 export const ConsoleOptions = Symbol('ConsoleWidgetOptions');
 export interface ConsoleOptions {
@@ -74,7 +78,26 @@ export class ConsoleWidget extends BaseWidget implements StatefulWidget {
     @inject(MonacoEditorProvider)
     protected readonly editorProvider: MonacoEditorProvider;
 
+    @inject(ContextKeyService)
+    protected readonly contextKeyService: ContextKeyService;
+
+    @inject(MonacoEditorService)
+    protected readonly editorService: MonacoEditorService;
+
+    @inject(EditorManager)
+    protected readonly editorManager: EditorManager;
+
     protected _input: MonacoEditor;
+    protected _inputFocusContextKey: ContextKey<boolean>;
+    protected modelChangeListener = Disposable.NULL;
+
+    protected _ready: Promise<void> | undefined;
+    get ready(): Promise<void> {
+        if (!this._ready) {
+            throw new Error('ready must not be accessed in the construction phase');
+        }
+        return this._ready;
+    }
 
     constructor() {
         super();
@@ -82,7 +105,11 @@ export class ConsoleWidget extends BaseWidget implements StatefulWidget {
     }
 
     @postConstruct()
-    protected async init(): Promise<void> {
+    protected init(): void {
+        this._ready = this.doInit();
+    }
+
+    protected async doInit(): Promise<void> {
         const { id, title, inputFocusContextKey } = this.options;
         const { label, iconClass, caption } = Object.assign({}, title);
         this.id = id;
@@ -115,16 +142,25 @@ export class ConsoleWidget extends BaseWidget implements StatefulWidget {
 
         this.session = this.sessionManager.selectedSession;
         this.toDispose.push(this.sessionManager.onDidChangeSelectedSession(session => {
-            // Don't delete the last session by overriding it with 'undefined'
-            if (session) {
-                this.session = session;
-            }
+            // Follow `undefined` as well, so that deleting a session releases it instead of leaving the widget
+            // pointing at a disposed one. Sessions are no longer deleted when they end, only when the user clears them.
+            this.session = session;
         }));
 
         this.updateFont();
         if (inputFocusContextKey) {
             this.toDispose.push(input.onFocusChanged(() => inputFocusContextKey.set(this.hasInputFocus())));
+            this.toDispose.push(input.onCursorPositionChanged(() => input.getControl().createContextKey('consoleNavigationBackEnabled', this.consoleNavigationBackEnabled)));
+            this.toDispose.push(input.onCursorPositionChanged(() => input.getControl().createContextKey('consoleNavigationForwardEnabled', this.consoleNavigationForwardEnabled)));
         }
+        input.getControl().createContextKey('consoleInputFocus', true);
+        const contentContext = this.contextKeyService.createScoped(this.content.node);
+        contentContext.setContext('consoleContentFocus', true);
+
+        this.toDispose.pushAll([
+            this.editorManager.onActiveEditorChanged(() => this.setMode()),
+            this.onDidChangeVisibility(() => this.setMode())
+        ]);
     }
 
     protected createInput(node: HTMLElement): Promise<MonacoEditor> {
@@ -154,6 +190,22 @@ export class ConsoleWidget extends BaseWidget implements StatefulWidget {
         return this._input;
     }
 
+    get consoleNavigationBackEnabled(): boolean {
+        const editor = this.input.getControl();
+        return !!editor.getPosition()!.equals({ lineNumber: 1, column: 1 });
+    }
+
+    get consoleNavigationForwardEnabled(): boolean {
+        const editor = this.input.getControl();
+        const model = editor.getModel();
+        if (!model) {
+            return false;
+        }
+        const lineNumber = editor.getModel()!.getLineCount();
+        const column = editor.getModel()!.getLineMaxColumn(lineNumber);
+        return !!editor.getPosition()!.equals({ lineNumber, column });
+    }
+
     selectAll(): void {
         const selection = document.getSelection();
         if (selection) {
@@ -174,9 +226,11 @@ export class ConsoleWidget extends BaseWidget implements StatefulWidget {
         }
     }
 
-    async execute(): Promise<void> {
-        const value = this._input.getControl().getValue();
-        this._input.getControl().setValue('');
+    async execute(value?: string): Promise<void> {
+        if (value === undefined) {
+            value = this._input.getControl().getValue();
+            this._input.getControl().setValue('');
+        }
         this.history.push(value);
         if (this.session) {
             const listener = this.content.model.onNodeRefreshed(() => {
@@ -216,14 +270,14 @@ export class ConsoleWidget extends BaseWidget implements StatefulWidget {
         }
     }
 
-    protected onActivateRequest(msg: Message): void {
+    protected override onActivateRequest(msg: Message): void {
         super.onActivateRequest(msg);
         this._input.focus();
     }
 
     protected totalHeight = -1;
     protected totalWidth = -1;
-    protected onResize(msg: Widget.ResizeMessage): void {
+    protected override onResize(msg: Widget.ResizeMessage): void {
         super.onResize(msg);
         this.totalWidth = msg.width;
         this.totalHeight = msg.height;
@@ -267,6 +321,30 @@ export class ConsoleWidget extends BaseWidget implements StatefulWidget {
 
     hasInputFocus(): boolean {
         return this._input && this._input.isFocused({ strict: true });
+    }
+
+    override dispose(): void {
+        super.dispose();
+        this.modelChangeListener.dispose();
+    }
+
+    // To set the active language for the console input text model.
+    // https://github.com/microsoft/vscode/blob/2af422737386e792c3fcde7884f9bf47a1aff2f5/src/vs/workbench/contrib/debug/browser/repl.ts#L371-L384
+    protected setMode(): void {
+        if (this.isHidden) {
+            return;
+        }
+
+        const activeEditorControl = this.editorService.getActiveCodeEditor();
+        if (activeEditorControl) {
+            this.modelChangeListener.dispose();
+            this.modelChangeListener = activeEditorControl.onDidChangeModelLanguage(() => this.setMode());
+            const consoleModel = this._input.getControl().getModel();
+            const activeEditorModel = activeEditorControl.getModel();
+            if (consoleModel && activeEditorModel) {
+                monaco.editor.setModelLanguage(consoleModel, activeEditorModel.getLanguageId());
+            }
+        }
     }
 
 }

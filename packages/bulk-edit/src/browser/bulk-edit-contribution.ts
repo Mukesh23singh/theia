@@ -1,39 +1,42 @@
-/********************************************************************************
- * Copyright (c) 2021 SAP SE or an SAP affiliate company and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 SAP SE or an SAP affiliate company and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable, inject, optional } from '@theia/core/shared/inversify';
+import { injectable, inject, optional, postConstruct } from '@theia/core/shared/inversify';
 import { Widget } from '@theia/core/lib/browser/widgets/widget';
 import { CommandRegistry } from '@theia/core/lib/common';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
-import { BulkEditCommands } from './bulk-edit-commands';
+import { BulkEditCommands } from './bulk-edit-commands.js';
 import { MonacoBulkEditService } from '@theia/monaco/lib/browser/monaco-bulk-edit-service';
 import { TabBarToolbarContribution, TabBarToolbarRegistry } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
-import { BulkEditTreeWidget, BULK_EDIT_TREE_WIDGET_ID } from './bulk-edit-tree';
+import { BulkEditTreeWidget, BULK_EDIT_TREE_WIDGET_ID, BULK_EDIT_WIDGET_NAME } from './bulk-edit-tree/index.js';
 import { QuickViewService } from '@theia/core/lib/browser';
-
-export const BULK_EDIT_WIDGET_NAME = 'Refactor Preview';
+import { nls } from '@theia/core/lib/common/nls';
+import { ResourceEdit } from '@theia/monaco-editor-core/esm/vs/editor/browser/services/bulkEditService.js';
 
 @injectable()
 export class BulkEditContribution extends AbstractViewContribution<BulkEditTreeWidget> implements TabBarToolbarContribution {
-    private edits: monaco.editor.ResourceEdit[];
+    protected edits: ResourceEdit[];
 
     @inject(QuickViewService) @optional()
-    protected readonly quickView: QuickViewService;
+    protected override readonly quickView: QuickViewService;
 
-    constructor(private readonly bulkEditService: MonacoBulkEditService) {
+    @inject(MonacoBulkEditService)
+    protected readonly bulkEditService: MonacoBulkEditService;
+
+    constructor() {
         super({
             widgetId: BULK_EDIT_TREE_WIDGET_ID,
             widgetName: BULK_EDIT_WIDGET_NAME,
@@ -41,10 +44,14 @@ export class BulkEditContribution extends AbstractViewContribution<BulkEditTreeW
                 area: 'bottom'
             }
         });
-        this.bulkEditService.setPreviewHandler((edits: monaco.editor.ResourceEdit[]) => this.previewEdit(edits));
     }
 
-    registerCommands(registry: CommandRegistry): void {
+    @postConstruct()
+    protected init(): void {
+        this.bulkEditService.setPreviewHandler((edits: ResourceEdit[]) => this.previewEdit(edits));
+    }
+
+    override registerCommands(registry: CommandRegistry): void {
         super.registerCommands(registry);
         this.quickView?.hideItem(BULK_EDIT_WIDGET_NAME);
 
@@ -64,13 +71,13 @@ export class BulkEditContribution extends AbstractViewContribution<BulkEditTreeW
         toolbarRegistry.registerItem({
             id: BulkEditCommands.APPLY.id,
             command: BulkEditCommands.APPLY.id,
-            tooltip: 'Apply Refactoring',
+            tooltip: nls.localizeByDefault('Apply Refactoring'),
             priority: 0,
         });
         toolbarRegistry.registerItem({
             id: BulkEditCommands.DISCARD.id,
             command: BulkEditCommands.DISCARD.id,
-            tooltip: 'Discard Refactoring',
+            tooltip: nls.localizeByDefault('Discard Refactoring'),
             priority: 1,
         });
     }
@@ -82,7 +89,7 @@ export class BulkEditContribution extends AbstractViewContribution<BulkEditTreeW
         return false;
     }
 
-    private async previewEdit(edits: monaco.editor.ResourceEdit[]): Promise<monaco.editor.ResourceEdit[]> {
+    private async previewEdit(edits: ResourceEdit[]): Promise<ResourceEdit[]> {
         const widget = await this.openView({ activate: true });
 
         if (widget) {

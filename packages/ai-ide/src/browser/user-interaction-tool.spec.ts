@@ -1,0 +1,643 @@
+// *****************************************************************************
+// Copyright (C) 2026 EclipseSource GmbH.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+
+import { enableJSDOM } from '@theia/core/lib/browser/test/jsdom';
+let disableJSDOM = enableJSDOM();
+import { FrontendApplicationConfigProvider } from '@theia/core/lib/browser/frontend-application-config-provider';
+FrontendApplicationConfigProvider.set({});
+import { expect } from 'chai';
+import * as sinon from 'sinon';
+import { Container } from '@theia/core/shared/inversify';
+import { UserInteractionTool } from './user-interaction-tool.js';
+import { UserInteractionResult } from '../common/user-interaction-tool.js';
+import { WorkspaceFunctionScope } from './workspace-functions.js';
+import { OpenerService } from '@theia/core/lib/browser';
+import { EditorManager } from '@theia/editor/lib/browser';
+import { ScmService } from '@theia/scm/lib/browser/scm-service';
+import { URI } from '@theia/core/lib/common/uri';
+import { CancellationTokenSource } from '@theia/core/lib/common/cancellation';
+import { MEMORY_TEXT, MEMORY_TEXT_READONLY, ResourceProvider } from '@theia/core/lib/common/resource';
+import { DiffUris } from '@theia/core/lib/browser/diff-uris';
+import { ILogger } from '@theia/core';
+import { MockLogger } from '@theia/core/lib/common/test/mock-logger';
+
+disableJSDOM();
+
+const singleStepArgs = (overrides: Record<string, unknown> = {}) => JSON.stringify({
+    interactions: [{
+        title: 'Choose',
+        message: 'Pick one',
+        options: [{ text: 'A', value: 'a' }, { text: 'B', value: 'b' }],
+        ...overrides
+    }]
+});
+
+const parseResult = (raw: unknown): UserInteractionResult => JSON.parse(raw as string);
+
+const makeMockRepo = () => ({
+    provider: { id: 'git', rootUri: 'file:///workspace' },
+    toUriAtRef: (fileUri: URI, ref: string) =>
+        fileUri.withScheme('git').withQuery(JSON.stringify({ path: fileUri.path.fsPath(), ref }))
+});
+
+describe('UserInteractionTool', () => {
+    let container: Container;
+    let tool: UserInteractionTool;
+    let mockOpenerService: sinon.SinonStubbedInstance<OpenerService>;
+    let mockEditorManager: Partial<EditorManager>;
+    let mockWorkspaceScope: Partial<WorkspaceFunctionScope>;
+    let mockScmService: Partial<ScmService>;
+    let mockResourceProvider: sinon.SinonStub;
+    const workspaceRoot = new URI('file:///workspace');
+
+    before(() => {
+        disableJSDOM = enableJSDOM();
+    });
+
+    after(() => {
+        disableJSDOM();
+    });
+
+    beforeEach(() => {
+        container = new Container();
+
+        container.bind(ILogger).to(MockLogger).inSingletonScope();
+
+        mockWorkspaceScope = {
+            resolveAccessiblePath: sinon.stub().callsFake(async (path: string) => workspaceRoot.resolve(path)),
+            getContainingRoot: sinon.stub().returns(workspaceRoot)
+        };
+
+        mockOpenerService = {
+            getOpeners: sinon.stub().resolves([]),
+            getOpener: sinon.stub().resolves({
+                open: sinon.stub().resolves(undefined)
+            })
+        } as unknown as sinon.SinonStubbedInstance<OpenerService>;
+
+        mockEditorManager = {
+            open: sinon.stub().resolves(undefined)
+        };
+
+        mockScmService = {
+            findRepository: sinon.stub().returns(undefined)
+        };
+
+        mockResourceProvider = sinon.stub().callsFake(async (uri: URI) => ({
+            uri,
+            readContents: sinon.stub().resolves(''),
+            dispose: sinon.stub()
+        }));
+
+        container.bind(WorkspaceFunctionScope).toConstantValue(mockWorkspaceScope as WorkspaceFunctionScope);
+        container.bind(ScmService).toConstantValue(mockScmService as ScmService);
+        container.bind(OpenerService).toConstantValue(mockOpenerService as unknown as OpenerService);
+        container.bind(EditorManager).toConstantValue(mockEditorManager as EditorManager);
+        container.bind(ResourceProvider).toConstantValue(mockResourceProvider as unknown as ResourceProvider);
+        container.bind(UserInteractionTool).toSelf();
+
+        tool = container.get(UserInteractionTool);
+    });
+
+    afterEach(() => {
+        sinon.restore();
+    });
+
+    it('should return error when no interactions are provided', async () => {
+        const handler = tool.getTool().handler;
+        const result = await handler(JSON.stringify({ interactions: [] }), { toolCallId: 'x' });
+        expect(JSON.parse(result as string).error).to.match(/at least one step/);
+    });
+
+    it('should return error when arguments are invalid JSON', async () => {
+        const handler = tool.getTool().handler;
+        const result = await handler('not-json', { toolCallId: 'x' });
+        expect(JSON.parse(result as string).error).to.match(/valid JSON/i);
+    });
+
+    it('should reject a single step whose options are malformed instead of auto-completing it', async () => {
+        const handler = tool.getTool().handler;
+        const args = JSON.stringify({
+            interactions: [{
+                title: 'Apply fix?',
+                message: 'Should I apply this change?',
+                options: '[{"text":"Yes","value":"yes"}]'
+            }]
+        });
+        const result = JSON.parse(await handler(args, { toolCallId: 'malformed-options' }) as string);
+        expect(result.error).to.match(/step 1: "options" must be an array/i);
+        expect(result.completed).to.be.undefined;
+    });
+
+    it('should reject a single step with a partially malformed options array instead of silently dropping the bad option', async () => {
+        const handler = tool.getTool().handler;
+        const args = JSON.stringify({
+            interactions: [{
+                title: 'Apply fix?',
+                message: 'Should I apply this change?',
+                options: [{ text: 'Approve', value: 'approve' }, { text: 'Reject', value: 'reject' }, { label: 'Defer', value: 'defer' }]
+            }]
+        });
+        const result = JSON.parse(await handler(args, { toolCallId: 'partial-options' }) as string);
+        expect(result.error).to.match(/step 1, option 3: "text" and "value" are required strings/i);
+        expect(result.completed).to.be.undefined;
+    });
+
+    it('should reject a JSON-encoded interactions string with an actionable message', async () => {
+        const handler = tool.getTool().handler;
+        const args = JSON.stringify({ interactions: '[{"title":"T","message":"M"}]' });
+        const result = JSON.parse(await handler(args, { toolCallId: 'encoded-interactions' }) as string);
+        expect(result.error).to.match(/"interactions" must be an array of step objects, received string/);
+        expect(result.error).to.match(/do not JSON-encode nested values/i);
+    });
+
+    it('should auto-complete a single step that genuinely has no options', async () => {
+        const handler = tool.getTool().handler;
+        const args = JSON.stringify({ interactions: [{ title: 'FYI', message: 'Heads up' }] });
+        const result = parseResult(await handler(args, { toolCallId: 'informational' }));
+        expect(result.completed).to.be.true;
+        expect(result.steps).to.deep.equal([{ title: 'FYI' }]);
+    });
+
+    describe('checkAutoAction', () => {
+
+        it('should auto-deny malformed arguments so the model receives the validation error', () => {
+            const args = JSON.stringify({
+                interactions: [{ title: 'Apply fix?', message: 'Confirm?', options: '[{"text":"Yes","value":"yes"}]' }]
+            });
+            const autoAction = tool.getTool().checkAutoAction!(args);
+            expect(autoAction?.action).to.equal('deny');
+            expect(autoAction?.reason).to.match(/step 1: "options" must be an array/i);
+        });
+
+        it('should not auto-deny well-formed arguments, leaving confirmation to the user', () => {
+            expect(tool.getTool().checkAutoAction!(singleStepArgs())).to.be.undefined;
+        });
+    });
+
+    it('should return error when no tool call ID is available', async () => {
+        const handler = tool.getTool().handler;
+        const result = await handler(singleStepArgs(), undefined);
+        expect(JSON.parse(result as string).error).to.equal('No tool call ID available');
+    });
+
+    describe('chat context surfacing', () => {
+        interface MockChatCtx {
+            ctx: object;
+            response: {
+                response: { content: object[] };
+                fireInteractionNeeded: sinon.SinonSpy;
+                waitForInput: sinon.SinonSpy;
+                stopWaitingForInput: sinon.SinonSpy;
+            };
+            contentPart: {
+                kind: string;
+                id: string;
+                requestUserInput: sinon.SinonSpy;
+                userInputHandled: sinon.SinonSpy;
+            };
+        }
+
+        // Mimics the shape of ChatToolContext with a mock response model, so we can
+        // assert the tool announces its pending interaction (issue #17952: interactions
+        // inside delegated sessions were never surfaced because the tool never fired
+        // interactionNeeded).
+        const createChatCtx = (toolCallId: string, withContentPart = true): MockChatCtx => {
+            const contentPart = {
+                kind: 'toolCall',
+                id: toolCallId,
+                requestUserInput: sinon.spy(),
+                userInputHandled: sinon.spy()
+            };
+            const response = {
+                response: { content: withContentPart ? [contentPart] : [] },
+                fireInteractionNeeded: sinon.spy(),
+                waitForInput: sinon.spy(),
+                stopWaitingForInput: sinon.spy()
+            };
+            return { ctx: { toolCallId, request: {}, response }, response, contentPart };
+        };
+
+        it('should fire interactionNeeded with the tool call content part while waiting', async () => {
+            const handler = tool.getTool().handler;
+            const { ctx, response, contentPart } = createChatCtx('call-fire');
+
+            const handlerPromise = handler(singleStepArgs(), ctx);
+
+            expect(response.fireInteractionNeeded.calledOnce).to.be.true;
+            expect(response.fireInteractionNeeded.firstCall.args[0]).to.equal(contentPart);
+            expect(response.waitForInput.calledOnce).to.be.true;
+
+            tool.completeInteraction('call-fire', { completed: true, steps: [{ title: 'Choose', value: 'a' }] });
+            await handlerPromise;
+        });
+
+        it('should mark the content part as awaiting user input while blocked and clear it afterwards', async () => {
+            const handler = tool.getTool().handler;
+            const { ctx, contentPart } = createChatCtx('call-mark');
+
+            const handlerPromise = handler(singleStepArgs(), ctx);
+
+            expect(contentPart.requestUserInput.calledOnce).to.be.true;
+            expect(contentPart.userInputHandled.called).to.be.false;
+
+            tool.completeInteraction('call-mark', { completed: true, steps: [{ title: 'Choose', value: 'a' }] });
+            await handlerPromise;
+
+            expect(contentPart.userInputHandled.calledOnce).to.be.true;
+        });
+
+        it('should not fire interactionNeeded when no matching tool call content exists', async () => {
+            const handler = tool.getTool().handler;
+            const { ctx, response } = createChatCtx('call-missing', false);
+
+            const handlerPromise = handler(singleStepArgs(), ctx);
+
+            expect(response.fireInteractionNeeded.called).to.be.false;
+            // Waiting state must still be surfaced even without a content part.
+            expect(response.waitForInput.calledOnce).to.be.true;
+
+            tool.completeInteraction('call-missing', { completed: true, steps: [{ title: 'Choose', value: 'a' }] });
+            await handlerPromise;
+        });
+
+        it('should not fire interactionNeeded for informational single-step interactions', async () => {
+            const handler = tool.getTool().handler;
+            const { ctx, response } = createChatCtx('call-info');
+
+            const result = parseResult(await handler(
+                JSON.stringify({ interactions: [{ title: 'FYI', message: 'Just info' }] }), ctx
+            ));
+
+            expect(result.completed).to.be.true;
+            expect(response.fireInteractionNeeded.called).to.be.false;
+            expect(response.waitForInput.called).to.be.false;
+        });
+    });
+
+    describe('current step across renderer mounts', () => {
+        // The wizard can be mounted twice for one interaction (collapsed delegation summary
+        // and expanded details). The tool keeps the current step so a new mount resumes
+        // where the previous one left off instead of restarting at step 0.
+        const multiStepArgs = (): string => JSON.stringify({
+            interactions: [
+                { title: 'One', message: 'first' },
+                { title: 'Two', message: 'second', options: [{ text: 'OK', value: 'ok' }] },
+                { title: 'Three', message: 'third' }
+            ]
+        });
+        const completedResult = (): UserInteractionResult => ({
+            completed: true,
+            steps: [{ title: 'One' }, { title: 'Two', value: 'ok' }, { title: 'Three' }]
+        });
+
+        it('should return undefined when no interaction is pending', () => {
+            expect(tool.getCurrentStep('unknown')).to.be.undefined;
+        });
+
+        it('should remember the recorded step while the interaction is pending', async () => {
+            const handler = tool.getTool().handler;
+            const handlerPromise = handler(multiStepArgs(), { toolCallId: 'call-step' });
+
+            tool.recordCurrentStep('call-step', 2);
+            expect(tool.getCurrentStep('call-step')).to.equal(2);
+
+            tool.completeInteraction('call-step', completedResult());
+            await handlerPromise;
+        });
+
+        it('should forget the step once the interaction resolved', async () => {
+            const handler = tool.getTool().handler;
+            const handlerPromise = handler(multiStepArgs(), { toolCallId: 'call-step-done' });
+            tool.recordCurrentStep('call-step-done', 1);
+
+            tool.completeInteraction('call-step-done', completedResult());
+            await handlerPromise;
+
+            expect(tool.getCurrentStep('call-step-done')).to.be.undefined;
+            tool.recordCurrentStep('call-step-done', 2);
+            expect(tool.getCurrentStep('call-step-done')).to.be.undefined;
+        });
+    });
+
+    it('should resolve the handler with the result passed to completeInteraction', async () => {
+        const handler = tool.getTool().handler;
+        const handlerPromise = handler(singleStepArgs(), { toolCallId: 'call-1' });
+
+        tool.completeInteraction('call-1', {
+            completed: true,
+            steps: [{ title: 'Choose', value: 'b' }]
+        });
+
+        const result = parseResult(await handlerPromise);
+        expect(result.completed).to.be.true;
+        expect(result.steps).to.have.length(1);
+        expect(result.steps[0]).to.deep.equal({ title: 'Choose', value: 'b' });
+    });
+
+    it('should forward multi-step results verbatim', async () => {
+        const handler = tool.getTool().handler;
+        const args = JSON.stringify({
+            interactions: [
+                { title: 'Overview', message: 'summary' },
+                { title: 'Area 1', message: 'finding', options: [{ text: 'OK', value: 'approve' }] },
+                { title: 'Area 2', message: 'no findings' }
+            ]
+        });
+        const handlerPromise = handler(args, { toolCallId: 'call-multi' });
+
+        tool.completeInteraction('call-multi', {
+            completed: true,
+            steps: [
+                { title: 'Overview', comments: ['nice summary'] },
+                { title: 'Area 1', value: 'approve', comments: ['fix on line 42'] },
+                { title: 'Area 2' }
+            ]
+        });
+
+        const result = parseResult(await handlerPromise);
+        expect(result.completed).to.be.true;
+        expect(result.steps).to.have.length(3);
+        expect(result.steps[0]).to.deep.equal({ title: 'Overview', comments: ['nice summary'] });
+        expect(result.steps[1]).to.deep.equal({ title: 'Area 1', value: 'approve', comments: ['fix on line 42'] });
+        expect(result.steps[2]).to.deep.equal({ title: 'Area 2' });
+    });
+
+    it('should ignore completeInteraction calls after the interaction resolved', async () => {
+        const handler = tool.getTool().handler;
+        const handlerPromise = handler(singleStepArgs(), { toolCallId: 'call-late' });
+        tool.completeInteraction('call-late', {
+            completed: true,
+            steps: [{ title: 'Choose', value: 'a' }]
+        });
+        const result = parseResult(await handlerPromise);
+        expect(result.steps[0].value).to.equal('a');
+        // Late call must not throw or change anything
+        tool.completeInteraction('call-late', {
+            completed: true,
+            steps: [{ title: 'Choose', value: 'b' }]
+        });
+        // No assertion needed beyond ensuring no exception
+    });
+
+    it('should resolve with the renderer-supplied partial on cancellation', async () => {
+        const handler = tool.getTool().handler;
+        const cts = new CancellationTokenSource();
+        const args = JSON.stringify({
+            interactions: [
+                { title: 'Step A', message: 'm' },
+                { title: 'Step B', message: 'm' },
+                { title: 'Step C', message: 'm' }
+            ]
+        });
+        const handlerPromise = handler(args, { toolCallId: 'call-cancel', cancellationToken: cts.token });
+
+        // Wait a microtask so the handler has registered the pending interaction.
+        await Promise.resolve();
+        // Simulate the renderer pushing the latest partial state.
+        tool.recordPartial('call-cancel', {
+            completed: false,
+            steps: [
+                { title: 'Step A', comments: ['first done'] },
+                { title: 'Step B', value: 'whatever' },
+                { title: 'Step C', skipped: true }
+            ]
+        });
+        cts.cancel();
+
+        const result = parseResult(await handlerPromise);
+        expect(result.completed).to.be.false;
+        expect(result.steps[0]).to.deep.equal({ title: 'Step A', comments: ['first done'] });
+        expect(result.steps[1]).to.deep.equal({ title: 'Step B', value: 'whatever' });
+        expect(result.steps[2].skipped).to.be.true;
+    });
+
+    it('should fall back to all-skipped when no renderer claims the cancellation', async () => {
+        const handler = tool.getTool().handler;
+        const cts = new CancellationTokenSource();
+        const args = JSON.stringify({
+            interactions: [
+                { title: 'Step A', message: 'm' },
+                { title: 'Step B', message: 'm' }
+            ]
+        });
+        const handlerPromise = handler(args, { toolCallId: 'call-skip-all', cancellationToken: cts.token });
+        cts.cancel();
+        const result = parseResult(await handlerPromise);
+        expect(result.completed).to.be.false;
+        expect(result.steps.every(s => s.skipped)).to.be.true;
+    });
+
+    it('should handle parallel calls independently', async () => {
+        const handler = tool.getTool().handler;
+
+        const promise1 = handler(JSON.stringify({
+            interactions: [{ title: 'Q1', message: 'first', options: [{ text: 'A', value: 'a' }] }]
+        }), { toolCallId: 'call-p1' });
+
+        const promise2 = handler(JSON.stringify({
+            interactions: [{ title: 'Q2', message: 'second', options: [{ text: 'B', value: 'b' }] }]
+        }), { toolCallId: 'call-p2' });
+
+        tool.completeInteraction('call-p2', { completed: true, steps: [{ title: 'Q2', value: 'b' }] });
+        tool.completeInteraction('call-p1', { completed: true, steps: [{ title: 'Q1', value: 'a' }] });
+
+        expect(parseResult(await promise1).steps[0].value).to.equal('a');
+        expect(parseResult(await promise2).steps[0].value).to.equal('b');
+    });
+
+    it('should open a file link via openLink helper', async () => {
+        await tool.openLink({ ref: { path: 'src/index.ts', line: 10 } });
+
+        expect((mockEditorManager.open as sinon.SinonStub).calledOnce).to.be.true;
+        const openCall = (mockEditorManager.open as sinon.SinonStub).getCall(0);
+        expect(openCall.args[1]).to.deep.equal({ selection: { start: { line: 9, character: 0 } } });
+    });
+
+    it('should open a file link without line number', async () => {
+        await tool.openLink({ ref: 'src/app.ts' });
+
+        expect((mockEditorManager.open as sinon.SinonStub).calledOnce).to.be.true;
+        const openCall = (mockEditorManager.open as sinon.SinonStub).getCall(0);
+        expect(openCall.args[1]).to.deep.equal({ selection: undefined });
+    });
+
+    it('should open a file link when rightRef is an invalid placeholder', async () => {
+        await tool.openLink({
+            ref: { path: 'README.md', line: 1 },
+            rightRef: { path: '' }
+        });
+
+        expect((mockEditorManager.open as sinon.SinonStub).calledOnce).to.be.true;
+        expect((mockOpenerService.getOpener as sinon.SinonStub).called).to.be.false;
+        const openCall = (mockEditorManager.open as sinon.SinonStub).getCall(0);
+        expect(openCall.args[0].toString()).to.equal('file:///workspace/README.md');
+        expect(openCall.args[1]).to.deep.equal({ selection: { start: { line: 0, character: 0 } } });
+    });
+
+    it('should open a diff link with custom label', async () => {
+        await tool.openLink({ ref: 'src/old.ts', rightRef: 'src/new.ts', label: 'My Diff' });
+        expect((mockOpenerService.getOpener as sinon.SinonStub).called).to.be.true;
+    });
+
+    it('should forward right-side line as selection when opening a diff', async () => {
+        await tool.openLink({ ref: 'src/foo.ts', rightRef: { path: 'src/foo.ts', line: 42 } });
+        const getOpenerCall = (mockOpenerService.getOpener as sinon.SinonStub).getCall(0);
+        expect(getOpenerCall.args[1]).to.deep.equal({ selection: { start: { line: 41, character: 0 } } });
+    });
+
+    it('should fall back to left-side line when right side has none', async () => {
+        await tool.openLink({ ref: { path: 'src/foo.ts', line: 7 }, rightRef: 'src/foo.ts' });
+        const getOpenerCall = (mockOpenerService.getOpener as sinon.SinonStub).getCall(0);
+        expect(getOpenerCall.args[1]).to.deep.equal({ selection: { start: { line: 6, character: 0 } } });
+    });
+
+    it('should treat new files (content unreadable at gitRef) as empty rather than an error', async () => {
+        mockResourceProvider.callsFake(async (uri: URI) => {
+            if (uri.scheme === 'git') {
+                return {
+                    uri,
+                    readContents: sinon.stub().rejects(new Error('file not found at ref')),
+                    dispose: sinon.stub()
+                };
+            }
+            return {
+                uri,
+                readContents: sinon.stub().resolves('content'),
+                dispose: sinon.stub()
+            };
+        });
+
+        (mockScmService.findRepository as sinon.SinonStub).returns(makeMockRepo());
+
+        await tool.openLink({
+            ref: { path: 'src/new-file.ts', gitRef: 'abc123' },
+            rightRef: 'src/new-file.ts'
+        });
+
+        expect((mockOpenerService.getOpener as sinon.SinonStub).called).to.be.true;
+        const openCall = (mockOpenerService.getOpener as sinon.SinonStub).getCall(0);
+        const diffUri = openCall.args[0] as URI;
+        expect(DiffUris.isDiffUri(diffUri)).to.be.true;
+        const [leftUri] = DiffUris.decode(diffUri);
+        expect(leftUri.scheme).to.equal(MEMORY_TEXT);
+    });
+
+    it('should open diff with empty right side when right-side cannot be resolved', async () => {
+        mockResourceProvider.callsFake(async (uri: URI) => {
+            if (uri.scheme === 'file') {
+                return {
+                    uri,
+                    readContents: sinon.stub().rejects(new Error('file not found')),
+                    dispose: sinon.stub()
+                };
+            }
+            return {
+                uri,
+                readContents: sinon.stub().resolves('content'),
+                dispose: sinon.stub()
+            };
+        });
+
+        (mockScmService.findRepository as sinon.SinonStub).returns(makeMockRepo());
+
+        await tool.openLink({
+            ref: { path: 'src/deleted-file.ts', gitRef: 'abc123' },
+            rightRef: { path: 'src/deleted-file.ts' }
+        });
+
+        expect((mockOpenerService.getOpener as sinon.SinonStub).called).to.be.true;
+        const openCall = (mockOpenerService.getOpener as sinon.SinonStub).getCall(0);
+        const diffUri = openCall.args[0] as URI;
+        expect(DiffUris.isDiffUri(diffUri)).to.be.true;
+        const [, rightUri] = DiffUris.decode(diffUri);
+        expect(rightUri.scheme).to.equal(MEMORY_TEXT);
+    });
+
+    it('should open diff with both sides empty when neither can be resolved', async () => {
+        mockResourceProvider.rejects(new Error('no resolver found'));
+
+        await tool.openLink({
+            ref: { path: 'src/file.ts', gitRef: 'abc123' },
+            rightRef: 'src/file.ts'
+        });
+
+        expect((mockOpenerService.getOpener as sinon.SinonStub).called).to.be.true;
+        const openCall = (mockOpenerService.getOpener as sinon.SinonStub).getCall(0);
+        const diffUri = openCall.args[0] as URI;
+        expect(DiffUris.isDiffUri(diffUri)).to.be.true;
+        const [leftUri, rightUri] = DiffUris.decode(diffUri);
+        expect(leftUri.scheme).to.equal(MEMORY_TEXT_READONLY);
+        expect(rightUri.scheme).to.equal(MEMORY_TEXT);
+    });
+
+    it('should open diff with empty left side when ref is EmptyContentRef', async () => {
+        await tool.openLink({
+            ref: { empty: true, label: 'new file' },
+            rightRef: 'src/new-file.ts'
+        });
+
+        expect((mockOpenerService.getOpener as sinon.SinonStub).called).to.be.true;
+        const openCall = (mockOpenerService.getOpener as sinon.SinonStub).getCall(0);
+        const diffUri = openCall.args[0] as URI;
+        expect(DiffUris.isDiffUri(diffUri)).to.be.true;
+        const [leftUri, rightUri] = DiffUris.decode(diffUri);
+        expect(leftUri.scheme).to.equal(MEMORY_TEXT);
+        expect(rightUri.scheme).to.equal('file');
+    });
+
+    it('should show error content when gitRef cannot be resolved due to missing SCM repo', async () => {
+        (mockScmService.findRepository as sinon.SinonStub).returns(undefined);
+
+        await tool.openLink({
+            ref: { path: 'src/file.ts', gitRef: 'abc123' },
+            rightRef: 'src/file.ts'
+        });
+
+        expect((mockOpenerService.getOpener as sinon.SinonStub).called).to.be.true;
+        const openCall = (mockOpenerService.getOpener as sinon.SinonStub).getCall(0);
+        const diffUri = openCall.args[0] as URI;
+        expect(DiffUris.isDiffUri(diffUri)).to.be.true;
+        const [leftUri] = DiffUris.decode(diffUri);
+        expect(leftUri.scheme).to.equal(MEMORY_TEXT_READONLY);
+        expect(leftUri.query).to.contain('Unable to resolve revision');
+        expect(leftUri.query).to.contain('abc123');
+    });
+
+    it('should show the not-found content when a file link path cannot be resolved', async () => {
+        (mockWorkspaceScope.resolveAccessiblePath as sinon.SinonStub).rejects(new Error('Could not resolve path'));
+
+        await tool.openLink({ ref: 'src/file.ts' });
+
+        expect((mockEditorManager.open as sinon.SinonStub).called).to.be.false;
+        const openedUri = (mockOpenerService.getOpener as sinon.SinonStub).getCall(0).args[0] as URI;
+        expect(openedUri.scheme).to.equal(MEMORY_TEXT_READONLY);
+        expect(openedUri.query).to.contain('does not exist');
+    });
+
+    it('should resolve link paths with the same parsing as the workspace tools', async () => {
+        await tool.openLink({ ref: '/abs/src/file.ts' });
+
+        expect((mockWorkspaceScope.resolveAccessiblePath as sinon.SinonStub).calledWith('/abs/src/file.ts')).to.be.true;
+    });
+
+    it('should not open anything when single link ref is EmptyContentRef', async () => {
+        await tool.openLink({ ref: { empty: true } });
+
+        expect((mockOpenerService.getOpener as sinon.SinonStub).called).to.be.false;
+        expect((mockEditorManager.open as sinon.SinonStub).called).to.be.false;
+    });
+});

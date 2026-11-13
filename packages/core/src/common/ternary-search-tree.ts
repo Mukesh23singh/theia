@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -21,11 +21,12 @@
 // based on https://github.com/microsoft/vscode/blob/04c36be045a94fee58e5f8992d3e3fd980294a84/src/vs/base/common/map.ts#L251
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @typescript-eslint/tslint/config */
+/* eslint-disable @theia/explicit-return-type */
 
-import URI from './uri';
-import { CharCode } from './char-code';
-import { compareSubstringIgnoreCase, compare, compareSubstring } from './strings';
+import URI from './uri.js';
+import { CharCode } from './char-code.js';
+import { compareSubstringIgnoreCase, compare, compareSubstring } from './strings.js';
+import { KeySequence } from './keys.js';
 
 export interface IKeyIterator<K> {
     reset(key: K): this;
@@ -187,6 +188,35 @@ class TernarySearchTreeNode<K, V> {
     }
 }
 
+export class KeySequenceIterator implements IKeyIterator<KeySequence> {
+    private _value!: KeySequence;
+    private _index: number = 0;
+
+    reset(key: KeySequence): this {
+        this._value = key;
+        this._index = 0;
+        return this;
+    }
+
+    next(): this {
+        this._index++;
+        return this;
+    }
+
+    hasNext(): boolean {
+        return this._index < this._value.length - 1;
+    }
+
+    cmp(a: string): number {
+        const current = this._value[this._index]?.dispatchString() ?? '';
+        return compare(a, current);
+    }
+
+    value(): string {
+        return this._value[this._index]?.dispatchString() ?? '';
+    }
+}
+
 export class TernarySearchTree<K, V> {
 
     static forUris<E>(caseSensitive: boolean): TernarySearchTree<URI, E> {
@@ -195,6 +225,10 @@ export class TernarySearchTree<K, V> {
 
     static forPaths<E>(): TernarySearchTree<string, E> {
         return new TernarySearchTree<string, E>(new PathIterator());
+    }
+
+    static forKeySequences<E>(): TernarySearchTree<KeySequence, E> {
+        return new TernarySearchTree<KeySequence, E>(new KeySequenceIterator());
     }
 
     private _iter: IKeyIterator<K>;

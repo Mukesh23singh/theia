@@ -1,78 +1,121 @@
-/********************************************************************************
- * Copyright (C) 2019 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, inject } from '@theia/core/shared/inversify';
-import { ResourceProvider } from '@theia/core';
-import { DirtyDiffDecorator } from '../dirty-diff/dirty-diff-decorator';
-import { DiffComputer } from '../dirty-diff/diff-computer';
-import { ContentLines } from '../dirty-diff/content-lines';
-import { EditorManager, TextEditor } from '@theia/editor/lib/browser';
-import { ScmService } from '../scm-service';
+import { DisposableCollection, Emitter, Event, ResourceProvider } from '@theia/core';
+import { DirtyDiffDecorator, DirtyDiffUpdate } from '../dirty-diff/dirty-diff-decorator.js';
+import { DiffComputer } from '../dirty-diff/diff-computer.js';
+import { ContentLines } from '../dirty-diff/content-lines.js';
+import { EditorManager, EditorWidget, TextEditor } from '@theia/editor/lib/browser';
+import { ScmService } from '../scm-service.js';
+
+import throttle from '@theia/core/shared/lodash.throttle';
 
 @injectable()
 export class ScmDecorationsService {
-    private readonly diffComputer: DiffComputer;
-    private dirtyState: boolean = true;
+    private readonly diffComputer = new DiffComputer();
 
-    constructor(@inject(DirtyDiffDecorator) protected readonly decorator: DirtyDiffDecorator,
+    protected readonly onDirtyDiffUpdateEmitter = new Emitter<DirtyDiffUpdate>();
+    readonly onDirtyDiffUpdate: Event<DirtyDiffUpdate> = this.onDirtyDiffUpdateEmitter.event;
+
+    constructor(
+        @inject(DirtyDiffDecorator) protected readonly decorator: DirtyDiffDecorator,
         @inject(ScmService) protected readonly scmService: ScmService,
         @inject(EditorManager) protected readonly editorManager: EditorManager,
-        @inject(ResourceProvider) protected readonly resourceProvider: ResourceProvider) {
-        this.diffComputer = new DiffComputer();
-        this.editorManager.onCreated(async editor => this.applyEditorDecorations(editor.editor));
-        this.scmService.onDidAddRepository(repository => repository.provider.onDidChange(() => {
-            const editor = this.editorManager.currentEditor;
-            if (editor) {
-                if (this.dirtyState) {
-                    this.applyEditorDecorations(editor.editor);
-                    this.dirtyState = false;
-                } else {
-                    /** onDidChange event might be called several times one after another, so need to prevent repeated events. */
-                    setTimeout(() => {
-                        this.dirtyState = true;
-                    }, 500);
+        @inject(ResourceProvider) protected readonly resourceProvider: ResourceProvider
+    ) {
+        const updateTasks = new Map<EditorWidget, { (): void; cancel(): void }>();
+        this.editorManager.onCreated(editorWidget => {
+            const { editor } = editorWidget;
+            if (!this.supportsDirtyDiff(editor)) {
+                return;
+            }
+            const toDispose = new DisposableCollection();
+            const updateTask = this.createUpdateTask(editor);
+            updateTasks.set(editorWidget, updateTask);
+            toDispose.push(editor.onDocumentContentChanged(() => updateTask()));
+            toDispose.push(editorWidget.onDidChangeVisibility(visible => {
+                if (visible) {
+                    updateTask();
                 }
+            }));
+            if (editor.onShouldDisplayDirtyDiffChanged) {
+                toDispose.push(editor.onShouldDisplayDirtyDiffChanged(shouldDisplayDirtyDiff => {
+                    if (shouldDisplayDirtyDiff) {
+                        updateTask();
+                    } else {
+                        const update: DirtyDiffUpdate = { editor, changes: [] };
+                        this.decorator.applyDecorations(update);
+                        this.onDirtyDiffUpdateEmitter.fire(update);
+                    }
+                }));
             }
-        }));
-        this.scmService.onDidChangeSelectedRepository(() => {
-            const editor = this.editorManager.currentEditor;
-            if (editor) {
-                this.applyEditorDecorations(editor.editor);
-            }
+            editorWidget.disposed.connect(() => {
+                updateTask.cancel();
+                updateTasks.delete(editorWidget);
+                toDispose.dispose();
+            });
+            updateTask();
         });
+        const runUpdateTasks = () => {
+            for (const updateTask of updateTasks.values()) {
+                updateTask();
+            }
+        };
+        this.scmService.onDidAddRepository(({ provider }) => {
+            provider.onDidChange(runUpdateTasks);
+            provider.onDidChangeResources?.(runUpdateTasks);
+        });
+        this.scmService.onDidChangeSelectedRepository(runUpdateTasks);
     }
 
     async applyEditorDecorations(editor: TextEditor): Promise<void> {
+        if (!editor.shouldDisplayDirtyDiff()) {
+            return;
+        }
         const currentRepo = this.scmService.selectedRepository;
         if (currentRepo) {
             try {
-                const uri = editor.uri.withScheme(currentRepo.provider.id).withQuery(`{"ref":"", "path":"${editor.uri.path.toString()}"}`);
+                const uri = currentRepo.toUriAtRef(editor.uri, '');
                 const previousResource = await this.resourceProvider(uri);
-                const previousContent = await previousResource.readContents();
-                const previousLines = ContentLines.fromString(previousContent);
-                const currentResource = await this.resourceProvider(editor.uri);
-                const currentContent = await currentResource.readContents();
-                const currentLines = ContentLines.fromString(currentContent);
-                const { added, removed, modified } = this.diffComputer.computeDirtyDiff(ContentLines.arrayLike(previousLines), ContentLines.arrayLike(currentLines));
-                this.decorator.applyDecorations({ editor: editor, added, removed, modified });
-                currentResource.dispose();
-                previousResource.dispose();
+                try {
+                    const previousContent = await previousResource.readContents();
+                    if (!editor.shouldDisplayDirtyDiff()) { // check again; it might have changed in the meantime, since this is an async method
+                        return;
+                    }
+                    const previousLines = ContentLines.fromString(previousContent);
+                    const currentLines = ContentLines.fromTextEditorDocument(editor.document);
+                    const dirtyDiff = this.diffComputer.computeDirtyDiff(ContentLines.arrayLike(previousLines), ContentLines.arrayLike(currentLines));
+                    const update = { editor, previousRevisionUri: uri, ...dirtyDiff } satisfies DirtyDiffUpdate;
+                    this.decorator.applyDecorations(update);
+                    this.onDirtyDiffUpdateEmitter.fire(update);
+                } finally {
+                    previousResource.dispose();
+                }
             } catch (e) {
                 // Scm resource may not be found, do nothing.
             }
         }
+    }
+
+    protected supportsDirtyDiff(editor: TextEditor): boolean {
+        return editor.shouldDisplayDirtyDiff() || !!editor.onShouldDisplayDirtyDiffChanged;
+    }
+
+    protected createUpdateTask(editor: TextEditor): { (): void; cancel(): void; } {
+        return throttle(() => this.applyEditorDecorations(editor), 500);
     }
 }

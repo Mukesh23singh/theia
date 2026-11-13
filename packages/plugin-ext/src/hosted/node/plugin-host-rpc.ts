@@ -1,156 +1,217 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { dynamicRequire } from '@theia/core/lib/node/dynamic-require';
-import { PluginManagerExtImpl } from '../../plugin/plugin-manager';
-import { MAIN_RPC_CONTEXT, Plugin, PluginAPIFactory } from '../../common/plugin-api-rpc';
-import { PluginMetadata } from '../../common/plugin-protocol';
-import { createAPIFactory } from '../../plugin/plugin-context';
-import { EnvExtImpl } from '../../plugin/env';
-import { PreferenceRegistryExtImpl } from '../../plugin/preference-registry';
-import { ExtPluginApi, ExtPluginApiBackendInitializationFn } from '../../common/plugin-ext-api-contribution';
-import { DebugExtImpl } from '../../plugin/node/debug/debug';
-import { EditorsAndDocumentsExtImpl } from '../../plugin/editors-and-documents';
-import { WorkspaceExtImpl } from '../../plugin/workspace';
-import { MessageRegistryExt } from '../../plugin/message-registry';
-import { EnvNodeExtImpl } from '../../plugin/node/env-node-ext';
-import { ClipboardExt } from '../../plugin/clipboard-ext';
-import { loadManifest } from './plugin-manifest-loader';
-import { KeyValueStorageProxy } from '../../plugin/plugin-storage';
-import { WebviewsExtImpl } from '../../plugin/webviews';
-import { TerminalServiceExtImpl } from '../../plugin/terminal-ext';
-import { SecretsExtImpl } from '../../plugin/secrets-ext';
-import { BackendInitializationFn } from '../../common';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+// The plugin host routes console.* calls itself and has no ILogger available.
+/* eslint-disable @theia/named-logger-check */
+
+import * as path from 'path';
+import { pathToFileURL } from 'node:url';
+import { dynamicRequire, removeFromCache } from '@theia/core/lib/node/dynamic-require';
+import { ContainerModule, inject, injectable, postConstruct, unmanaged } from '@theia/core/shared/inversify';
+import { AbstractPluginManagerExtImpl, PluginHost, PluginManagerExtImpl } from '../../plugin/plugin-manager.js';
+import {
+    MAIN_RPC_CONTEXT, Plugin, PluginAPIFactory, PluginManager,
+    LocalizationExt
+} from '../../common/plugin-api-rpc.js';
+import { PluginMetadata, PluginModel, PluginPackage } from '../../common/plugin-protocol.js';
+import { createAPIFactory } from '../../plugin/plugin-context.js';
+import { EnvExtImpl } from '../../plugin/env.js';
+import { TelemetryExtImpl } from '../../plugin/telemetry-ext.js';
+import { PreferenceRegistryExtImpl } from '../../plugin/preference-registry.js';
+import { ExtPluginApi, ExtPluginApiBackendInitializationFn } from '../../common/plugin-ext-api-contribution.js';
+import { DebugExtImpl } from '../../plugin/debug/debug-ext.js';
+import { EditorsAndDocumentsExtImpl } from '../../plugin/editors-and-documents.js';
+import { WorkspaceExtImpl } from '../../plugin/workspace.js';
+import { MessageRegistryExt } from '../../plugin/message-registry.js';
+import { ClipboardExt } from '../../plugin/clipboard-ext.js';
+import { loadManifest } from '@theia/plugin-utils/lib/node/plugin-manifest';
+import { KeyValueStorageProxy } from '../../plugin/plugin-storage.js';
+import { WebviewsExtImpl } from '../../plugin/webviews.js';
+import { TerminalServiceExtImpl } from '../../plugin/terminal-ext.js';
+import { SecretsExtImpl } from '../../plugin/secrets-ext.js';
+import { connectProxyResolver } from './plugin-host-proxy.js';
+import { LocalizationExtImpl } from '../../plugin/localization-ext.js';
+import { RPCProtocol, ProxyIdentifier } from '../../common/rpc-protocol.js';
+import { PluginApiCache } from '../../plugin/node/plugin-container-module.js';
+import { overridePluginDependencies } from './plugin-require-override.js';
+
+/**
+ * The full set of all possible `Ext` interfaces that a plugin manager can support.
+ */
+export interface ExtInterfaces {
+    envExt: EnvExtImpl,
+    storageExt: KeyValueStorageProxy,
+    debugExt: DebugExtImpl,
+    editorsAndDocumentsExt: EditorsAndDocumentsExtImpl,
+    messageRegistryExt: MessageRegistryExt,
+    workspaceExt: WorkspaceExtImpl,
+    preferenceRegistryExt: PreferenceRegistryExtImpl,
+    clipboardExt: ClipboardExt,
+    webviewExt: WebviewsExtImpl,
+    terminalServiceExt: TerminalServiceExtImpl,
+    secretsExt: SecretsExtImpl,
+    localizationExt: LocalizationExtImpl,
+    telemetryExt: TelemetryExtImpl
+}
+
+/**
+ * The RPC proxy identifier keys to set in the RPC object to register our `Ext` interface implementations.
+ */
+export type RpcKeys<EXT extends Partial<ExtInterfaces>> = Partial<Record<keyof EXT, ProxyIdentifier<any>>> & {
+    $pluginManager: ProxyIdentifier<any>;
+};
+
+// Hide the dynamic `import()` inside `new Function` so that bundlers and
+// transpilers targeting CommonJS (tsc, esbuild, webpack) cannot statically
+// rewrite it into `Promise.resolve(require(...))`.
+const importESMPlugin = new Function('url', 'return import(url)') as (url: string) => Promise<any>;
+
+export const PluginContainerModuleLoader = Symbol('PluginContainerModuleLoader');
+/**
+ * A function that loads a `PluginContainerModule` exported by a plugin's entry-point
+ * script, returning the per-`Container` cache of its exported API instances if the
+ * module has an API factory registered.
+ */
+export type PluginContainerModuleLoader = (module: ContainerModule) => PluginApiCache<object> | undefined;
 
 /**
  * Handle the RPC calls.
+ *
+ * @template PM is the plugin manager (ext) type
+ * @template PAF is the plugin API factory type
+ * @template EXT is the type identifying the `Ext` interfaces supported by the plugin manager
  */
-export class PluginHostRPC {
+@injectable()
+export abstract class AbstractPluginHostRPC<PM extends AbstractPluginManagerExtImpl<any>, PAF, EXT extends Partial<ExtInterfaces>> {
 
-    private apiFactory: PluginAPIFactory;
+    @inject(RPCProtocol)
+    protected readonly rpc: any;
 
-    private pluginManager: PluginManagerExtImpl;
+    @inject(PluginContainerModuleLoader)
+    protected readonly loadContainerModule: PluginContainerModuleLoader;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    constructor(protected readonly rpc: any) {
+    @inject(AbstractPluginManagerExtImpl)
+    protected readonly pluginManager: PM;
+
+    protected readonly banner: string;
+
+    protected apiFactory: PAF;
+
+    constructor(
+        @unmanaged() name: string,
+        @unmanaged() private readonly backendInitPath: string | undefined,
+        @unmanaged() private readonly extRpc: RpcKeys<EXT>) {
+        this.banner = `${name}(${process.pid}):`;
     }
 
+    @postConstruct()
     initialize(): void {
-        const envExt = new EnvNodeExtImpl(this.rpc);
-        const storageProxy = new KeyValueStorageProxy(this.rpc);
-        const debugExt = new DebugExtImpl(this.rpc);
-        const editorsAndDocumentsExt = new EditorsAndDocumentsExtImpl(this.rpc);
-        const messageRegistryExt = new MessageRegistryExt(this.rpc);
-        const workspaceExt = new WorkspaceExtImpl(this.rpc, editorsAndDocumentsExt, messageRegistryExt);
-        const preferenceRegistryExt = new PreferenceRegistryExtImpl(this.rpc, workspaceExt);
-        const clipboardExt = new ClipboardExt(this.rpc);
-        const webviewExt = new WebviewsExtImpl(this.rpc, workspaceExt);
-        const terminalService = new TerminalServiceExtImpl(this.rpc);
-        const secretsExt = new SecretsExtImpl(this.rpc);
-        this.pluginManager = this.createPluginManager(envExt, terminalService, storageProxy, preferenceRegistryExt, webviewExt, secretsExt, this.rpc);
-        this.rpc.set(MAIN_RPC_CONTEXT.HOSTED_PLUGIN_MANAGER_EXT, this.pluginManager);
-        this.rpc.set(MAIN_RPC_CONTEXT.EDITORS_AND_DOCUMENTS_EXT, editorsAndDocumentsExt);
-        this.rpc.set(MAIN_RPC_CONTEXT.WORKSPACE_EXT, workspaceExt);
-        this.rpc.set(MAIN_RPC_CONTEXT.PREFERENCE_REGISTRY_EXT, preferenceRegistryExt);
-        this.rpc.set(MAIN_RPC_CONTEXT.STORAGE_EXT, storageProxy);
-        this.rpc.set(MAIN_RPC_CONTEXT.WEBVIEWS_EXT, webviewExt);
-        this.rpc.set(MAIN_RPC_CONTEXT.SECRETS_EXT, secretsExt);
+        overridePluginDependencies();
+        this.pluginManager.setPluginHost(this.createPluginHost());
 
-        this.apiFactory = createAPIFactory(
-            this.rpc,
-            this.pluginManager,
-            envExt,
-            debugExt,
-            preferenceRegistryExt,
-            editorsAndDocumentsExt,
-            workspaceExt,
-            messageRegistryExt,
-            clipboardExt,
-            webviewExt
-        );
+        const extInterfaces = this.createExtInterfaces();
+        this.registerExtInterfaces(extInterfaces);
+
+        this.apiFactory = this.createAPIFactory(extInterfaces);
+
+        this.loadContainerModule(new ContainerModule(bind => bind(PluginManager).toConstantValue(this.pluginManager)));
     }
 
     async terminate(): Promise<void> {
         await this.pluginManager.terminate();
     }
 
+    protected abstract createAPIFactory(extInterfaces: EXT): PAF;
+
+    protected abstract createExtInterfaces(): EXT;
+
+    protected registerExtInterfaces(extInterfaces: EXT): void {
+        for (const _key in this.extRpc) {
+            if (Object.hasOwnProperty.call(this.extRpc, _key)) {
+                const key = _key as keyof ExtInterfaces;
+                // In case of present undefineds
+                if (extInterfaces[key]) {
+                    this.rpc.set(this.extRpc[key], extInterfaces[key]);
+                }
+            }
+        }
+        this.rpc.set(this.extRpc.$pluginManager, this.pluginManager);
+    }
+
     initContext(contextPath: string, plugin: Plugin): void {
         const { name, version } = plugin.rawModel;
-        console.log('PLUGIN_HOST(' + process.pid + '): initializing(' + name + '@' + version + ' with ' + contextPath + ')');
+        console.debug(this.banner, 'initializing(' + name + '@' + version + ' with ' + contextPath + ')');
         try {
-            const backendInit = dynamicRequire<{ doInitialization: BackendInitializationFn }>(contextPath);
+            type BackendInitFn = (pluginApiFactory: PAF, plugin: Plugin) => void;
+            const backendInit = dynamicRequire<{ doInitialization: BackendInitFn }>(contextPath);
             backendInit.doInitialization(this.apiFactory, plugin);
         } catch (e) {
             console.error(e);
         }
     }
 
-    createPluginManager(
-        envExt: EnvExtImpl, terminalService: TerminalServiceExtImpl, storageProxy: KeyValueStorageProxy,
-        preferencesManager: PreferenceRegistryExtImpl, webview: WebviewsExtImpl, secretsExt: SecretsExtImpl,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        rpc: any
-    ): PluginManagerExtImpl {
+    protected getBackendPluginPath(pluginModel: PluginModel): string | undefined {
+        return pluginModel.entryPoint.backend;
+    }
+
+    /**
+     * Determine whether a plugin should be loaded via ESM `import()` instead of
+     * CommonJS `require()`. Mirrors Node's own rules:
+     *   - `.mjs` is always ESM
+     *   - `.cjs` is always CJS
+     *   - any other extension falls back to the `package.json` `type` field
+     */
+    protected isESMPlugin(plugin: Plugin): boolean {
+        const ext = path.extname(plugin.pluginPath || '').toLowerCase();
+        if (ext === '.mjs') {
+            return true;
+        }
+        if (ext === '.cjs') {
+            return false;
+        }
+        return plugin.rawModel.type === 'module';
+    }
+
+    /**
+     * Create the {@link PluginHost} that is required by my plugin manager ext interface to delegate
+     * critical behaviour such as loading and initializing plugins to me.
+     */
+    createPluginHost(): PluginHost {
         const { extensionTestsPath } = process.env;
         const self = this;
-        const pluginManager = new PluginManagerExtImpl({
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return {
             loadPlugin(plugin: Plugin): any {
-                console.log('PLUGIN_HOST(' + process.pid + '): PluginManagerExtImpl/loadPlugin(' + plugin.pluginPath + ')');
+                console.debug(self.banner, 'PluginManagerExtImpl/loadPlugin(' + plugin.pluginPath + ')');
                 // cleaning the cache for all files of that plug-in.
-                Object.keys(require.cache).forEach(function (key): void {
-                    const mod: NodeJS.Module = require.cache[key];
-
-                    // attempting to reload a native module will throw an error, so skip them
-                    if (mod.id.endsWith('.node')) {
-                        return;
-                    }
-
-                    // remove children that are part of the plug-in
-                    let i = mod.children.length;
-                    while (i--) {
-                        const childMod: NodeJS.Module = mod.children[i];
-                        // ensure the child module is not null, is in the plug-in folder, and is not a native module (see above)
-                        if (childMod && childMod.id.startsWith(plugin.pluginFolder) && !childMod.id.endsWith('.node')) {
-                            // cleanup exports - note that some modules (e.g. ansi-styles) define their
-                            // exports in an immutable manner, so overwriting the exports throws an error
-                            delete childMod.exports;
-                            mod.children.splice(i, 1);
-                            for (let j = 0; j < childMod.children.length; j++) {
-                                delete childMod.children[j];
-                            }
-                        }
-                    }
-
-                    if (key.startsWith(plugin.pluginFolder)) {
-                        // delete entry
-                        delete require.cache[key];
-                        const ix = mod.parent!.children.indexOf(mod);
-                        if (ix >= 0) {
-                            mod.parent!.children.splice(ix, 1);
-                        }
-                    }
-
-                });
-                if (plugin.pluginPath) {
-                    return dynamicRequire(plugin.pluginPath);
+                // this prevents a memory leak on plugin host restart. See for reference:
+                // https://github.com/eclipse-theia/theia/pull/4931
+                // https://github.com/nodejs/node/issues/8443
+                removeFromCache(mod => mod.id.startsWith(plugin.pluginFolder));
+                if (!plugin.pluginPath) {
+                    return undefined;
                 }
+                if (self.isESMPlugin(plugin)) {
+                    return importESMPlugin(pathToFileURL(plugin.pluginPath).href);
+                }
+                return dynamicRequire(plugin.pluginPath);
             },
             async init(raw: PluginMetadata[]): Promise<[Plugin[], Plugin[]]> {
-                console.log('PLUGIN_HOST(' + process.pid + '): PluginManagerExtImpl/init()');
+                console.log(self.banner, 'PluginManagerExtImpl/init()');
                 const result: Plugin[] = [];
                 const foreign: Plugin[] = [];
                 for (const plg of raw) {
@@ -158,7 +219,7 @@ export class PluginHostRPC {
                         const pluginModel = plg.model;
                         const pluginLifecycle = plg.lifecycle;
 
-                        const rawModel = await loadManifest(pluginModel.packagePath);
+                        const rawModel = await loadManifest<PluginPackage>(pluginModel.packagePath);
                         rawModel.packagePath = pluginModel.packagePath;
                         if (pluginModel.entryPoint!.frontend) {
                             foreign.push({
@@ -167,48 +228,52 @@ export class PluginHostRPC {
                                 pluginUri: pluginModel.packageUri,
                                 model: pluginModel,
                                 lifecycle: pluginLifecycle,
-                                rawModel
+                                rawModel,
+                                isUnderDevelopment: !!plg.isUnderDevelopment
                             });
                         } else {
+                            // Headless and backend plugins are, for now, very similar
                             let backendInitPath = pluginLifecycle.backendInitPath;
                             // if no init path, try to init as regular Theia plugin
-                            if (!backendInitPath) {
-                                backendInitPath = __dirname + '/scanners/backend-init-theia.js';
+                            if (!backendInitPath && self.backendInitPath) {
+                                backendInitPath = import.meta.dirname + self.backendInitPath;
                             }
 
+                            const pluginPath = self.getBackendPluginPath(pluginModel);
                             const plugin: Plugin = {
-                                pluginPath: pluginModel.entryPoint.backend!,
+                                pluginPath,
                                 pluginFolder: pluginModel.packagePath,
                                 pluginUri: pluginModel.packageUri,
                                 model: pluginModel,
                                 lifecycle: pluginLifecycle,
-                                rawModel
+                                rawModel,
+                                isUnderDevelopment: !!plg.isUnderDevelopment
                             };
 
-                            self.initContext(backendInitPath, plugin);
-
+                            if (backendInitPath) {
+                                self.initContext(backendInitPath, plugin);
+                            } else {
+                                const { name, version } = plugin.rawModel;
+                                console.debug(self.banner, 'initializing(' + name + '@' + version + ' without any default API)');
+                            }
                             result.push(plugin);
                         }
                     } catch (e) {
-                        console.error(`Failed to initialize ${plg.model.id} plugin.`, e);
+                        console.error(self.banner, `Failed to initialize ${plg.model.id} plugin.`, e);
                     }
                 }
                 return [result, foreign];
             },
             initExtApi(extApi: ExtPluginApi[]): void {
                 for (const api of extApi) {
-                    if (api.backendInitPath) {
-                        try {
-                            const extApiInit = dynamicRequire<{ provideApi: ExtPluginApiBackendInitializationFn }>(api.backendInitPath);
-                            extApiInit.provideApi(rpc, pluginManager);
-                        } catch (e) {
-                            console.error(e);
-                        }
+                    try {
+                        self.initExtApi(api);
+                    } catch (e) {
+                        console.error(e);
                     }
                 }
             },
             loadTests: extensionTestsPath ? async () => {
-                /* eslint-disable @typescript-eslint/no-explicit-any */
                 // Require the test runner via node require from the provided path
                 let testRunner: any;
                 let requireError: Error | undefined;
@@ -235,7 +300,119 @@ export class PluginHostRPC {
                     `Path ${extensionTestsPath} does not point to a valid extension test runner.`
                 );
             } : undefined
-        }, envExt, terminalService, storageProxy, secretsExt, preferencesManager, webview, rpc);
-        return pluginManager;
+        };
+    }
+
+    /**
+     * Initialize the end of the given provided extension API applicable to the current plugin host.
+     * Errors should be propagated to the caller.
+     *
+     * @param extApi the extension API to initialize, if appropriate
+     * @throws if any error occurs in initializing the extension API
+     */
+    protected abstract initExtApi(extApi: ExtPluginApi): void;
+}
+
+/**
+ * The RPC handler for frontend-connection-scoped plugins (Theia and VSCode plugins).
+ */
+@injectable()
+export class PluginHostRPC extends AbstractPluginHostRPC<PluginManagerExtImpl, PluginAPIFactory, ExtInterfaces> {
+    @inject(EnvExtImpl)
+    protected readonly envExt: EnvExtImpl;
+
+    @inject(LocalizationExt)
+    protected readonly localizationExt: LocalizationExtImpl;
+
+    @inject(KeyValueStorageProxy)
+    protected readonly keyValueStorageProxy: KeyValueStorageProxy;
+
+    @inject(DebugExtImpl)
+    protected readonly debugExt: DebugExtImpl;
+
+    @inject(EditorsAndDocumentsExtImpl)
+    protected readonly editorsAndDocumentsExt: EditorsAndDocumentsExtImpl;
+
+    @inject(MessageRegistryExt)
+    protected readonly messageRegistryExt: MessageRegistryExt;
+
+    @inject(WorkspaceExtImpl)
+    protected readonly workspaceExt: WorkspaceExtImpl;
+
+    @inject(PreferenceRegistryExtImpl)
+    protected readonly preferenceRegistryExt: PreferenceRegistryExtImpl;
+
+    @inject(ClipboardExt)
+    protected readonly clipboardExt: ClipboardExt;
+
+    @inject(WebviewsExtImpl)
+    protected readonly webviewExt: WebviewsExtImpl;
+
+    @inject(TerminalServiceExtImpl)
+    protected readonly terminalServiceExt: TerminalServiceExtImpl;
+
+    @inject(SecretsExtImpl)
+    protected readonly secretsExt: SecretsExtImpl;
+
+    @inject(TelemetryExtImpl)
+    protected readonly telemetryExt: TelemetryExtImpl;
+
+    constructor() {
+        super('PLUGIN_HOST', '/scanners/backend-init-theia.js',
+            {
+                $pluginManager: MAIN_RPC_CONTEXT.HOSTED_PLUGIN_MANAGER_EXT,
+                editorsAndDocumentsExt: MAIN_RPC_CONTEXT.EDITORS_AND_DOCUMENTS_EXT,
+                workspaceExt: MAIN_RPC_CONTEXT.WORKSPACE_EXT,
+                preferenceRegistryExt: MAIN_RPC_CONTEXT.PREFERENCE_REGISTRY_EXT,
+                storageExt: MAIN_RPC_CONTEXT.STORAGE_EXT,
+                webviewExt: MAIN_RPC_CONTEXT.WEBVIEWS_EXT,
+                secretsExt: MAIN_RPC_CONTEXT.SECRETS_EXT
+            }
+        );
+    }
+
+    protected createExtInterfaces(): ExtInterfaces {
+        connectProxyResolver(this.workspaceExt, this.preferenceRegistryExt);
+        return {
+            envExt: this.envExt,
+            storageExt: this.keyValueStorageProxy,
+            debugExt: this.debugExt,
+            editorsAndDocumentsExt: this.editorsAndDocumentsExt,
+            messageRegistryExt: this.messageRegistryExt,
+            workspaceExt: this.workspaceExt,
+            preferenceRegistryExt: this.preferenceRegistryExt,
+            clipboardExt: this.clipboardExt,
+            webviewExt: this.webviewExt,
+            terminalServiceExt: this.terminalServiceExt,
+            secretsExt: this.secretsExt,
+            localizationExt: this.localizationExt,
+            telemetryExt: this.telemetryExt
+        };
+    }
+
+    protected createAPIFactory(extInterfaces: ExtInterfaces): PluginAPIFactory {
+        const {
+            envExt, debugExt, preferenceRegistryExt, editorsAndDocumentsExt, workspaceExt,
+            messageRegistryExt, clipboardExt, webviewExt, localizationExt, telemetryExt
+        } = extInterfaces;
+        return createAPIFactory(this.rpc, this.pluginManager, envExt, debugExt, preferenceRegistryExt,
+            editorsAndDocumentsExt, workspaceExt, messageRegistryExt, clipboardExt, webviewExt,
+            localizationExt, telemetryExt);
+    }
+
+    protected initExtApi(extApi: ExtPluginApi): void {
+        interface PluginExports {
+            containerModule?: ContainerModule;
+            provideApi?: ExtPluginApiBackendInitializationFn;
+        }
+        if (extApi.backendInitPath) {
+            const { containerModule, provideApi } = dynamicRequire<PluginExports>(extApi.backendInitPath);
+            if (containerModule) {
+                this.loadContainerModule(containerModule);
+            }
+            if (provideApi) {
+                provideApi(this.rpc, this.pluginManager);
+            }
+        }
     }
 }

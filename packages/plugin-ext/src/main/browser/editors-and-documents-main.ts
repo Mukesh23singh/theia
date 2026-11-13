@@ -1,21 +1,23 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { interfaces } from '@theia/core/shared/inversify';
-import { RPCProtocol } from '../../common/rpc-protocol';
+import * as monaco from '@theia/monaco-editor-core';
+import { type ILineChange } from '@theia/monaco-editor-core/esm/vs/editor/common/diff/legacyLinesDiffComputer.js';
+import { RPCProtocol } from '../../common/rpc-protocol.js';
 import {
     MAIN_RPC_CONTEXT,
     EditorsAndDocumentsExt,
@@ -23,15 +25,20 @@ import {
     ModelAddedData,
     TextEditorAddData,
     EditorPosition
-} from '../../common/plugin-api-rpc';
+} from '../../common/plugin-api-rpc.js';
 import { Disposable } from '@theia/core/lib/common/disposable';
-import { EditorModelService } from './text-editor-model-service';
+import { EditorModelService } from './text-editor-model-service.js';
 import { MonacoEditorModel } from '@theia/monaco/lib/browser/monaco-editor-model';
 import { MonacoEditor } from '@theia/monaco/lib/browser/monaco-editor';
-import { TextEditorMain } from './text-editor-main';
-import { Emitter } from '@theia/core';
-import { DisposableCollection } from '@theia/core';
+import { TextEditorMain } from './text-editor-main.js';
+import { DisposableCollection, Emitter, URI } from '@theia/core';
 import { EditorManager, EditorWidget } from '@theia/editor/lib/browser';
+import { ApplicationShell, NavigatableWidget, Saveable, Widget } from '@theia/core/lib/browser';
+import { SaveableService } from '@theia/core/lib/browser/saveable-service';
+import { TabsMainImpl } from './tabs/tabs-main.js';
+import { NotebookCellEditorService, NotebookEditorWidgetService } from '@theia/notebook/lib/browser';
+import { SimpleMonacoEditor } from '@theia/monaco/lib/browser/simple-monaco-editor';
+import { EncodingRegistry } from '@theia/core/lib/browser/encoding-registry';
 
 export class EditorsAndDocumentsMain implements Disposable {
 
@@ -41,6 +48,10 @@ export class EditorsAndDocumentsMain implements Disposable {
     private readonly textEditors = new Map<string, TextEditorMain>();
 
     private readonly modelService: EditorModelService;
+    private readonly editorManager: EditorManager;
+    private readonly shell: ApplicationShell;
+    private readonly saveResourceService: SaveableService;
+    private readonly encodingRegistry: EncodingRegistry;
 
     private readonly onTextEditorAddEmitter = new Emitter<TextEditorMain[]>();
     private readonly onTextEditorRemoveEmitter = new Emitter<string[]>();
@@ -56,13 +67,20 @@ export class EditorsAndDocumentsMain implements Disposable {
         Disposable.create(() => this.textEditors.clear())
     );
 
-    constructor(rpc: RPCProtocol, container: interfaces.Container) {
+    constructor(rpc: RPCProtocol, container: interfaces.Container, tabsMain: TabsMainImpl) {
         this.proxy = rpc.getProxy(MAIN_RPC_CONTEXT.EDITORS_AND_DOCUMENTS_EXT);
 
-        const editorService = container.get(EditorManager);
+        this.editorManager = container.get(EditorManager);
+        this.shell = container.get(ApplicationShell);
         this.modelService = container.get(EditorModelService);
+        this.saveResourceService = container.get(SaveableService);
+        this.encodingRegistry = container.get(EncodingRegistry);
 
-        this.stateComputer = new EditorAndDocumentStateComputer(d => this.onDelta(d), editorService, this.modelService);
+        this.stateComputer = new EditorAndDocumentStateComputer(d => this.onDelta(d),
+            this.editorManager,
+            container.get(NotebookCellEditorService),
+            container.get(NotebookEditorWidgetService),
+            this.modelService, tabsMain);
         this.toDispose.push(this.stateComputer);
         this.toDispose.push(this.onTextEditorAddEmitter);
         this.toDispose.push(this.onTextEditorRemoveEmitter);
@@ -138,9 +156,11 @@ export class EditorsAndDocumentsMain implements Disposable {
             uri: model.textEditorModel.uri,
             versionId: model.textEditorModel.getVersionId(),
             lines: model.textEditorModel.getLinesContent(),
+            languageId: model.getLanguageId(),
             EOL: model.textEditorModel.getEOL(),
             modeId: model.languageId,
-            isDirty: model.dirty
+            isDirty: model.dirty,
+            encoding: this.encodingRegistry.getEncodingForResource(URI.fromComponents(model.textEditorModel.uri), model.getEncoding())
         };
     }
 
@@ -165,8 +185,54 @@ export class EditorsAndDocumentsMain implements Disposable {
         return this.textEditors.get(id);
     }
 
+    async save(uri: URI): Promise<URI | undefined> {
+        const widget = await this.getSaveTarget(uri);
+        if (!widget) {
+            return undefined;
+        }
+        return this.saveResourceService.save(widget);
+    }
+
+    async saveAs(uri: URI): Promise<URI | undefined> {
+        const widget = await this.getSaveTarget(uri);
+        if (!widget) {
+            return undefined;
+        }
+        if (!this.saveResourceService.canSaveAs(widget)) {
+            return undefined;
+        }
+        return this.saveResourceService.saveAs(widget);
+    }
+
+    /**
+     * Resolve the widget holding `uri`, preferring a text editor. Custom editors and notebooks
+     * are not opened by the `EditorManager`, so they are only reachable through the shell.
+     */
+    protected async getSaveTarget(uri: URI): Promise<Widget | undefined> {
+        return await this.editorManager.getByUri(uri)
+            ?? this.shell.widgets.find(widget => Saveable.get(widget) && NavigatableWidget.getUri(widget)?.isEqual(uri));
+    }
+
     saveAll(includeUntitled?: boolean): Promise<boolean> {
         return this.modelService.saveAll(includeUntitled);
+    }
+
+    hideEditor(id: string): Promise<void> {
+        for (const editorWidget of this.editorManager.all) {
+            const monacoEditor = MonacoEditor.get(editorWidget);
+            if (monacoEditor) {
+                if (id === new EditorSnapshot(monacoEditor).id) {
+                    editorWidget.close();
+                    break;
+                }
+            }
+        }
+        return Promise.resolve();
+    }
+
+    getDiffInformation(id: string): ILineChange[] {
+        const editor = this.getEditor(id);
+        return editor?.diffInformation || [];
     }
 }
 
@@ -180,20 +246,39 @@ class EditorAndDocumentStateComputer implements Disposable {
     constructor(
         private callback: (delta: EditorAndDocumentStateDelta) => void,
         private readonly editorService: EditorManager,
-        private readonly modelService: EditorModelService
+        private readonly cellEditorService: NotebookCellEditorService,
+        private readonly notebookWidgetService: NotebookEditorWidgetService,
+        private readonly modelService: EditorModelService,
+        private readonly tabsMain: TabsMainImpl
     ) { }
 
     listen(): void {
         if (this.toDispose.disposed) {
             return;
         }
-        this.toDispose.push(this.editorService.onCreated(widget => {
+        this.toDispose.push(this.editorService.onCreated(async widget => {
+            await this.tabsMain.waitForWidget(widget);
             this.onTextEditorAdd(widget);
             this.update();
         }));
-        this.toDispose.push(this.editorService.onCurrentEditorChanged(() => this.update()));
+        this.toDispose.push(this.editorService.onCurrentEditorChanged(async widget => {
+            if (widget) {
+                await this.tabsMain.waitForWidget(widget);
+            }
+            this.update();
+        }));
         this.toDispose.push(this.modelService.onModelAdded(this.onModelAdded, this));
         this.toDispose.push(this.modelService.onModelRemoved(() => this.update()));
+
+        this.toDispose.push(this.cellEditorService.onDidChangeCellEditors(() => this.update()));
+
+        this.toDispose.push(this.notebookWidgetService.onDidChangeCurrentEditor(() => {
+            this.currentState = this.currentState && new EditorAndDocumentState(
+                this.currentState.documents,
+                this.currentState.editors,
+                undefined
+            );
+        }));
 
         for (const widget of this.editorService.all) {
             this.onTextEditorAdd(widget);
@@ -226,6 +311,9 @@ class EditorAndDocumentStateComputer implements Disposable {
     }
 
     private onTextEditorAdd(widget: EditorWidget): void {
+        if (widget.isDisposed) {
+            return;
+        }
         const editor = MonacoEditor.get(widget);
         if (!editor) {
             return;
@@ -254,7 +342,7 @@ class EditorAndDocumentStateComputer implements Disposable {
         }
 
         let activeId: string | null = null;
-        const activeEditor = MonacoEditor.getCurrent(this.editorService);
+        const activeEditor = MonacoEditor.getCurrent(this.editorService) ?? this.cellEditorService.getActiveCell();
 
         const editors = new Map<string, EditorSnapshot>();
         for (const widget of this.editorService.all) {
@@ -272,6 +360,16 @@ class EditorAndDocumentStateComputer implements Disposable {
                 }
             }
         }
+
+        for (const editor of this.cellEditorService.allCellEditors) {
+            if (editor.getControl()?.getModel()) {
+                const editorSnapshot = new EditorSnapshot(editor);
+                editors.set(editorSnapshot.id, editorSnapshot);
+                if (activeEditor === editor) {
+                    activeId = editorSnapshot.id;
+                }
+            }
+        };
 
         const newState = new EditorAndDocumentState(models, editors, activeId);
         const delta = EditorAndDocumentState.compute(this.currentState, newState);
@@ -339,7 +437,7 @@ class EditorAndDocumentState {
 
 class EditorSnapshot {
     readonly id: string;
-    constructor(readonly editor: MonacoEditor) {
+    constructor(readonly editor: MonacoEditor | SimpleMonacoEditor) {
         this.id = `${editor.getControl().getId()},${editor.getControl().getModel()!.id}`;
     }
 }

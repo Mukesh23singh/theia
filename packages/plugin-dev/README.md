@@ -14,10 +14,9 @@
 
 The `@theia/plugin-dev` extension contributes functionality for the `plugin host`.
 
-
 ## Additional Information
 
-- [API documentation for `@theia/plugin-dev`](https://eclipse-theia.github.io/theia/docs/next/modules/plugin_dev.html)
+- [API documentation for `@theia/plugin-dev`](https://eclipse-theia.github.io/theia/docs/next/modules/_theia_plugin-dev.html)
 - [Theia - GitHub](https://github.com/eclipse-theia/theia)
 - [Theia - Website](https://theia-ide.org/)
 
@@ -27,5 +26,6 @@ The `@theia/plugin-dev` extension contributes functionality for the `plugin host
 - [一 (Secondary) GNU General Public License, version 2 with the GNU Classpath Exception](https://projects.eclipse.org/license/secondary-gpl-2.0-cp)
 
 ## Trademark
+
 "Theia" is a trademark of the Eclipse Foundation
-https://www.eclipse.org/theia
+<https://www.eclipse.org/theia>

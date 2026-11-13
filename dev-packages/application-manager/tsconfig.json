@@ -10,7 +10,16 @@
   ],
   "references": [
     {
+      "path": "../../packages/plugin-utils"
+    },
+    {
       "path": "../application-package"
+    },
+    {
+      "path": "../bundle-plugin"
+    },
+    {
+      "path": "../ffmpeg"
     }
   ]
 }

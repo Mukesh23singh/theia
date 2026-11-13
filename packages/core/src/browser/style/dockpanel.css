@@ -11,42 +11,93 @@
  * with the GNU Classpath Exception which is available at
  * https://www.gnu.org/software/classpath/license.html.
  *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
  ********************************************************************************/
 
-.p-DockPanel.p-SplitPanel-child {
+/*
+ * Lumino sets the z-index of its panels to 0, which causes overlay issues
+ * See also https://github.com/eclipse-theia/theia/issues/14290
+ */
+.lm-SplitPanel-child,
+.lm-DockPanel,
+.lm-DockPanel-widget {
+  z-index: initial;
+}
+
+.lm-DockPanel.lm-SplitPanel-child {
   padding: 0px;
 }
 
-.p-DockPanel-widget {
+.lm-DockPanel-widget {
   min-width: 100px;
   min-height: 100px;
 }
 
-.p-DockPanel-handle[data-orientation='vertical'] {
+.lm-DockPanel-handle[data-orientation="vertical"] {
   min-height: var(--theia-border-width);
+  z-index: 3;
 }
 
-.p-DockPanel-handle[data-orientation='horizontal'] {
+.lm-DockPanel-handle[data-orientation="horizontal"] {
   min-width: var(--theia-border-width);
 }
 
-.p-DockPanel-overlay {
+.lm-DockPanel-handle[data-orientation="horizontal"]::after {
+  min-width: var(--theia-sash-width);
+  transform: translateX(0%);
+  left: calc(-1 * var(--theia-sash-width) / 2);
+}
+
+.lm-DockPanel-handle[data-orientation="vertical"]::after {
+  min-height: var(--theia-sash-width);
+  width: 100%;
+  transform: translateY(0%);
+  top: calc(-1 * var(--theia-sash-width) / 2);
+}
+
+.lm-DockPanel-handle:hover::after {
+  background-color: var(--theia-sash-hoverBorder);
+  transition-delay: var(--theia-sash-hoverDelay);
+}
+
+.lm-DockPanel-handle:active::after {
+  background-color: var(--theia-sash-activeBorder);
+  transition-delay: 0s !important;
+}
+
+.lm-DockPanel-overlay {
   background: var(--theia-editorGroup-dropBackground);
   border: var(--theia-border-width) dashed var(--theia-contrastActiveBorder);
   transition-property: top, left, right, bottom;
   transition-duration: 150ms;
   transition-timing-function: ease;
+  z-index: 2000;
 }
 
-.p-DockPanel-overlay.p-mod-root-top,
-.p-DockPanel-overlay.p-mod-root-left,
-.p-DockPanel-overlay.p-mod-root-right,
-.p-DockPanel-overlay.p-mod-root-bottom,
-.p-DockPanel-overlay.p-mod-root-center {
+.lm-DockPanel-overlay.lm-mod-root-top,
+.lm-DockPanel-overlay.lm-mod-root-left,
+.lm-DockPanel-overlay.lm-mod-root-right,
+.lm-DockPanel-overlay.lm-mod-root-bottom,
+.lm-DockPanel-overlay.lm-mod-root-center {
   border-width: 2px;
 }
 
-.p-DockPanel-overlay.p-mod-root-bottom {
-    background: var(--theia-panel-dropBackground);
+.lm-DockPanel-overlay.lm-mod-root-bottom {
+  background: var(--theia-panel-dropBackground);
+}
+
+/* marks where a dragged tab is inserted when it is dropped on a tab bar */
+.lm-TabBar-tab.theia-mod-drop-before {
+  box-shadow: inset 2px 0 0 var(--theia-tab-dragAndDropBorder) !important;
+}
+
+.lm-TabBar-tab.theia-mod-drop-after {
+  box-shadow: inset -2px 0 0 var(--theia-tab-dragAndDropBorder) !important;
+}
+
+.lm-TabBar-tab.theia-drag-not-allowed {
+  cursor: not-allowed !important;
+  background-color: var(--theia-errorBackground) !important;
+  opacity: 0.8;
+  transition: background-color 0.3s ease;
 }

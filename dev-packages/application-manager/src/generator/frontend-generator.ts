@@ -1,33 +1,34 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-/* eslint-disable @typescript-eslint/indent */
+/* eslint-disable @stylistic/indent */
 
+import { EOL } from 'os';
 import { AbstractGenerator, GeneratorOptions } from './abstract-generator';
 import { existsSync, readFileSync } from 'fs';
 
 export class FrontendGenerator extends AbstractGenerator {
 
-    async generate(options: GeneratorOptions = {}): Promise<void> {
-        const frontendModules = this.pck.targetFrontendModules;
-        await this.write(this.pck.frontend('index.html'), this.compileIndexHtml(frontendModules));
-        await this.write(this.pck.frontend('index.js'), this.compileIndexJs(frontendModules));
+    async generate(options?: GeneratorOptions): Promise<void> {
+        await this.write(this.pck.frontend('index.html'), await this.compileIndexHtml(this.pck.targetFrontendModules));
+        await this.write(this.pck.frontend('index.js'), this.compileIndexJs(this.pck.targetFrontendModules, this.pck.targetFrontendPreloadModules));
+        await this.write(this.pck.frontend('secondary-window.html'), this.compileSecondaryWindowHtml());
+        await this.write(this.pck.frontend('secondary-index.js'), this.compileSecondaryIndexJs(this.pck.secondaryWindowModules));
         if (this.pck.isElectron()) {
-            const electronMainModules = this.pck.targetElectronMainModules;
-            await this.write(this.pck.frontend('electron-main.js'), this.compileElectronMain(electronMainModules));
+            await this.write(this.pck.frontend('preload.js'), this.compilePreloadJs());
         }
     }
 
@@ -45,147 +46,214 @@ export class FrontendGenerator extends AbstractGenerator {
         return template;
     }
 
-    protected compileIndexHtml(frontendModules: Map<string, string>): string {
+    protected async compileIndexHtml(frontendModules: Map<string, string>): Promise<string> {
         return `<!DOCTYPE html>
 <html lang="en">
 
-<head>${this.compileIndexHead(frontendModules)}
-  <script type="text/javascript" src="./bundle.js" charset="utf-8"></script>
+<head>${await this.compileIndexHead(frontendModules)}
 </head>
 
 <body>
-  <div class="theia-preload">${this.compileIndexPreload(frontendModules)}</div>
+    <div class="theia-preload">${this.compileIndexPreload(frontendModules)}</div>
+    <script type="text/javascript" src="./bundle.js" charset="utf-8"></script>
 </body>
 
 </html>`;
     }
 
-    protected compileIndexHead(frontendModules: Map<string, string>): string {
+    protected async compileIndexHead(frontendModules: Map<string, string>): Promise<string> {
         return `
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="apple-mobile-web-app-capable" content="yes">`;
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="./bundle.css">
+  <title>${this.pck.props.frontend.config.applicationName}</title>`;
     }
 
-    protected compileIndexJs(frontendModules: Map<string, string>): string {
-        const compiledModuleImports = this.compileFrontendModuleImports(frontendModules)
-            // fix the generated indentation
-            .replace(/^    /g, '        ');
+    /**
+     * Everything the emitted code requires ahead of the `await preload(container)` that ends the
+     * preload phase runs while the localization data is still missing. A module of '@theia/core'
+     * required there has to be listed in 'dev-packages/private-eslint-plugin/util/preload-phase-modules.json',
+     * which is what the '@theia/preload-localization-check' ESLint rule checks such modules against.
+     * The test of that list runs this generator and fails when the two drift apart.
+     */
+    protected compileIndexJs(frontendModules: Map<string, string>, frontendPreloadModules: Map<string, string>): string {
         return `\
 // @ts-check
-${this.ifBrowser("require('es6-promise/auto');")}
-require('reflect-metadata');
-require('setimmediate');
-const { Container } = require('inversify');
-const { FrontendApplicationConfigProvider } = require('@theia/core/lib/browser/frontend-application-config-provider');
+import 'reflect-metadata';
+import { Container } from '@theia/core/shared/inversify';
+import { FrontendApplicationConfigProvider } from '@theia/core/lib/browser/frontend-application-config-provider';
+${this.emitStartupLogger('Frontend', 'frontend page start')}
+${this.emitStartupLog('loading modules...')}
 
 FrontendApplicationConfigProvider.set(${this.prettyStringify(this.pck.props.frontend.config)});
 
-const { ThemeService } = require('@theia/core/lib/browser/theming');
-ThemeService.get().loadUserTheme();
-
-const nls = require('@theia/core/lib/browser/nls');
-
-// nls translations MUST be loaded before requiring any code that uses them
-module.exports = nls.loadTranslations().then(() => {
-    const { FrontendApplication } = require('@theia/core/lib/browser');
-    const { frontendApplicationModule } = require('@theia/core/lib/browser/frontend-application-module');
-    const { messagingFrontendModule } = require('@theia/core/lib/${this.pck.isBrowser()
-                ? 'browser/messaging/messaging-frontend-module'
-                : 'electron-browser/messaging/electron-messaging-frontend-module'}');
-    const { loggerFrontendModule } = require('@theia/core/lib/browser/logger-frontend-module');
-
-    const container = new Container();
-    container.load(frontendApplicationModule);
-    container.load(messagingFrontendModule);
-    container.load(loggerFrontendModule);
-
-    return Promise.resolve()${compiledModuleImports}
-        .then(start).catch(reason => {
-            console.error('Failed to start the frontend application.');
-            if (reason) {
-                console.error(reason);
-            }
-        });
-
-    function load(jsModule) {
-        return Promise.resolve(jsModule.default)
-            .then(containerModule => container.load(containerModule));
+${this.ifMonaco(() => `
+self.MonacoEnvironment = {
+    getWorkerUrl: function (moduleId, label) {
+        return './editor.worker.js';
     }
+}`)}
 
-    function start() {
-        (window['theia'] = window['theia'] || {}).container = container;
-        return container.get(FrontendApplication).start();
-    }
-});
-`;
-    }
-
-    protected compileElectronMain(electronMainModules?: Map<string, string>): string {
-        return `// @ts-check
-
-require('reflect-metadata');
-
-// Useful for Electron/NW.js apps as GUI apps on macOS doesn't inherit the \`$PATH\` define
-// in your dotfiles (.bashrc/.bash_profile/.zshrc/etc).
-// https://github.com/electron/electron/issues/550#issuecomment-162037357
-// https://github.com/eclipse-theia/theia/pull/3534#issuecomment-439689082
-require('fix-path')();
-
-// Workaround for https://github.com/electron/electron/issues/9225. Chrome has an issue where
-// in certain locales (e.g. PL), image metrics are wrongly computed. We explicitly set the
-// LC_NUMERIC to prevent this from happening (selects the numeric formatting category of the
-// C locale, http://en.cppreference.com/w/cpp/locale/LC_categories).
-if (process.env.LC_ALL) {
-    process.env.LC_ALL = 'C';
-}
-process.env.LC_NUMERIC = 'C';
-
-const { default: electronMainApplicationModule } = require('@theia/core/lib/electron-main/electron-main-application-module');
-const { ElectronMainApplication, ElectronMainApplicationGlobals } = require('@theia/core/lib/electron-main/electron-main-application');
-const { Container } = require('inversify');
-const { resolve } = require('path');
-const { app } = require('electron');
-
-// Fix the window reloading issue, see: https://github.com/electron/electron/issues/22119
-app.allowRendererProcessReuse = false;
-
-const config = ${this.prettyStringify(this.pck.props.frontend.config)};
-const isSingleInstance = ${this.pck.props.backend.config.singleInstance === true ? 'true' : 'false'};
-
-if (isSingleInstance && !app.requestSingleInstanceLock()) {
-    // There is another instance running, exit now. The other instance will request focus.
-    app.quit();
-    return;
+function load(container, jsModule) {
+    return Promise.resolve(jsModule)
+        .then(containerModule => container.load(containerModule.default));
 }
 
-const container = new Container();
-container.load(electronMainApplicationModule);
-container.bind(ElectronMainApplicationGlobals).toConstantValue({
-    THEIA_APP_PROJECT_PATH: resolve(__dirname, '..', '..'),
-    THEIA_BACKEND_MAIN_PATH: resolve(__dirname, '..', 'backend', 'main.js'),
-    THEIA_FRONTEND_HTML_PATH: resolve(__dirname, '..', '..', 'lib', 'index.html'),
-});
-
-function load(raw) {
-    return Promise.resolve(raw.default).then(module =>
-        container.load(module)
-    );
-}
-
-async function start() {
-    const application = container.get(ElectronMainApplication);
-    await application.start(config);
-}
-
-module.exports = Promise.resolve()${this.compileElectronMainModuleImports(electronMainModules)}
-    .then(start).catch(reason => {
-        console.error('Failed to start the electron application.');
+async function preload(container) {
+    try {
+${Array.from(frontendPreloadModules.values(), jsModulePath => `\
+        await load(container, import('${jsModulePath}'));`).join(EOL)}
+        const { Preloader } = await import('@theia/core/lib/browser/preload/preloader');
+        const preloader = container.get(Preloader);
+        await preloader.initialize();
+    } catch (reason) {
+        console.error('Failed to run preload scripts.');
         if (reason) {
             console.error(reason);
         }
-    });
+    }
+}
+
+export default (async () => {
+    const { messagingFrontendModule } = await import('@theia/core/lib/${this.pck.isBrowser() || this.pck.isBrowserOnly()
+                ? 'browser/messaging/messaging-frontend-module'
+                : 'electron-browser/messaging/electron-messaging-frontend-module'}');
+    const container = new Container();
+    container.load(messagingFrontendModule);
+    ${this.ifBrowserOnly(`const { messagingFrontendOnlyModule } = await import('@theia/core/lib/browser-only/messaging/messaging-frontend-only-module');
+    container.load(messagingFrontendOnlyModule);`)}
+
+    ${this.emitStartupLog('container created')}
+
+    await preload(container);
+    ${this.emitStartupLog('preloaded')}
+
+    ${this.ifMonaco(() => `
+    const { MonacoInit } = await import('@theia/monaco/lib/browser/monaco-init');
+    `)};
+
+    const { FrontendApplication } = await import('@theia/core/lib/browser');
+    const { frontendApplicationModule } = await import('@theia/core/lib/browser/frontend-application-module');
+    const { loggerFrontendModule } = await import('@theia/core/lib/browser/logger-frontend-module');
+
+    container.load(frontendApplicationModule);
+    ${this.pck.ifBrowserOnly(`const { frontendOnlyApplicationModule } = await import('@theia/core/lib/browser-only/frontend-only-application-module');
+    container.load(frontendOnlyApplicationModule);`)}
+
+    container.load(loggerFrontendModule);
+    ${this.ifBrowserOnly(`const { loggerFrontendOnlyModule } = await import('@theia/core/lib/browser-only/logger-frontend-only-module');
+    container.load(loggerFrontendOnlyModule);`)}
+
+    ${this.emitStartupLog('core modules loaded')}
+
+    try {
+${Array.from(frontendModules.values(), jsModulePath => `\
+        await load(container, import('${jsModulePath}'));`).join(EOL)}
+        ${this.ifMonaco(() => `
+        MonacoInit.init(container);
+        `)};
+        ${this.emitStartupLog('modules loaded')}
+        await start();
+    } catch (reason) {
+        console.error('Failed to start the frontend application.');
+        if (reason) {
+            console.error(reason);
+        }
+    }
+
+    function start() {
+        (window['theia'] = window['theia'] || {}).container = container;
+        ${this.emitStartupLog('resolving application')}
+        const application = container.get(FrontendApplication);
+        ${this.emitStartupLog('application resolved')}
+        return application.start();
+    }
+})();
 `;
     }
 
+    /** HTML for secondary windows that contain an extracted widget. */
+    protected compileSecondaryWindowHtml(): string {
+        return `<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Theia — Secondary Window</title>
+    <style>
+    html, body {
+        overflow: hidden;
+        -ms-overflow-style: none;
+    }
+
+    body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+    }
+
+    html,
+    head,
+    body {
+        width: 100% !important;
+        height: 100% !important;
+    }
+
+    #theia-top-panel {
+        flex: 0 0 auto;
+    }
+
+    #theia-top-panel:empty {
+        display: none;
+    }
+
+    #widget-host {
+        width: 100% !important;
+        flex: 1 1 auto;
+        overflow: hidden;
+    }
+
+    .secondary-widget-root {
+        width: 100% !important;
+        height: 100% !important;
+    }
+    </style>
+    <link rel="stylesheet" href="./bundle.css">
+    <link rel="stylesheet" href="./secondary-window.css">
+</head>
+
+<body>
+    <div id="theia-top-panel"></div>
+    <div id="widget-host"></div>
+</body>
+
+</html>`;
+    }
+
+    protected compileSecondaryIndexJs(secondaryWindowModules: Map<string, string>): string {
+        return `\
+// @ts-check
+import 'reflect-metadata';
+import { Container } from '@theia/core/shared/inversify';
+
+export default (async () => {
+    const { frontendApplicationModule } = await import('@theia/core/lib/browser/frontend-application-module');
+    const container = new Container();
+    container.load(frontendApplicationModule);
+${Array.from(secondaryWindowModules.values(), jsModulePath => `\
+    container.load((await import('${jsModulePath}')).default);`).join(EOL)}
+})();
+`;
+    }
+
+    compilePreloadJs(): string {
+        const preloadModules = Array.from(this.pck.preloadModules.values());
+        return `\
+// @ts-check
+${preloadModules.map((path, index) => `import { preload as preload${index} } from '${path}';`).join(EOL)}
+
+${preloadModules.map((_, index) => `preload${index}();`).join(EOL)}
+`;
+    }
 }

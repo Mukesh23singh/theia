@@ -1,20 +1,20 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { inject, injectable, optional, postConstruct } from '@theia/core/shared/inversify';
+import { inject, injectable, named, optional, postConstruct } from '@theia/core/shared/inversify';
 import {
     CommandContribution,
     Command,
@@ -25,121 +25,175 @@ import {
     isOSX,
     SelectionService,
     Emitter,
-    Event
+    Event,
+
+    OS,
+    MAIN_MENU_BAR,
+    PreferenceService,
+    PreferenceScope
 } from '@theia/core/lib/common';
 import {
-    ApplicationShell, KeybindingContribution, KeyCode, Key,
-    KeybindingRegistry, Widget, LabelProvider, WidgetOpenerOptions, StorageService, QuickInputService, codicon
+    ApplicationShell, KeybindingContribution, KeyCode, Key, WidgetManager,
+    KeybindingRegistry, LabelProvider, WidgetOpenerOptions, StorageService, QuickInputService,
+    codicon, CommonCommands, FrontendApplicationContribution, OnWillStopAction, Dialog, ConfirmDialog, FrontendApplication, Widget, SHELL_TABBAR_CONTEXT_MENU
 } from '@theia/core/lib/browser';
+import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 import { TabBarToolbarContribution, TabBarToolbarRegistry } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
-import { WidgetManager } from '@theia/core/lib/browser';
-import { TERMINAL_WIDGET_FACTORY_ID, TerminalWidgetFactoryOptions } from './terminal-widget-impl';
-import { TerminalKeybindingContexts } from './terminal-keybinding-contexts';
-import { TerminalService } from './base/terminal-service';
-import { TerminalWidgetOptions, TerminalWidget } from './base/terminal-widget';
+import { TERMINAL_WIDGET_FACTORY_ID, TerminalWidgetFactoryOptions, TerminalWidgetImpl, nextTerminalCreationToken } from './terminal-widget-impl.js';
+import { TerminalService } from './base/terminal-service.js';
+import { TerminalWidgetOptions, TerminalWidget } from './base/terminal-widget.js';
+import {
+    ContributedTerminalProfileStore, NULL_PROFILE, TerminalProfile, TerminalProfileService, TerminalProfileStore, UserTerminalProfileStore
+} from './terminal-profile-service.js';
 import { UriAwareCommandHandler } from '@theia/core/lib/common/uri-command-handler';
-import { ShellTerminalServerProxy } from '../common/shell-terminal-protocol';
+import { ShellTerminalServerProxy } from '../common/shell-terminal-protocol.js';
 import URI from '@theia/core/lib/common/uri';
-import { MAIN_MENU_BAR } from '@theia/core';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { ContextKeyService } from '@theia/core/lib/browser/context-key-service';
 import { ColorContribution } from '@theia/core/lib/browser/color-application-contribution';
 import { ColorRegistry } from '@theia/core/lib/browser/color-registry';
-import { terminalAnsiColorMap } from './terminal-theme-service';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { FileStat } from '@theia/filesystem/lib/common/files';
-import { TerminalWatcher } from '../common/terminal-watcher';
-import {
-    ENVIRONMENT_VARIABLE_COLLECTIONS_KEY,
-    SerializableExtensionEnvironmentVariableCollection
-} from '../common/base-terminal-protocol';
+import { TerminalCopyOnSelectionHandler } from './terminal-copy-on-selection-handler.js';
+import { TerminalWatcher } from '../common/terminal-watcher.js';
+import { nls } from '@theia/core/lib/common/nls';
+import { Profiles, terminalAnsiColorMap, TerminalPreferences } from '../common/terminal-preferences.js';
+import { ShellTerminalProfile } from './shell-terminal-profile.js';
+import { VariableResolverService } from '@theia/variable-resolver/lib/browser';
+import { Color } from '@theia/core/lib/common/color';
+import { ContributionProvider, ILogger } from '@theia/core';
+import { TerminalCreationHandler } from './terminal-creation-handler.js';
 
 export namespace TerminalMenus {
     export const TERMINAL = [...MAIN_MENU_BAR, '7_terminal'];
     export const TERMINAL_NEW = [...TERMINAL, '1_terminal'];
+
     export const TERMINAL_TASKS = [...TERMINAL, '2_terminal'];
     export const TERMINAL_TASKS_INFO = [...TERMINAL_TASKS, '3_terminal'];
     export const TERMINAL_TASKS_CONFIG = [...TERMINAL_TASKS, '4_terminal'];
     export const TERMINAL_NAVIGATOR_CONTEXT_MENU = ['navigator-context-menu', 'navigation'];
     export const TERMINAL_OPEN_EDITORS_CONTEXT_MENU = ['open-editors-context-menu', 'navigation'];
+
+    export const TERMINAL_CONTEXT_MENU = ['terminal-context-menu'];
+    export const TERMINAL_CONTRIBUTIONS = [...TERMINAL_CONTEXT_MENU, '5_terminal_contributions'];
+
+    export const TERMINAL_TITLE_CONTRIBUTIONS = [...SHELL_TABBAR_CONTEXT_MENU, 'terminal_title_contributions'];
 }
 
 export namespace TerminalCommands {
-    const TERMINAL_CATEGORY = 'Terminal';
-    export const NEW: Command = {
+    export const TERMINAL_CATEGORY = 'Terminal';
+    export const TERMINAL_CATEGORY_KEY = nls.getDefaultKey(TERMINAL_CATEGORY);
+    export const NEW = Command.toDefaultLocalizedCommand({
         id: 'terminal:new',
         category: TERMINAL_CATEGORY,
-        label: 'Open New Terminal'
-    };
-    export const NEW_ACTIVE_WORKSPACE: Command = {
+        label: 'Create New Terminal'
+    });
+    export const PROFILE_NEW = Command.toLocalizedCommand({
+        id: 'terminal:new:profile',
+        category: TERMINAL_CATEGORY,
+        label: 'Create New Integrated Terminal from a Profile'
+    }, undefined, TERMINAL_CATEGORY_KEY);
+    export const PROFILE_DEFAULT = Command.toLocalizedCommand({
+        id: 'terminal:profile:default',
+        category: TERMINAL_CATEGORY,
+        label: 'Choose the default Terminal Profile'
+    }, undefined, TERMINAL_CATEGORY_KEY);
+    export const NEW_ACTIVE_WORKSPACE = Command.toDefaultLocalizedCommand({
         id: 'terminal:new:active:workspace',
         category: TERMINAL_CATEGORY,
-        label: 'Open New Terminal (In Active Workspace)'
-    };
-    export const TERMINAL_CLEAR: Command = {
+        label: 'Create New Terminal (In Active Workspace)'
+    });
+    export const TERMINAL_CLEAR = Command.toDefaultLocalizedCommand({
         id: 'terminal:clear',
         category: TERMINAL_CATEGORY,
-        label: 'Clear Terminal'
-    };
-    export const TERMINAL_CONTEXT: Command = {
+        label: 'Clear'
+    });
+    export const TERMINAL_CONTEXT = Command.toDefaultLocalizedCommand({
         id: 'terminal:context',
         category: TERMINAL_CATEGORY,
-        label: 'Open in Terminal'
-    };
-    export const SPLIT: Command = {
+        label: 'Open in Integrated Terminal'
+    });
+    export const SPLIT = Command.toDefaultLocalizedCommand({
         id: 'terminal:split',
         category: TERMINAL_CATEGORY,
         label: 'Split Terminal'
-    };
-    export const TERMINAL_FIND_TEXT: Command = {
+    });
+    export const TERMINAL_FIND_TEXT = Command.toDefaultLocalizedCommand({
         id: 'terminal:find',
         category: TERMINAL_CATEGORY,
         label: 'Find'
-    };
-    export const TERMINAL_FIND_TEXT_CANCEL: Command = {
+    });
+    export const TERMINAL_FIND_TEXT_CANCEL = Command.toDefaultLocalizedCommand({
         id: 'terminal:find:cancel',
         category: TERMINAL_CATEGORY,
-        label: 'Hide find widget'
-    };
+        label: 'Hide Find'
+    });
 
-    export const SCROLL_LINE_UP: Command = {
+    export const SCROLL_LINE_UP = Command.toDefaultLocalizedCommand({
         id: 'terminal:scroll:line:up',
         category: TERMINAL_CATEGORY,
-        label: 'Scroll line up'
-    };
-    export const SCROLL_LINE_DOWN: Command = {
+        label: 'Scroll Up (Line)'
+    });
+    export const SCROLL_LINE_DOWN = Command.toDefaultLocalizedCommand({
         id: 'terminal:scroll:line:down',
         category: TERMINAL_CATEGORY,
-        label: 'Scroll line down'
-    };
-    export const SCROLL_TO_TOP: Command = {
+        label: 'Scroll Down (Line)'
+    });
+    export const SCROLL_TO_TOP = Command.toDefaultLocalizedCommand({
         id: 'terminal:scroll:top',
         category: TERMINAL_CATEGORY,
-        label: 'Scroll to top'
-    };
-    export const SCROLL_PAGE_UP: Command = {
+        label: 'Scroll to Top'
+    });
+    export const SCROLL_PAGE_UP = Command.toDefaultLocalizedCommand({
         id: 'terminal:scroll:page:up',
         category: TERMINAL_CATEGORY,
-        label: 'Scroll page up'
-    };
-    export const SCROLL_PAGE_DOWN: Command = {
+        label: 'Scroll Up (Page)'
+    });
+    export const SCROLL_PAGE_DOWN = Command.toDefaultLocalizedCommand({
         id: 'terminal:scroll:page:down',
         category: TERMINAL_CATEGORY,
-        label: 'Scroll page down'
-    };
+        label: 'Scroll Down (Page)'
+    });
+    export const TOGGLE_TERMINAL = Command.toDefaultLocalizedCommand({
+        id: 'workbench.action.terminal.toggleTerminal',
+        category: TERMINAL_CATEGORY,
+        label: 'Toggle Terminal'
+    });
+    export const KILL_TERMINAL = Command.toDefaultLocalizedCommand({
+        id: 'terminal:kill',
+        category: TERMINAL_CATEGORY,
+        label: 'Kill Terminal'
+    });
+    export const SELECT_ALL: Command = Command.toDefaultLocalizedCommand({
+        id: 'terminal:select:all',
+        label: 'Select All',
+        category: TERMINAL_CATEGORY,
+    });
+    export const PASTE_TERMINAL = Command.toDefaultLocalizedCommand({
+        id: 'workbench.action.terminal.paste',
+        category: TERMINAL_CATEGORY,
+        label: 'Paste into Active Terminal'
+    });
+    export const COPY_TERMINAL_SELECTION = Command.toDefaultLocalizedCommand({
+        id: 'workbench.action.terminal.copySelection',
+        category: TERMINAL_CATEGORY,
+        label: 'Copy Selection'
+    });
 
     /**
      * Command that displays all terminals that are currently opened
      */
-    export const SHOW_ALL_OPENED_TERMINALS: Command = {
+    export const SHOW_ALL_OPENED_TERMINALS = Command.toDefaultLocalizedCommand({
         id: 'workbench.action.showAllTerminals',
-        category: 'View',
+        category: CommonCommands.VIEW_CATEGORY,
         label: 'Show All Opened Terminals'
-    };
+    });
 }
 
+const ENVIRONMENT_VARIABLE_COLLECTIONS_KEY = 'terminal.integrated.environmentVariableCollections';
 @injectable()
-export class TerminalFrontendContribution implements TerminalService, CommandContribution, MenuContribution, KeybindingContribution, TabBarToolbarContribution, ColorContribution {
+export class TerminalFrontendContribution implements FrontendApplicationContribution, TerminalService, CommandContribution, MenuContribution,
+    KeybindingContribution, TabBarToolbarContribution, ColorContribution {
 
     @inject(ApplicationShell) protected readonly shell: ApplicationShell;
     @inject(ShellTerminalServerProxy) protected readonly shellTerminalServer: ShellTerminalServerProxy;
@@ -156,10 +210,31 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
     @inject(WorkspaceService)
     protected readonly workspaceService: WorkspaceService;
 
+    @inject(TerminalProfileService)
+    protected readonly profileService: TerminalProfileService;
+
+    @inject(UserTerminalProfileStore)
+    protected readonly userProfileStore: TerminalProfileStore;
+
+    @inject(ContributedTerminalProfileStore)
+    protected readonly contributedProfileStore: TerminalProfileStore;
+
     @inject(TerminalWatcher)
     protected readonly terminalWatcher: TerminalWatcher;
+
+    @inject(VariableResolverService)
+    protected readonly variableResolver: VariableResolverService;
+
     @inject(StorageService)
     protected readonly storageService: StorageService;
+
+    @inject(PreferenceService)
+    protected readonly preferenceService: PreferenceService;
+
+    @inject(TerminalPreferences)
+    protected terminalPreferences: TerminalPreferences;
+
+    protected mergePreferencesPromise: Promise<void> = Promise.resolve();
 
     protected readonly onDidCreateTerminalEmitter = new Emitter<TerminalWidget>();
     readonly onDidCreateTerminal: Event<TerminalWidget> = this.onDidCreateTerminalEmitter.event;
@@ -167,12 +242,24 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
     protected readonly onDidChangeCurrentTerminalEmitter = new Emitter<TerminalWidget | undefined>();
     readonly onDidChangeCurrentTerminal: Event<TerminalWidget | undefined> = this.onDidChangeCurrentTerminalEmitter.event;
 
+    @inject(TerminalCopyOnSelectionHandler)
+    protected readonly copyHandler: TerminalCopyOnSelectionHandler;
+
+    @inject(ClipboardService)
+    protected readonly clipboardService: ClipboardService;
+
     @inject(ContextKeyService)
     protected readonly contextKeyService: ContextKeyService;
 
+    @inject(ContributionProvider) @named(TerminalCreationHandler)
+    protected readonly terminalCreationHandlers: ContributionProvider<TerminalCreationHandler>;
+
+    @inject(ILogger) @named('terminal:TerminalFrontendContribution')
+    protected readonly logger: ILogger;
+
     @postConstruct()
     protected init(): void {
-        this.shell.currentChanged.connect(() => this.updateCurrentTerminal());
+        this.shell.onDidChangeCurrentWidget(() => this.updateCurrentTerminal());
         this.widgetManager.onDidCreateWidget(({ widget }) => {
             if (widget instanceof TerminalWidget) {
                 this.updateCurrentTerminal();
@@ -182,9 +269,13 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
         });
 
         const terminalFocusKey = this.contextKeyService.createKey<boolean>('terminalFocus', false);
-        const updateFocusKey = () => terminalFocusKey.set(this.shell.activeWidget instanceof TerminalWidget);
+        const terminalSearchToggle = this.contextKeyService.createKey<boolean>('terminalHideSearch', false);
+        const updateFocusKey = () => {
+            terminalFocusKey.set(this.shell.activeWidget instanceof TerminalWidget);
+            terminalSearchToggle.set(this.terminalHideSearch);
+        };
         updateFocusKey();
-        this.shell.activeChanged.connect(updateFocusKey);
+        this.shell.onDidChangeActiveWidget(updateFocusKey);
 
         this.terminalWatcher.onStoreTerminalEnvVariablesRequested(data => {
             this.storageService.setData(ENVIRONMENT_VARIABLE_COLLECTIONS_KEY, data);
@@ -192,11 +283,217 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
         this.terminalWatcher.onUpdateTerminalEnvVariablesRequested(() => {
             this.storageService.getData<string>(ENVIRONMENT_VARIABLE_COLLECTIONS_KEY).then(data => {
                 if (data) {
-                    const collectionsJson: SerializableExtensionEnvironmentVariableCollection[] = JSON.parse(data);
-                    collectionsJson.forEach(c => this.shellTerminalServer.setCollection(c.extensionIdentifier, true, c.collection));
+                    this.shellTerminalServer.restorePersisted(data);
                 }
             });
         });
+    }
+
+    get terminalHideSearch(): boolean {
+        if (!(this.shell.activeWidget instanceof TerminalWidget)) {
+            return false;
+        }
+        const searchWidget = this.shell.activeWidget.getSearchBox();
+        return searchWidget.isVisible;
+    }
+
+    async onStart(app: FrontendApplication): Promise<void> {
+        this.contributeDefaultProfiles();
+
+        this.terminalPreferences.onPreferenceChanged(e => {
+            if (e.preferenceName.startsWith('terminal.integrated.')) {
+                this.mergePreferencesPromise = this.mergePreferencesPromise.finally(() => this.mergePreferences());
+            }
+        });
+        this.mergePreferencesPromise = this.mergePreferencesPromise.finally(() => this.mergePreferences());
+
+        // extension contributions get read after this point: need to set the default profile if necessary
+        this.profileService.onAdded(id => {
+            let defaultProfileId: string | undefined;
+            switch (OS.backend.type()) {
+                case OS.Type.Windows: {
+                    defaultProfileId = this.terminalPreferences['terminal.integrated.defaultProfile.windows'];
+                    break;
+                }
+                case OS.Type.Linux: {
+                    defaultProfileId = this.terminalPreferences['terminal.integrated.defaultProfile.linux'];
+                    break;
+                }
+                case OS.Type.OSX: {
+                    defaultProfileId = this.terminalPreferences['terminal.integrated.defaultProfile.osx'];
+                    break;
+                }
+            }
+            if (defaultProfileId) {
+                this.profileService.setDefaultProfile(defaultProfileId);
+            }
+        });
+    }
+
+    async initializeLayout(): Promise<void> {
+        await this.preferenceService.ready;
+        // `terminal.grouping.mode` is defined in @theia/terminal-manager, which this package
+        // cannot depend on. Reading via generic PreferenceService; undefined safely
+        // falls through to standard terminal behavior.
+        const groupingMode = this.preferenceService.get('terminal.grouping.mode');
+        if (groupingMode === 'tree') {
+            return;
+        }
+        try {
+            const termWidget = await this.newTerminal({});
+            // Use shell.addWidget directly (not this.open()) to add the terminal
+            // to the bottom panel without expanding it on startup.
+            this.shell.addWidget(termWidget, { area: 'bottom' });
+            // The backend starts the terminal's process once the login shell environment is known;
+            // the layout does not wait for that.
+            termWidget.start().catch(error => this.logger.error('Failed to start the terminal of the default layout', error));
+        } catch (error) {
+            this.logger.error('Failed to initialize terminal in default layout', error);
+        }
+    }
+
+    async contributeDefaultProfiles(): Promise<void> {
+        if (OS.backend.isWindows) {
+            this.contributedProfileStore.registerTerminalProfile('cmd', new ShellTerminalProfile(this, {
+                shellPath: await this.resolveShellPath([
+                    '${env:windir}\\Sysnative\\cmd.exe',
+                    '${env:windir}\\System32\\cmd.exe'
+                ])!
+            }));
+        } else {
+            this.contributedProfileStore.registerTerminalProfile('SHELL', new ShellTerminalProfile(this, {
+                shellPath: await this.resolveShellPath('${SHELL}')!,
+                shellArgs: ['-l'],
+                iconClass: 'codicon codicon-terminal'
+            }));
+        }
+
+        // contribute default profiles based on legacy preferences
+    }
+
+    protected async mergePreferences(): Promise<void> {
+        let profiles: Profiles;
+        let defaultProfile: string;
+        let legacyShellPath: string | undefined;
+        let legacyShellArgs: string[] | undefined;
+        const removed = new Set(this.userProfileStore.all.map(([id, profile]) => id));
+        switch (OS.backend.type()) {
+            case OS.Type.Windows: {
+                profiles = this.terminalPreferences['terminal.integrated.profiles.windows'];
+                defaultProfile = this.terminalPreferences['terminal.integrated.defaultProfile.windows'];
+                legacyShellPath = this.terminalPreferences['terminal.integrated.shell.windows'] ?? undefined;
+                legacyShellArgs = this.terminalPreferences['terminal.integrated.shellArgs.windows'];
+                break;
+            }
+            case OS.Type.Linux: {
+                profiles = this.terminalPreferences['terminal.integrated.profiles.linux'];
+                defaultProfile = this.terminalPreferences['terminal.integrated.defaultProfile.linux'];
+                legacyShellPath = this.terminalPreferences['terminal.integrated.shell.linux'] ?? undefined;
+                legacyShellArgs = this.terminalPreferences['terminal.integrated.shellArgs.linux'];
+                break;
+            }
+            case OS.Type.OSX: {
+                profiles = this.terminalPreferences['terminal.integrated.profiles.osx'];
+                defaultProfile = this.terminalPreferences['terminal.integrated.defaultProfile.osx'];
+                legacyShellPath = this.terminalPreferences['terminal.integrated.shell.osx'] ?? undefined;
+                legacyShellArgs = this.terminalPreferences['terminal.integrated.shellArgs.osx'];
+                break;
+            }
+        }
+        if (profiles) {
+            for (const id of Object.getOwnPropertyNames(profiles)) {
+                const profile = profiles[id];
+                removed.delete(id);
+                if (profile) {
+                    const shellPath = await this.resolveShellPath(profile.path);
+
+                    if (shellPath) {
+                        const options: TerminalWidgetOptions = {
+                            shellPath: shellPath,
+                            shellArgs: profile.args ? await this.variableResolver.resolve(profile.args) : undefined,
+                            useServerTitle: profile.overrideName ? false : undefined,
+                            env: profile.env ? await this.variableResolver.resolve(profile.env) : undefined,
+                            title: profile.overrideName ? id : undefined
+                        };
+
+                        this.userProfileStore.registerTerminalProfile(id, new ShellTerminalProfile(this, options));
+                    }
+                } else {
+                    this.userProfileStore.registerTerminalProfile(id, NULL_PROFILE);
+                }
+            }
+        }
+
+        if (legacyShellPath) {
+            this.userProfileStore.registerTerminalProfile('Legacy Shell Preferences', new ShellTerminalProfile(this, {
+                shellPath: legacyShellPath!,
+                shellArgs: legacyShellArgs
+            }));
+            // if no other default is set, use the legacy preferences as default if they exist
+            this.profileService.setDefaultProfile('Legacy Shell Preferences');
+        }
+
+        if (defaultProfile && this.profileService.getProfile(defaultProfile)) {
+            this.profileService.setDefaultProfile(defaultProfile);
+        }
+
+        for (const id of removed) {
+            this.userProfileStore.unregisterTerminalProfile(id);
+        }
+    }
+
+    protected async resolveShellPath(path: string | string[] | undefined): Promise<string | undefined> {
+        if (!path) {
+            return undefined;
+        }
+        if (typeof path === 'string') {
+            path = [path];
+        }
+        for (const p of path) {
+            const resolved = await this.variableResolver.resolve(p);
+            if (resolved) {
+                const resolvedURI = URI.fromFilePath(resolved);
+                if (await this.fileService.exists(resolvedURI)) {
+                    return resolved;
+                }
+            }
+        }
+        return undefined;
+    }
+
+    onWillStop(): OnWillStopAction<number> | undefined {
+        const preferenceValue = this.terminalPreferences['terminal.integrated.confirmOnExit'];
+        if (preferenceValue !== 'never') {
+            const allTerminals = this.widgetManager.getWidgets(TERMINAL_WIDGET_FACTORY_ID) as TerminalWidget[];
+            if (allTerminals.length) {
+                return {
+                    prepare: async () => {
+                        if (preferenceValue === 'always') {
+                            return allTerminals.length;
+                        } else {
+                            const activeTerminals = await Promise.all(allTerminals.map(widget => widget.hasChildProcesses()))
+                                .then(hasChildProcesses => hasChildProcesses.filter(hasChild => hasChild));
+                            return activeTerminals.length;
+                        }
+                    },
+                    action: async activeTerminalCount => activeTerminalCount === 0 || this.confirmExitWithActiveTerminals(activeTerminalCount),
+                    reason: 'Active integrated terminal',
+                };
+            }
+        }
+    }
+
+    protected async confirmExitWithActiveTerminals(activeTerminalCount: number): Promise<boolean> {
+        const msg = activeTerminalCount === 1
+            ? nls.localizeByDefault('Do you want to terminate the active terminal session?')
+            : nls.localizeByDefault('Do you want to terminate the {0} active terminal sessions?', activeTerminalCount);
+        const safeToExit = await new ConfirmDialog({
+            title: '',
+            msg,
+            ok: nls.localizeByDefault('Terminate'),
+            cancel: Dialog.CANCEL,
+        }).open();
+        return safeToExit === true;
     }
 
     protected _currentTerminal: TerminalWidget | undefined;
@@ -288,20 +585,39 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
 
     registerCommands(commands: CommandRegistry): void {
         commands.registerCommand(TerminalCommands.NEW, {
-            execute: () => this.openTerminal()
+            execute: (widget?: Widget) => {
+                const fromWidget = this.withWidget(widget, terminal => terminal);
+                const ref = fromWidget === false ? this.lastUsedTerminal : fromWidget;
+                const widgetOptions = ref ? { ref, mode: 'tab-after' as const } : undefined;
+                return this.openTerminal(widgetOptions);
+            }
         });
+
+        commands.registerCommand(TerminalCommands.PROFILE_NEW, {
+            execute: async () => {
+                const profile = await this.selectTerminalProfile(nls.localize('theia/terminal/selectProfile', 'Select a profile for the new terminal'));
+                if (!profile) {
+                    return;
+                }
+                this.openTerminal(undefined, profile[1]);
+            }
+        });
+
+        commands.registerCommand(TerminalCommands.PROFILE_DEFAULT, {
+            execute: () => this.chooseDefaultProfile()
+        });
+
         commands.registerCommand(TerminalCommands.NEW_ACTIVE_WORKSPACE, {
             execute: () => this.openActiveWorkspaceTerminal()
         });
         commands.registerCommand(TerminalCommands.SPLIT, {
-            execute: widget => this.splitTerminal(widget),
-            isEnabled: widget => !!this.getTerminalRef(widget),
-            isVisible: widget => !!this.getTerminalRef(widget)
+            execute: (widget?: Widget) => this.withWidget(widget, terminal => this.splitTerminal(terminal)),
+            isEnabled: w => this.withWidget(w, () => true),
+            isVisible: w => this.withWidget(w, () => true),
         });
         commands.registerCommand(TerminalCommands.TERMINAL_CLEAR);
         commands.registerHandler(TerminalCommands.TERMINAL_CLEAR.id, {
-            isEnabled: () => this.shell.activeWidget instanceof TerminalWidget,
-            execute: () => (this.shell.activeWidget as TerminalWidget).clearOutput()
+            execute: () => this.currentTerminal?.clearOutput()
         });
         commands.registerCommand(TerminalCommands.TERMINAL_CONTEXT, UriAwareCommandHandler.MonoSelect(this.selectionService, {
             execute: uri => this.openInTerminal(uri)
@@ -369,6 +685,80 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
                 (this.shell.activeWidget as TerminalWidget).scrollPageDown();
             }
         });
+        commands.registerCommand(TerminalCommands.TOGGLE_TERMINAL, {
+            execute: () => this.toggleTerminal()
+        });
+        commands.registerCommand(TerminalCommands.KILL_TERMINAL, {
+            isEnabled: () => !!this.currentTerminal,
+            execute: () => this.currentTerminal?.close()
+        });
+        commands.registerCommand(TerminalCommands.SELECT_ALL, {
+            isEnabled: () => !!this.currentTerminal,
+            execute: () => this.currentTerminal?.selectAll()
+        });
+        commands.registerCommand(TerminalCommands.PASTE_TERMINAL, {
+            isEnabled: () => !!this.getPasteTargetTerminal(),
+            execute: async () => {
+                const terminal = this.getPasteTargetTerminal();
+                if (!terminal) {
+                    return;
+                }
+                const text = await this.clipboardService.readText();
+                if (text) {
+                    terminal.paste(text);
+                }
+            }
+        });
+        commands.registerCommand(TerminalCommands.COPY_TERMINAL_SELECTION, {
+            isEnabled: () => !!this.getCopySourceTerminal(),
+            execute: () => {
+                const terminal = this.getCopySourceTerminal();
+                if (!terminal) {
+                    return;
+                }
+                this.copyHandler.syncCopy(terminal.getSelection());
+            }
+        });
+    }
+
+    protected getPasteTargetTerminal(): TerminalWidget | undefined {
+        const terminal = this.shell.activeWidget;
+        if (terminal instanceof TerminalWidget && this.terminalPreferences['terminal.enablePaste']) {
+            return terminal;
+        }
+        return undefined;
+    }
+
+    protected getCopySourceTerminal(): TerminalWidget | undefined {
+        const terminal = this.shell.activeWidget;
+        if (terminal instanceof TerminalWidget && terminal.hasSelection() && this.terminalPreferences['terminal.enableCopy']) {
+            return terminal;
+        }
+        return undefined;
+    }
+
+    protected toggleTerminal(): void {
+        const terminals = this.shell.getWidgets('bottom').filter(w => w instanceof TerminalWidget);
+
+        if (terminals.length === 0) {
+            this.openTerminal();
+            return;
+        }
+
+        if (!this.shell.isExpanded('bottom')) {
+            this.shell.expandPanel('bottom');
+            terminals[0].activate();
+        } else {
+            const visibleTerminal = terminals.find(t => t.isVisible);
+            if (!visibleTerminal) {
+                this.shell.bottomPanel.activateWidget(terminals[0]);
+            } else if (this.shell.activeWidget !== visibleTerminal) {
+                this.shell.bottomPanel.activateWidget(visibleTerminal);
+            } else {
+                this.shell.collapsePanel('bottom');
+            }
+        }
+
     }
 
     async openInTerminal(uri: URI): Promise<void> {
@@ -386,19 +776,30 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
         // Open terminal
         const termWidget = await this.newTerminal({ cwd });
         termWidget.start();
-        this.activateTerminal(termWidget);
+        this.open(termWidget);
     }
 
     registerMenus(menus: MenuModelRegistry): void {
-        menus.registerSubmenu(TerminalMenus.TERMINAL, 'Terminal');
+        menus.registerSubmenu(TerminalMenus.TERMINAL, TerminalWidgetImpl.LABEL);
         menus.registerMenuAction(TerminalMenus.TERMINAL_NEW, {
             commandId: TerminalCommands.NEW.id,
-            label: 'New Terminal',
+            label: nls.localizeByDefault('New Terminal'),
             order: '0'
         });
         menus.registerMenuAction(TerminalMenus.TERMINAL_NEW, {
-            commandId: TerminalCommands.SPLIT.id,
+            commandId: TerminalCommands.PROFILE_NEW.id,
+            label: nls.localize('theia/terminal/profileNew', 'New Terminal (With Profile)...'),
             order: '1'
+        });
+
+        menus.registerMenuAction(TerminalMenus.TERMINAL_NEW, {
+            commandId: TerminalCommands.PROFILE_DEFAULT.id,
+            label: nls.localize('theia/terminal/profileDefault', 'Choose Default Profile...'),
+            order: '3'
+        });
+        menus.registerMenuAction(TerminalMenus.TERMINAL_NEW, {
+            commandId: TerminalCommands.SPLIT.id,
+            order: '3'
         });
         menus.registerMenuAction(TerminalMenus.TERMINAL_NAVIGATOR_CONTEXT_MENU, {
             commandId: TerminalCommands.TERMINAL_CONTEXT.id,
@@ -408,9 +809,45 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
             commandId: TerminalCommands.TERMINAL_CONTEXT.id,
             order: 'z'
         });
+
+        menus.registerMenuAction([...TerminalMenus.TERMINAL_CONTEXT_MENU, '_1'], {
+            commandId: TerminalCommands.NEW_ACTIVE_WORKSPACE.id,
+            label: nls.localizeByDefault('New Terminal')
+        });
+        menus.registerMenuAction([...TerminalMenus.TERMINAL_CONTEXT_MENU, '_1'], {
+            commandId: TerminalCommands.SPLIT.id
+        });
+        menus.registerMenuAction([...TerminalMenus.TERMINAL_CONTEXT_MENU, '_2'], {
+            commandId: TerminalCommands.COPY_TERMINAL_SELECTION.id,
+            label: nls.localizeByDefault('Copy')
+        });
+        menus.registerMenuAction([...TerminalMenus.TERMINAL_CONTEXT_MENU, '_2'], {
+            commandId: TerminalCommands.PASTE_TERMINAL.id,
+            label: nls.localizeByDefault('Paste')
+        });
+        menus.registerMenuAction([...TerminalMenus.TERMINAL_CONTEXT_MENU, '_2'], {
+            commandId: TerminalCommands.SELECT_ALL.id
+        });
+        menus.registerMenuAction([...TerminalMenus.TERMINAL_CONTEXT_MENU, '_3'], {
+            commandId: TerminalCommands.TERMINAL_CLEAR.id
+        });
+        menus.registerMenuAction([...TerminalMenus.TERMINAL_CONTEXT_MENU, '_4'], {
+            commandId: TerminalCommands.KILL_TERMINAL.id
+        });
+
+        menus.registerSubmenu(TerminalMenus.TERMINAL_CONTRIBUTIONS, '');
+
+        menus.registerSubmenu(TerminalMenus.TERMINAL_TITLE_CONTRIBUTIONS, '', { when: 'isTerminalTab' });
     }
 
     registerToolbarItems(toolbar: TabBarToolbarRegistry): void {
+        toolbar.registerItem({
+            id: TerminalCommands.NEW.id,
+            command: TerminalCommands.NEW.id,
+            icon: codicon('add'),
+            tooltip: TerminalCommands.NEW.label,
+            isVisible: w => this.withWidget(w, () => true),
+        });
         toolbar.registerItem({
             id: TerminalCommands.SPLIT.id,
             command: TerminalCommands.SPLIT.id,
@@ -430,7 +867,7 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
             keybindings.registerKeybinding({
                 command: KeybindingRegistry.PASSTHROUGH_PSEUDO_COMMAND,
                 keybinding: KeyCode.createKeyCode({ key: k, ctrl: true }).toString(),
-                context: TerminalKeybindingContexts.terminalActive,
+                when: 'terminalFocus',
             });
         };
 
@@ -440,7 +877,7 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
             keybindings.registerKeybinding({
                 command: KeybindingRegistry.PASSTHROUGH_PSEUDO_COMMAND,
                 keybinding: KeyCode.createKeyCode({ key: k, alt: true }).toString(),
-                context: TerminalKeybindingContexts.terminalActive
+                when: 'terminalFocus'
             });
         };
 
@@ -499,7 +936,7 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
             keybindings.registerKeybinding({
                 command: KeybindingRegistry.PASSTHROUGH_PSEUDO_COMMAND,
                 keybinding: 'ctrlcmd+a',
-                context: TerminalKeybindingContexts.terminalActive
+                when: 'terminalFocus'
             });
         }
 
@@ -514,74 +951,86 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
         keybindings.registerKeybinding({
             command: TerminalCommands.TERMINAL_CLEAR.id,
             keybinding: 'ctrlcmd+k',
-            context: TerminalKeybindingContexts.terminalActive
+            when: 'terminalFocus'
+        });
+        // A passthrough binding claims ctrlcmd+v for the terminal (winning over the global
+        // CommonCommands.PASTE binding via the local terminalFocus context) but runs no command,
+        // letting the keystroke reach xterm's native paste event. That avoids the permission-gated
+        // Clipboard API (navigator.clipboard.readText) that the PASTE_TERMINAL command requires, while
+        // preserving bracketed paste. terminal.enablePaste is enforced in TerminalWidgetImpl.customKeyHandler.
+        // displayFor still shows the key as the accelerator of the Paste context menu item.
+        keybindings.registerKeybinding({
+            command: KeybindingRegistry.PASSTHROUGH_PSEUDO_COMMAND,
+            keybinding: 'ctrlcmd+v',
+            when: 'terminalFocus',
+            displayFor: TerminalCommands.PASTE_TERMINAL.id
+        });
+        keybindings.registerKeybinding({
+            command: TerminalCommands.COPY_TERMINAL_SELECTION.id,
+            keybinding: 'ctrlcmd+c',
+            when: 'terminalFocus'
         });
         keybindings.registerKeybinding({
             command: TerminalCommands.TERMINAL_FIND_TEXT.id,
             keybinding: 'ctrlcmd+f',
-            context: TerminalKeybindingContexts.terminalActive
+            when: 'terminalFocus'
         });
         keybindings.registerKeybinding({
             command: TerminalCommands.TERMINAL_FIND_TEXT_CANCEL.id,
             keybinding: 'esc',
-            context: TerminalKeybindingContexts.terminalHideSearch
+            when: 'terminalHideSearch'
         });
         keybindings.registerKeybinding({
             command: TerminalCommands.SCROLL_LINE_UP.id,
             keybinding: 'ctrl+shift+up',
-            context: TerminalKeybindingContexts.terminalActive
+            when: 'terminalFocus'
         });
         keybindings.registerKeybinding({
             command: TerminalCommands.SCROLL_LINE_DOWN.id,
             keybinding: 'ctrl+shift+down',
-            context: TerminalKeybindingContexts.terminalActive
+            when: 'terminalFocus'
         });
         keybindings.registerKeybinding({
             command: TerminalCommands.SCROLL_TO_TOP.id,
             keybinding: 'shift-home',
-            context: TerminalKeybindingContexts.terminalActive
+            when: 'terminalFocus'
         });
         keybindings.registerKeybinding({
             command: TerminalCommands.SCROLL_PAGE_UP.id,
             keybinding: 'shift-pageUp',
-            context: TerminalKeybindingContexts.terminalActive
+            when: 'terminalFocus'
         });
         keybindings.registerKeybinding({
             command: TerminalCommands.SCROLL_PAGE_DOWN.id,
             keybinding: 'shift-pageDown',
-            context: TerminalKeybindingContexts.terminalActive
+            when: 'terminalFocus'
+        });
+        keybindings.registerKeybinding({
+            command: TerminalCommands.TOGGLE_TERMINAL.id,
+            keybinding: 'ctrl+`',
+        });
+        keybindings.registerKeybinding({
+            command: TerminalCommands.SELECT_ALL.id,
+            keybinding: 'ctrlcmd+a',
+            when: 'terminalFocus'
         });
     }
 
     async newTerminal(options: TerminalWidgetOptions): Promise<TerminalWidget> {
-        const widget = <TerminalWidget>await this.widgetManager.getOrCreateWidget(TERMINAL_WIDGET_FACTORY_ID, <TerminalWidgetFactoryOptions>{
-            created: new Date().toString(),
+        const widget = await this.widgetManager.getOrCreateWidget(TERMINAL_WIDGET_FACTORY_ID, <TerminalWidgetFactoryOptions>{
+            created: nextTerminalCreationToken(),
             ...options
-        });
+        }) as TerminalWidget;
         return widget;
     }
 
-    activateTerminal(widget: TerminalWidget, widgetOptions?: ApplicationShell.WidgetOptions): void {
-        this.open(widget, { widgetOptions });
-    }
-
-    // TODO: reuse WidgetOpenHandler.open
-    open(widget: TerminalWidget, options?: WidgetOpenerOptions): void {
-        const op: WidgetOpenerOptions = {
-            mode: 'activate',
-            ...options,
-            widgetOptions: {
-                area: 'bottom',
-                ...(options && options.widgetOptions)
+    async open(widget: TerminalWidget, options?: WidgetOpenerOptions): Promise<void> {
+        const handlers = this.terminalCreationHandlers.getContributions(true)
+            .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+        for (const handler of handlers) {
+            if (await handler.onWillOpenTerminal(widget, options)) {
+                return;
             }
-        };
-        if (!widget.isAttached) {
-            this.shell.addWidget(widget, op.widgetOptions);
-        }
-        if (op.mode === 'activate') {
-            this.shell.activateWidget(widget.id);
-        } else if (op.mode === 'reveal') {
-            this.shell.revealWidget(widget.id);
         }
     }
 
@@ -599,36 +1048,83 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
                     resource
                 }));
                 const selectedItem = await this.quickInputService?.showQuickPick(items, {
-                    placeholder: 'Select current working directory for new terminal'
+                    placeholder: nls.localizeByDefault('Select current working directory for new terminal')
                 });
                 resolve(selectedItem?.resource?.toString());
             }
         });
     }
 
-    protected async splitTerminal(widget?: Widget): Promise<void> {
-        const ref = this.getTerminalRef(widget);
-        if (ref) {
+    protected async selectTerminalProfile(placeholder: string): Promise<[string, TerminalProfile] | undefined> {
+        return new Promise(async resolve => {
+            const profiles = this.profileService.all;
+            if (profiles.length === 0) {
+                resolve(undefined);
+            } else {
+                const items = profiles.map(([id, profile]) => ({
+                    label: id,
+                    profile
+                }));
+                const selectedItem = await this.quickInputService?.showQuickPick(items, {
+                    placeholder
+                });
+                resolve(selectedItem ? [selectedItem.label, selectedItem.profile] : undefined);
+            }
+        });
+    }
+
+    protected async splitTerminal(referenceTerminal?: TerminalWidget): Promise<void> {
+        if (referenceTerminal || this.currentTerminal) {
+            const ref = referenceTerminal ?? this.currentTerminal;
             await this.openTerminal({ ref, mode: 'split-right' });
         }
     }
 
-    protected getTerminalRef(widget?: Widget): TerminalWidget | undefined {
-        const ref = widget ? widget : this.shell.currentWidget;
-        return ref instanceof TerminalWidget ? ref : undefined;
+    protected async openTerminal(options?: ApplicationShell.WidgetOptions, terminalProfile?: TerminalProfile): Promise<void> {
+        let profile = terminalProfile;
+        if (!terminalProfile) {
+            profile = this.profileService.defaultProfile;
+            if (!profile) {
+                throw new Error('There are no profiles registered');
+            }
+        }
+
+        if (profile instanceof ShellTerminalProfile) {
+            if (this.workspaceService.workspace) {
+                const cwd = await this.selectTerminalCwd();
+                if (!cwd) {
+                    return;
+                }
+                profile = profile.modify({ cwd });
+            }
+        }
+
+        const termWidget = await profile?.start();
+        if (!!termWidget) {
+            this.open(termWidget, { widgetOptions: options });
+        }
     }
 
-    protected async openTerminal(options?: ApplicationShell.WidgetOptions): Promise<void> {
-        const cwd = await this.selectTerminalCwd();
-        const termWidget = await this.newTerminal({ cwd });
-        termWidget.start();
-        this.open(termWidget, { widgetOptions: options });
+    protected async chooseDefaultProfile(): Promise<void> {
+        const result = await this.selectTerminalProfile(nls.localizeByDefault('Select your default terminal profile'));
+        if (!result) {
+            return;
+        }
+
+        this.preferenceService.set(`terminal.integrated.defaultProfile.${OS.backend.type().toLowerCase()}`, result[0], PreferenceScope.User);
     }
 
     protected async openActiveWorkspaceTerminal(options?: ApplicationShell.WidgetOptions): Promise<void> {
         const termWidget = await this.newTerminal({});
         termWidget.start();
         this.open(termWidget, { widgetOptions: options });
+    }
+
+    protected withWidget<T>(widget: Widget | undefined, fn: (widget: TerminalWidget) => T): T | false {
+        if (widget instanceof TerminalWidget) {
+            return fn(widget);
+        }
+        return false;
     }
 
     /**
@@ -640,44 +1136,69 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
             defaults: {
                 dark: 'panel.background',
                 light: 'panel.background',
-                hc: 'panel.background'
+                hcDark: 'panel.background',
+                hcLight: 'panel.background'
             },
-            description: 'The background color of the terminal, this allows coloring the terminal differently to the panel.'
+            description: nls.localizeByDefault('The background color of the terminal, this allows coloring the terminal differently to the panel.')
         });
         colors.register({
             id: 'terminal.foreground',
             defaults: {
                 light: '#333333',
                 dark: '#CCCCCC',
-                hc: '#FFFFFF'
+                hcDark: '#FFFFFF',
+                hcLight: '#292929'
             },
-            description: 'The foreground color of the terminal.'
+            description: nls.localizeByDefault('The foreground color of the terminal.')
         });
         colors.register({
             id: 'terminalCursor.foreground',
-            description: 'The foreground color of the terminal cursor.'
+            description: nls.localizeByDefault('The foreground color of the terminal cursor.')
         });
         colors.register({
             id: 'terminalCursor.background',
-            description: 'The background color of the terminal cursor. Allows customizing the color of a character overlapped by a block cursor.'
+            description: nls.localizeByDefault('The background color of the terminal cursor. Allows customizing the color of a character overlapped by a block cursor.')
         });
         colors.register({
             id: 'terminal.selectionBackground',
             defaults: {
-                light: '#00000040',
-                dark: '#FFFFFF40',
-                hc: '#FFFFFF80'
+                light: 'editor.selectionBackground',
+                dark: 'editor.selectionBackground',
+                hcDark: 'editor.selectionBackground',
+                hcLight: 'editor.selectionBackground'
             },
-            description: 'The selection background color of the terminal.'
+            description: nls.localizeByDefault('The selection background color of the terminal.')
+        });
+        colors.register({
+            id: 'terminal.inactiveSelectionBackground',
+            defaults: {
+                light: Color.transparent('terminal.selectionBackground', 0.5),
+                dark: Color.transparent('terminal.selectionBackground', 0.5),
+                hcDark: Color.transparent('terminal.selectionBackground', 0.7),
+                hcLight: Color.transparent('terminal.selectionBackground', 0.5),
+            },
+            description: nls.localizeByDefault('The selection background color of the terminal when it does not have focus.')
+        });
+        colors.register({
+            id: 'terminal.selectionForeground',
+            defaults: {
+                light: undefined,
+                dark: undefined,
+                hcDark: '#000000',
+                hcLight: '#ffffff'
+            },
+            // eslint-disable-next-line max-len
+            description: nls.localizeByDefault('The selection foreground color of the terminal. When this is null the selection foreground will be retained and have the minimum contrast ratio feature applied.')
         });
         colors.register({
             id: 'terminal.border',
             defaults: {
                 light: 'panel.border',
                 dark: 'panel.border',
-                hc: 'panel.border'
+                hcDark: 'panel.border',
+                hcLight: 'panel.border'
             },
-            description: 'The color of the border that separates split panes within the terminal. This defaults to panel.border.'
+            description: nls.localizeByDefault('The color of the border that separates split panes within the terminal. This defaults to panel.border.')
         });
         // eslint-disable-next-line guard-for-in
         for (const id in terminalAnsiColorMap) {
@@ -686,7 +1207,7 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
             colors.register({
                 id,
                 defaults: entry.defaults,
-                description: `'${colorName}'  ANSI color in the terminal.`
+                description: nls.localizeByDefault("'{0}' ANSI color in the terminal.", colorName)
             });
         }
     }

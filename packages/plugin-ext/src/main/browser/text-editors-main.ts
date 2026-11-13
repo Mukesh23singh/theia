@@ -1,20 +1,19 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { URI } from '@theia/core/shared/vscode-uri';
 import {
     TextEditorsMain,
     MAIN_RPC_CONTEXT,
@@ -24,23 +23,40 @@ import {
     TextEditorRevealType,
     SingleEditOperation,
     ApplyEditsOptions,
-    UndoStopOptions,
     DecorationRenderOptions,
     ThemeDecorationInstanceRenderOptions,
     DecorationOptions,
-    WorkspaceEditDto
-} from '../../common/plugin-api-rpc';
-import { Range } from '../../common/plugin-api-rpc-model';
-import { EditorsAndDocumentsMain } from './editors-and-documents-main';
-import { RPCProtocol } from '../../common/rpc-protocol';
+    WorkspaceEditDto,
+    WorkspaceNotebookCellEditDto,
+    DocumentsMain,
+    WorkspaceEditMetadataDto,
+    SnippetEditOptions,
+} from '../../common/plugin-api-rpc.js';
+import { Range, TextDocumentShowOptions } from '../../common/plugin-api-rpc-model.js';
+import { EditorsAndDocumentsMain } from './editors-and-documents-main.js';
+import { RPCProtocol } from '../../common/rpc-protocol.js';
 import { Disposable, DisposableCollection } from '@theia/core/lib/common/disposable';
-import { TextEditorMain } from './text-editor-main';
-import { disposed } from '../../common/errors';
-import { toMonacoWorkspaceEdit } from './languages-main';
+import { TextEditorMain } from './text-editor-main.js';
+import { disposed } from '../../common/errors.js';
+import { toMonacoWorkspaceEdit } from './languages-main.js';
 import { MonacoBulkEditService } from '@theia/monaco/lib/browser/monaco-bulk-edit-service';
-import { MonacoEditorService } from '@theia/monaco/lib/browser/monaco-editor-service';
-import { theiaUritoUriComponents, UriComponents } from '../../common/uri-components';
+import { UriComponents } from '../../common/uri-components.js';
 import { Endpoint } from '@theia/core/lib/browser/endpoint';
+import * as monaco from '@theia/monaco-editor-core';
+import { ResourceEdit } from '@theia/monaco-editor-core/esm/vs/editor/browser/services/bulkEditService.js';
+import { IDecorationRenderOptions } from '@theia/monaco-editor-core/esm/vs/editor/common/editorCommon.js';
+import { StandaloneServices } from '@theia/monaco-editor-core/esm/vs/editor/standalone/browser/standaloneServices.js';
+import { ICodeEditorService } from '@theia/monaco-editor-core/esm/vs/editor/browser/services/codeEditorService.js';
+import { type ILineChange } from '@theia/monaco-editor-core/esm/vs/editor/common/diff/legacyLinesDiffComputer.js';
+import { ArrayUtils, URI } from '@theia/core';
+import { DiffUris } from '@theia/core/lib/browser/diff-uris';
+import { TextEditorChangeKind } from '../../plugin/types-impl.js';
+import { Change } from '@theia/scm/lib/browser/dirty-diff/diff-computer';
+import { DirtyDiffUpdate } from '@theia/scm/lib/browser/dirty-diff/dirty-diff-decorator';
+import { ScmDecorationsService } from '@theia/scm/lib/browser/decorations/scm-decorations-service';
+import { toNotebookWorspaceEdit } from './notebooks/notebooks-main.js';
+import { interfaces } from '@theia/core/shared/inversify';
+import { NotebookService } from '@theia/notebook/lib/browser';
 
 export class TextEditorsMainImpl implements TextEditorsMain, Disposable {
 
@@ -49,16 +65,26 @@ export class TextEditorsMainImpl implements TextEditorsMain, Disposable {
     private readonly editorsToDispose = new Map<string, DisposableCollection>();
     private readonly fileEndpoint = new Endpoint({ path: 'file' }).getRestUrl();
 
+    private readonly bulkEditService: MonacoBulkEditService;
+    private readonly notebookService: NotebookService;
+    private readonly scmDecorationsService: ScmDecorationsService;
+
     constructor(
         private readonly editorsAndDocuments: EditorsAndDocumentsMain,
+        private readonly documents: DocumentsMain,
         rpc: RPCProtocol,
-        private readonly bulkEditService: MonacoBulkEditService,
-        private readonly monacoEditorService: MonacoEditorService,
+        container: interfaces.Container
     ) {
         this.proxy = rpc.getProxy(MAIN_RPC_CONTEXT.TEXT_EDITORS_EXT);
+
+        this.bulkEditService = container.get(MonacoBulkEditService);
+        this.notebookService = container.get(NotebookService);
+        this.scmDecorationsService = container.get(ScmDecorationsService);
+
         this.toDispose.push(editorsAndDocuments);
         this.toDispose.push(editorsAndDocuments.onTextEditorAdd(editors => editors.forEach(this.onTextEditorAdd, this)));
         this.toDispose.push(editorsAndDocuments.onTextEditorRemove(editors => editors.forEach(this.onTextEditorRemove, this)));
+        this.toDispose.push(this.scmDecorationsService.onDirtyDiffUpdate(update => this.onDirtyDiffUpdate(update)));
     }
 
     dispose(): void {
@@ -75,6 +101,130 @@ export class TextEditorsMainImpl implements TextEditorsMain, Disposable {
         );
         this.editorsToDispose.set(id, toDispose);
         this.toDispose.push(toDispose);
+
+        const diffEditor = editor.getDiffEditor();
+        if (diffEditor) {
+            const pushDiffEditorInfo = () => this.pushDiffEditorDiffInformation(id, editor);
+            toDispose.push(diffEditor.diffEditor.onDidUpdateDiff(pushDiffEditorInfo));
+            pushDiffEditorInfo();
+        }
+    }
+
+    private onDirtyDiffUpdate(update: DirtyDiffUpdate): void {
+        const editorUri = update.editor.uri.toString();
+        const editorIds = this.findEditorIdsByUri(editorUri, true);
+        if (editorIds.length === 0) {
+            return;
+        }
+
+        const originalUri = update.previousRevisionUri?.toComponents();
+
+        const changes = update.changes.map(change => {
+            let kind: TextEditorChangeKind;
+            if (Change.isAddition(change)) {
+                kind = TextEditorChangeKind.Addition;
+            } else if (Change.isRemoval(change)) {
+                kind = TextEditorChangeKind.Deletion;
+            } else {
+                kind = TextEditorChangeKind.Modification;
+            }
+            return {
+                original: {
+                    startLineNumber: change.previousRange.start + 1,
+                    endLineNumberExclusive: change.previousRange.end + 1
+                },
+                modified: {
+                    startLineNumber: change.currentRange.start + 1,
+                    endLineNumberExclusive: change.currentRange.end + 1
+                },
+                kind
+            };
+        });
+
+        // Push diff information to all editors with this URI (regular editors and diff editor modified sides).
+        for (const editorId of editorIds) {
+            const editor = this.editorsAndDocuments.getEditor(editorId);
+            if (!editor) {
+                continue;
+            }
+            const model = editor.getModel();
+            const modifiedUri = URI.fromComponents(model.uri).toComponents();
+            this.proxy.$acceptEditorDiffInformation(editorId, [{
+                documentVersion: model.getVersionId(),
+                original: originalUri,
+                modified: modifiedUri,
+                changes,
+                isStale: false
+            }]);
+        }
+    }
+
+    private pushDiffEditorDiffInformation(id: string, editor: TextEditorMain): void {
+        const diffEditor = editor.getDiffEditor();
+        if (!diffEditor) {
+            return;
+        }
+
+        let originalUri: UriComponents | undefined;
+        let modifiedUri: UriComponents;
+
+        try {
+            const [left, right] = DiffUris.decode(diffEditor.uri);
+            originalUri = left.toComponents();
+            modifiedUri = right.toComponents();
+        } catch {
+            // Not a valid DiffUri; fall back to model URIs
+            originalUri = new URI(diffEditor.originalModel.uri).toComponents();
+            modifiedUri = new URI(diffEditor.modifiedModel.uri).toComponents();
+        }
+
+        const lineChanges = diffEditor.diffInformation;
+
+        const changes = lineChanges.map(change => {
+            let kind: TextEditorChangeKind;
+            if (change.originalEndLineNumber === 0) {
+                kind = TextEditorChangeKind.Addition;
+            } else if (change.modifiedEndLineNumber === 0) {
+                kind = TextEditorChangeKind.Deletion;
+            } else {
+                kind = TextEditorChangeKind.Modification;
+            }
+
+            // ILineChange uses 1-based lines where 0 means empty range.
+            // TextEditorLineRange uses 1-based startLineNumber and endLineNumberExclusive.
+            const toLineRange = (start: number, end: number) => end === 0
+                ? { startLineNumber: start + 1, endLineNumberExclusive: start + 1 }
+                : { startLineNumber: start, endLineNumberExclusive: end + 1 };
+
+            return {
+                original: toLineRange(change.originalStartLineNumber, change.originalEndLineNumber),
+                modified: toLineRange(change.modifiedStartLineNumber, change.modifiedEndLineNumber),
+                kind
+            };
+        });
+
+        const model = editor.getModel();
+        this.proxy.$acceptEditorDiffInformation(id, [{
+            documentVersion: model.getVersionId(),
+            original: originalUri,
+            modified: modifiedUri,
+            changes,
+            isStale: false
+        }]);
+    }
+
+    private findEditorIdsByUri(uri: string, excludeDiffEditors = false): string[] {
+        const ids: string[] = [];
+        for (const id of this.editorsToDispose.keys()) {
+            const editor = this.editorsAndDocuments.getEditor(id);
+            if (editor && editor.getModel().uri.toString() === uri) {
+                if (excludeDiffEditors && editor.getDiffEditor()) {
+                    continue;
+                }
+                ids.push(id);
+            }
+        }
+        return ids;
     }
 
     private onTextEditorRemove(id: string): void {
@@ -82,6 +232,10 @@ export class TextEditorsMainImpl implements TextEditorsMain, Disposable {
         if (disposables) {
             disposables.dispose();
         }
+    }
+
+    $tryShowTextDocument(uri: UriComponents, options?: TextDocumentShowOptions): Promise<void> {
+        return this.documents.$tryShowDocument(uri, options);
     }
 
     $trySetOptions(id: string, options: TextEditorConfigurationUpdate): Promise<void> {
@@ -117,18 +271,26 @@ export class TextEditorsMainImpl implements TextEditorsMain, Disposable {
         return Promise.resolve(this.editorsAndDocuments.getEditor(id)!.applyEdits(modelVersionId, edits, opts));
     }
 
-    async $tryApplyWorkspaceEdit(dto: WorkspaceEditDto): Promise<boolean> {
-        const workspaceEdit = toMonacoWorkspaceEdit(dto);
+    async $tryApplyWorkspaceEdit(dto: WorkspaceEditDto, metadata?: WorkspaceEditMetadataDto): Promise<boolean> {
+        const [notebookEdits, monacoEdits] = ArrayUtils.partition(dto.edits, edit => WorkspaceNotebookCellEditDto.is(edit));
         try {
-            const edits = monaco.editor.ResourceEdit.convert(workspaceEdit);
-            const { success } = await this.bulkEditService.apply(edits);
-            return success;
+            if (notebookEdits.length > 0) {
+                const workspaceEdit = toNotebookWorspaceEdit({ edits: notebookEdits });
+                return this.notebookService.applyWorkspaceEdit(workspaceEdit);
+            }
+            if (monacoEdits.length > 0) {
+                const workspaceEdit = toMonacoWorkspaceEdit({ edits: monacoEdits });
+                const edits = ResourceEdit.convert(workspaceEdit);
+                const { isApplied } = await this.bulkEditService.apply(edits, { respectAutoSaveConfig: metadata?.isRefactoring });
+                return isApplied;
+            }
+            return false;
         } catch {
             return false;
         }
     }
 
-    $tryInsertSnippet(id: string, template: string, ranges: Range[], opts: UndoStopOptions): Promise<boolean> {
+    $tryInsertSnippet(id: string, template: string, ranges: Range[], opts: SnippetEditOptions): Promise<boolean> {
         if (!this.editorsAndDocuments.getEditor(id)) {
             return Promise.reject(disposed(`TextEditor(${id})`));
         }
@@ -137,7 +299,7 @@ export class TextEditorsMainImpl implements TextEditorsMain, Disposable {
 
     $registerTextEditorDecorationType(key: string, options: DecorationRenderOptions): void {
         this.injectRemoteUris(options);
-        this.monacoEditorService.registerDecorationType(key, options);
+        StandaloneServices.get(ICodeEditorService).registerDecorationType('Plugin decoration', key, options as IDecorationRenderOptions);
         this.toDispose.push(Disposable.create(() => this.$removeTextEditorDecorationType(key)));
     }
 
@@ -161,13 +323,17 @@ export class TextEditorsMainImpl implements TextEditorsMain, Disposable {
 
     protected toRemoteUri(uri?: UriComponents): UriComponents | undefined {
         if (uri && uri.scheme === 'file') {
-            return theiaUritoUriComponents(this.fileEndpoint.withQuery(URI.revive(uri).toString()));
+            return this.fileEndpoint.withQuery(URI.fromComponents(uri).toString()).toComponents();
         }
         return uri;
     }
 
     $removeTextEditorDecorationType(key: string): void {
-        this.monacoEditorService.removeDecorationType(key);
+        StandaloneServices.get(ICodeEditorService).removeDecorationType(key);
+    }
+
+    $tryHideEditor(id: string): Promise<void> {
+        return this.editorsAndDocuments.hideEditor(id);
     }
 
     $trySetDecorations(id: string, key: string, ranges: DecorationOptions[]): Promise<void> {
@@ -186,8 +352,20 @@ export class TextEditorsMainImpl implements TextEditorsMain, Disposable {
         return Promise.resolve();
     }
 
+    $save(uri: UriComponents): PromiseLike<UriComponents | undefined> {
+        return this.editorsAndDocuments.save(URI.fromComponents(uri)).then(u => u?.toComponents());
+    }
+
+    $saveAs(uri: UriComponents): PromiseLike<UriComponents | undefined> {
+        return this.editorsAndDocuments.saveAs(URI.fromComponents(uri)).then(u => u?.toComponents());
+    }
+
     $saveAll(includeUntitled?: boolean): Promise<boolean> {
         return this.editorsAndDocuments.saveAll(includeUntitled);
+    }
+
+    $getDiffInformation(id: string): Promise<ILineChange[]> {
+        return Promise.resolve(this.editorsAndDocuments.getDiffInformation(id));
     }
 
 }

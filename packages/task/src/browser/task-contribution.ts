@@ -1,23 +1,24 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable, postConstruct } from '@theia/core/shared/inversify';
+import { injectable, postConstruct, inject, named } from '@theia/core/shared/inversify';
 import { Disposable } from '@theia/core/lib/common/disposable';
-import { TaskConfiguration } from '../common/task-protocol';
+import { TaskConfiguration } from '../common/task-protocol.js';
 import { WaitUntilEvent, Emitter } from '@theia/core/lib/common/event';
+import { ILogger } from '@theia/core';
 
 export const TaskContribution = Symbol('TaskContribution');
 
@@ -81,6 +82,10 @@ export interface TaskProvider {
     provideTasks(): Promise<TaskConfiguration[]>;
 }
 
+export interface WillResolveTaskProvider extends WaitUntilEvent {
+    taskType?: string
+}
+
 /**
  * The {@link TaskResolverRegistry} is the common component for registration and provision of
  * {@link TaskResolver}s. Theia will collect all {@link TaskContribution}s and invoke {@link TaskContribution#registerResolvers}
@@ -89,7 +94,10 @@ export interface TaskProvider {
 @injectable()
 export class TaskResolverRegistry {
 
-    protected readonly onWillProvideTaskResolverEmitter = new Emitter<WaitUntilEvent>();
+    @inject(ILogger) @named('task:TaskResolverRegistry')
+    protected readonly logger: ILogger;
+
+    protected readonly onWillProvideTaskResolverEmitter = new Emitter<WillResolveTaskProvider>();
     /**
      * Emit when the registry provides a registered resolver. i.e. when the {@link TaskResolverRegistry#getResolver}
      * function is called.
@@ -128,7 +136,7 @@ export class TaskResolverRegistry {
 
     registerTaskResolver(type: string, resolver: TaskResolver): Disposable {
         if (this.taskResolvers.has(type)) {
-            console.warn(`Overriding task resolver for ${type}`);
+            this.logger.warn(`Overriding task resolver for ${type}`);
         }
         this.taskResolvers.set(type, resolver);
         return {
@@ -156,7 +164,7 @@ export class TaskResolverRegistry {
      * @returns a promise of the registered `TaskResolver` or `undefined` if no resolver is registered for the given type.
      */
     async getTaskResolver(type: string): Promise<TaskResolver | undefined> {
-        await WaitUntilEvent.fire(this.onWillProvideTaskResolverEmitter, {});
+        await WaitUntilEvent.fire(this.onWillProvideTaskResolverEmitter, { taskType: type });
         return this.taskResolvers.get(type);
     }
 
@@ -173,7 +181,7 @@ export class TaskResolverRegistry {
      */
     registerExecutionResolver(type: string, resolver: TaskResolver): Disposable {
         if (this.executionResolvers.has(type)) {
-            console.warn(`Overriding execution resolver for ${type}`);
+            this.logger.warn(`Overriding execution resolver for ${type}`);
         }
         this.executionResolvers.set(type, resolver);
         return {
@@ -200,7 +208,7 @@ export class TaskResolverRegistry {
 @injectable()
 export class TaskProviderRegistry {
 
-    protected readonly onWillProvideTaskProviderEmitter = new Emitter<WaitUntilEvent>();
+    protected readonly onWillProvideTaskProviderEmitter = new Emitter<WillResolveTaskProvider>();
     /**
      * Emit when the registry provides a registered task provider. i.e. when the {@link TaskProviderRegistry#getProvider}
      * function is called.
@@ -230,6 +238,14 @@ export class TaskProviderRegistry {
     }
 
     /**
+     * Initiates activation of a TaskProvider with the given type
+     * @param type the task configuration type, '*' indicates, all providers.
+     */
+    async activateProvider(type: string): Promise<void> {
+        await WaitUntilEvent.fire(this.onWillProvideTaskProviderEmitter, { taskType: type });
+    }
+
+    /**
      * Retrieves the {@link TaskProvider} registered for the given type task configuration type.
      * If there is already a `TaskProvider` registered for the specified type the registration will
      * be overwritten with the new value.
@@ -238,17 +254,17 @@ export class TaskProviderRegistry {
      * @returns a promise of the registered `TaskProvider`` or `undefined` if no provider is registered for the given type.
      */
     async getProvider(type: string): Promise<TaskProvider | undefined> {
-        await WaitUntilEvent.fire(this.onWillProvideTaskProviderEmitter, {});
+        await this.activateProvider(type);
         return this.providers.get(type);
     }
 
     /**
      * Retrieve all registered {@link TaskProvider}s.
      *
+     * Use {@link activateProvider} to control registration of providers as needed.
      * @returns a promise of all registered {@link TaskProvider}s.
      */
     async getProviders(): Promise<TaskProvider[]> {
-        await WaitUntilEvent.fire(this.onWillProvideTaskProviderEmitter, {});
         return [...this.providers.values()];
     }
 }

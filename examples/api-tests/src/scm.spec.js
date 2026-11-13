@@ -1,30 +1,35 @@
-/********************************************************************************
- * Copyright (C) 2020 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 // @ts-check
 describe('SCM', function () {
 
     const { assert } = chai;
+    const { timeout } = require('@theia/core/lib/common/promise-util');
 
+    const { HostedPluginSupport } = require('@theia/plugin-ext/lib/hosted/browser/hosted-plugin');
     const Uri = require('@theia/core/lib/common/uri');
     const { ApplicationShell } = require('@theia/core/lib/browser/shell/application-shell');
     const { ContextKeyService } = require('@theia/core/lib/browser/context-key-service');
     const { ScmContribution } = require('@theia/scm/lib/browser/scm-contribution');
     const { ScmService } = require('@theia/scm/lib/browser/scm-service');
     const { ScmWidget } = require('@theia/scm/lib/browser/scm-widget');
+    const { CommandRegistry } = require('@theia/core/lib/common');
+    const { PreferenceService } = require('@theia/core/lib/browser');
+
 
     /** @type {import('inversify').Container} */
     const container = window['theia'].container;
@@ -32,6 +37,9 @@ describe('SCM', function () {
     const scmContribution = container.get(ScmContribution);
     const shell = container.get(ApplicationShell);
     const service = container.get(ScmService);
+    const commandRegistry = container.get(CommandRegistry);
+    const pluginService = container.get(HostedPluginSupport);
+    const preferences = container.get(PreferenceService);
 
     /** @type {ScmWidget} */
     let scmWidget;
@@ -39,10 +47,45 @@ describe('SCM', function () {
     /** @type {ScmService} */
     let scmService;
 
+    const gitPluginId = 'vscode.git';
+
+    /**
+         * @param {() => unknown} condition
+         * @param {number | undefined} [timeout]
+         * @param {string | undefined} [message]
+         * @returns {Promise<void>}
+         */
+    async function waitForAnimation(condition, maxWait, message) {
+        if (maxWait === undefined) {
+            maxWait = 100000;
+        }
+        const endTime = Date.now() + maxWait;
+        do {
+            await (timeout(100));
+            if (condition()) {
+                return true;
+            }
+            if (Date.now() > endTime) {
+                throw new Error(message ?? 'Wait for animation timed out.');
+            }
+        } while (true);
+    }
+
+
+    before(async () => {
+        preferences.set('git.autoRepositoryDetection', true);
+        preferences.set('git.openRepositoryInParentFolders', 'always');
+    });
+
     beforeEach(async () => {
+        if (!pluginService.getPlugin(gitPluginId)) {
+            throw new Error(gitPluginId + ' should be started');
+        }
+        await pluginService.activatePlugin(gitPluginId);
         await shell.leftPanelHandler.collapse();
         scmWidget = await scmContribution.openView({ activate: true, reveal: true });
         scmService = service;
+        await waitForAnimation(() => scmService.selectedRepository, 10000, 'selected repository is not defined');
     });
 
     afterEach(() => {
@@ -53,7 +96,6 @@ describe('SCM', function () {
     });
 
     describe('scm-view', () => {
-
         it('the view should open and activate successfully', () => {
             assert.notEqual(scmWidget, undefined);
             assert.strictEqual(scmWidget, shell.activeWidget);
@@ -65,33 +107,13 @@ describe('SCM', function () {
                 assert.isTrue(scmWidget.resourceWidget.isVisible);
             });
 
-            it('the view should not display the resource tree when no repository is present', () => {
+            it('the view should remain visible when no repository is present (shows welcome content)', () => {
 
                 // Store the current selected repository so it can be restored.
                 const cachedSelectedRepository = scmService.selectedRepository;
 
                 scmService.selectedRepository = undefined;
-                assert.isFalse(scmWidget.resourceWidget.isVisible);
-
-                // Restore the selected repository.
-                scmService.selectedRepository = cachedSelectedRepository;
-            });
-
-        });
-
-        describe('\'ScmNoRepositoryWidget\'', () => {
-
-            it('should not be visible when a repository is present', () => {
-                assert.isFalse(scmWidget.noRepositoryWidget.isVisible);
-            });
-
-            it('should be visible when no repository is present', () => {
-
-                // Store the current selected repository so it can be restored.
-                const cachedSelectedRepository = scmService.selectedRepository;
-
-                scmService.selectedRepository = undefined;
-                assert.isTrue(scmWidget.noRepositoryWidget.isVisible);
+                assert.isTrue(scmWidget.resourceWidget.isVisible);
 
                 // Restore the selected repository.
                 scmService.selectedRepository = cachedSelectedRepository;
@@ -125,6 +147,9 @@ describe('SCM', function () {
                 const foundRepository = scmService.findRepository(new Uri.default(rootUri));
                 assert.notEqual(foundRepository, undefined);
             }
+            else {
+                assert.fail('Selected repository is undefined');
+            }
         });
 
         it('should not find a repository for an unknown uri', () => {
@@ -149,6 +174,9 @@ describe('SCM', function () {
                     const commit = await amendSupport.getLastCommit();
                     assert.notEqual(commit, undefined);
                 }
+            }
+            else {
+                assert.fail('Selected repository is undefined');
             }
         });
 

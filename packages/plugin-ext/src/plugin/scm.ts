@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2019-2021 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019-2021 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
@@ -27,32 +27,51 @@ import {
     ScmExt,
     ScmMain, ScmRawResource, ScmRawResourceGroup,
     ScmRawResourceSplice, ScmRawResourceSplices,
-    SourceControlGroupFeatures
-} from '../common';
+    SourceControlGroupFeatures,
+    ScmActionButton,
+    ScmHistoryItemRefDto,
+    ScmHistoryItemDto,
+    ScmHistoryItemChangeDto,
+    ScmHistoryOptionsDto,
+    ScmHistoryItemRefsChangeEventDto
+} from '../common/index.js';
 import { Disposable, DisposableCollection } from '@theia/core/lib/common/disposable';
-import { CommandRegistryImpl } from '../plugin/command-registry';
-import { Splice } from '../common/arrays';
-import { UriComponents } from '../common/uri-components';
-import { Command } from '../common/plugin-api-rpc-model';
-import { RPCProtocol } from '../common/rpc-protocol';
-import { URI } from './types-impl';
-import { ScmCommandArg } from '../common/plugin-api-rpc';
-import { sep } from '@theia/callhierarchy/lib/common/paths';
+import { CancellationToken } from '@theia/core/lib/common/cancellation';
+import { CommandRegistryImpl } from '../plugin/command-registry.js';
+import { Splice } from '../common/arrays.js';
+import { UriComponents } from '../common/uri-components.js';
+import { Command } from '../common/plugin-api-rpc-model.js';
+import { RPCProtocol } from '../common/rpc-protocol.js';
+import { URI, ThemeIcon } from './types-impl.js';
+import { ScmCommandArg, ScmHistoryItemCommandArg } from '../common/plugin-api-rpc.js';
+import { sep } from '@theia/core/lib/common/paths';
+import { PluginIconPath } from './plugin-icon-path.js';
+import { createAPIObject } from './plugin-context.js';
+
 type ProviderHandle = number;
 type GroupHandle = number;
 type ResourceStateHandle = number;
 
-function getIconResource(decorations?: theia.SourceControlResourceThemableDecorations): theia.Uri | undefined {
-    if (!decorations) {
+function getIconResource(decorations?: theia.SourceControlResourceThemableDecorations): UriComponents | ThemeIcon | undefined {
+    if (!decorations || !decorations.iconPath) {
         return undefined;
     } else if (typeof decorations.iconPath === 'string') {
         return URI.file(decorations.iconPath);
-    } else {
+    } else if (URI.isUri(decorations.iconPath)) {
         return decorations.iconPath;
+    } else if (ThemeIcon.is(decorations.iconPath)) {
+        return decorations.iconPath;
+    } else {
+        console.warn(`Unexpected Value ${decorations.iconPath} in Source Control Resource Themable Decoration. URI, ThemeIcon or string expected.`);
+        return undefined;
     }
 }
 
 function comparePaths(one: string, other: string, caseSensitive = false): number {
+    if (one === other) {
+        return 0;
+    }
+
     const oneParts = one.split(sep);
     const otherParts = other.split(sep);
 
@@ -111,8 +130,8 @@ function compareResourceThemableDecorations(a: theia.SourceControlResourceThemab
         return 1;
     }
 
-    const aPath = typeof a.iconPath === 'string' ? a.iconPath : a.iconPath.fsPath;
-    const bPath = typeof b.iconPath === 'string' ? b.iconPath : b.iconPath.fsPath;
+    const aPath = typeof a.iconPath === 'string' ? a.iconPath : URI.isUri(a.iconPath) ? a.iconPath.fsPath : (a.iconPath as ThemeIcon).id;
+    const bPath = typeof b.iconPath === 'string' ? b.iconPath : URI.isUri(b.iconPath) ? b.iconPath.fsPath : (b.iconPath as ThemeIcon).id;
     return comparePaths(aPath, bPath);
 }
 
@@ -210,6 +229,17 @@ function compareResourceStates(a: theia.SourceControlResourceState, b: theia.Sou
         return result;
     }
 
+    result = (a.multiDiffEditorOriginalUri?.toString() ?? '').localeCompare(b.multiDiffEditorOriginalUri?.toString() ?? '');
+    if (result !== 0) {
+        return result;
+    }
+
+    result = (a.multiFileDiffEditorModifiedUri?.toString() ?? '').localeCompare(b.multiFileDiffEditorModifiedUri?.toString() ?? '');
+
+    if (result !== 0) {
+        return result;
+    }
+
     if (a.command && b.command) {
         result = compareCommands(a.command, b.command);
     } else if (a.command) {
@@ -284,6 +314,7 @@ interface ValidateInput {
 export class ScmInputBoxImpl implements theia.SourceControlInputBox {
 
     private _value: string = '';
+    apiObject: theia.SourceControlInputBox;
 
     get value(): string {
         return this._value;
@@ -311,6 +342,28 @@ export class ScmInputBoxImpl implements theia.SourceControlInputBox {
         this._placeholder = placeholder;
     }
 
+    private _visible: boolean = true;
+
+    get visible(): boolean {
+        return this._visible;
+    }
+
+    set visible(visible: boolean) {
+        this.proxy.$setInputBoxVisible(this.sourceControlHandle, visible);
+        this._visible = visible;
+    }
+
+    private _enabled: boolean;
+
+    get enabled(): boolean {
+        return this._enabled;
+    }
+
+    set enabled(enabled: boolean) {
+        this.proxy.$setInputBoxEnabled(this.sourceControlHandle, enabled);
+        this._enabled = enabled;
+    }
+
     private _validateInput: ValidateInput | undefined;
 
     get validateInput(): ValidateInput | undefined {
@@ -326,7 +379,7 @@ export class ScmInputBoxImpl implements theia.SourceControlInputBox {
     }
 
     constructor(private plugin: Plugin, private proxy: ScmMain, private sourceControlHandle: number) {
-        // noop
+        this.apiObject = createAPIObject(this);
     }
 
     onInputBoxValueChange(value: string): void {
@@ -339,7 +392,7 @@ export class ScmInputBoxImpl implements theia.SourceControlInputBox {
     }
 }
 
-class SsmResourceGroupImpl implements theia.SourceControlResourceGroup {
+class ScmResourceGroupImpl implements theia.SourceControlResourceGroup {
 
     private static handlePool: number = 0;
     private resourceHandlePool: number = 0;
@@ -375,9 +428,17 @@ class SsmResourceGroupImpl implements theia.SourceControlResourceGroup {
         this.proxy.$updateGroup(this.sourceControlHandle, this.handle, this.features);
     }
 
+    private _contextValue: string | undefined = undefined;
+    get contextValue(): string | undefined { return this._contextValue; }
+    set contextValue(contextValue: string | undefined) {
+        this._contextValue = contextValue;
+        this.proxy.$updateGroup(this.sourceControlHandle, this.handle, this.features);
+    }
+
     get features(): SourceControlGroupFeatures {
         return {
-            hideWhenEmpty: this.hideWhenEmpty
+            hideWhenEmpty: this.hideWhenEmpty,
+            contextValue: this.contextValue
         };
     }
 
@@ -387,12 +448,13 @@ class SsmResourceGroupImpl implements theia.SourceControlResourceGroup {
         this.onDidUpdateResourceStatesEmitter.fire();
     }
 
-    readonly handle = SsmResourceGroupImpl.handlePool++;
+    readonly handle = ScmResourceGroupImpl.handlePool++;
 
     constructor(
         private proxy: ScmMain,
         private commands: CommandRegistryImpl,
         private sourceControlHandle: number,
+        private plugin: Plugin,
         private _id: string,
         private _label: string,
     ) { }
@@ -401,14 +463,14 @@ class SsmResourceGroupImpl implements theia.SourceControlResourceGroup {
         return this.resourceStatesMap.get(handle);
     }
 
-    executeResourceCommand(handle: number): Promise<void> {
+    async executeResourceCommand(handle: number): Promise<void> {
         const command = this.resourceStatesCommandsMap.get(handle);
 
         if (!command) {
-            return Promise.resolve(undefined);
+            return;
         }
 
-        return new Promise(() => this.commands.executeCommand(command.command!, ...(command.arguments || [])));
+        await this.commands.executeCommand(command.command!, ...(command.arguments || []));
     }
 
     takeResourceStateSnapshot(): ScmRawResourceSplice[] {
@@ -421,10 +483,11 @@ class SsmResourceGroupImpl implements theia.SourceControlResourceGroup {
                 this.resourceStatesMap.set(handle, r);
 
                 const sourceUri = r.resourceUri;
-                const iconUri = getIconResource(r.decorations);
-                const lightIconUri = r.decorations && getIconResource(r.decorations.light) || iconUri;
-                const darkIconUri = r.decorations && getIconResource(r.decorations.dark) || iconUri;
-                const icons: UriComponents[] = [];
+
+                const icon = getIconResource(r.decorations);
+                const lightIcon = r.decorations && getIconResource(r.decorations.light) || icon;
+                const darkIcon = r.decorations && getIconResource(r.decorations.dark) || icon;
+                const icons = [this.getThemableIcon(lightIcon), this.getThemableIcon(darkIcon)];
                 let command: Command | undefined;
 
                 if (r.command) {
@@ -437,14 +500,6 @@ class SsmResourceGroupImpl implements theia.SourceControlResourceGroup {
                     }
                 }
 
-                if (lightIconUri) {
-                    icons.push(lightIconUri);
-                }
-
-                if (darkIconUri && (darkIconUri.toString() !== lightIconUri?.toString())) {
-                    icons.push(darkIconUri);
-                }
-
                 const tooltip = (r.decorations && r.decorations.tooltip) || '';
                 const strikeThrough = r.decorations && !!r.decorations.strikeThrough;
                 const faded = r.decorations && !!r.decorations.faded;
@@ -453,8 +508,10 @@ class SsmResourceGroupImpl implements theia.SourceControlResourceGroup {
                 // TODO remove the letter and colorId fields when the FileDecorationProvider is applied, see https://github.com/eclipse-theia/theia/pull/8911
                 const rawResource = {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    handle, sourceUri, letter: (r as any).letter, colorId: (r as any).color.id, icons,
-                    tooltip, strikeThrough, faded, contextValue, command
+                    handle, sourceUri, letter: (r as any).letter, colorId: (r as any).color?.id, icons,
+                    tooltip, strikeThrough, faded, contextValue, command,
+                    multiDiffEditorOriginalUri: r.multiDiffEditorOriginalUri,
+                    multiDiffEditorModifiedUri: r.multiFileDiffEditorModifiedUri
                 } as ScmRawResource;
 
                 return { rawResource, handle };
@@ -489,16 +546,68 @@ class SsmResourceGroupImpl implements theia.SourceControlResourceGroup {
         return rawResourceSplices;
     }
 
+    private getThemableIcon(icon: UriComponents | ThemeIcon | undefined): string | ThemeIcon | undefined {
+        if (!icon) {
+            return undefined;
+        } else if (ThemeIcon.is(icon)) {
+            return icon;
+        }
+        return PluginIconPath.asString(URI.revive(icon), this.plugin);
+    }
+
     dispose(): void {
         this._disposed = true;
         this.onDidDisposeEmitter.fire();
     }
 }
 
+function historyItemRefToDto(ref: theia.SourceControlHistoryItemRef): ScmHistoryItemRefDto {
+    return {
+        id: ref.id,
+        name: ref.name,
+        description: ref.description,
+        revision: ref.revision,
+        icon: ref.icon,
+        category: ref.category,
+    };
+}
+
+function historyItemToDto(item: theia.SourceControlHistoryItem): ScmHistoryItemDto {
+    return {
+        id: item.id,
+        parentIds: item.parentIds ? [...item.parentIds] : undefined,
+        subject: item.subject,
+        message: item.message,
+        author: item.author,
+        authorEmail: item.authorEmail,
+        authorIcon: item.authorIcon,
+        displayId: item.displayId,
+        timestamp: item.timestamp,
+        tooltip: Array.isArray(item.tooltip) ? [...item.tooltip] : item.tooltip,
+        statistics: item.statistics ? {
+            files: item.statistics.files,
+            insertions: item.statistics.insertions,
+            deletions: item.statistics.deletions,
+        } : undefined,
+        references: item.references ? item.references.map(historyItemRefToDto) : undefined,
+    };
+}
+
+function historyItemChangeToDto(change: theia.SourceControlHistoryItemChange): ScmHistoryItemChangeDto {
+    return {
+        uri: change.uri,
+        originalUri: change.originalUri,
+        modifiedUri: change.modifiedUri,
+        renameUri: change.renameUri,
+    };
+}
+
 class SourceControlImpl implements theia.SourceControl {
 
     private static handlePool: number = 0;
-    private groups: Map<GroupHandle, SsmResourceGroupImpl> = new Map<GroupHandle, SsmResourceGroupImpl>();
+    private groups: Map<GroupHandle, ScmResourceGroupImpl> = new Map<GroupHandle, ScmResourceGroupImpl>();
+
+    readonly apiObject: theia.SourceControl;
 
     get id(): string {
         return this._id;
@@ -512,8 +621,7 @@ class SourceControlImpl implements theia.SourceControl {
         return this._rootUri;
     }
 
-    private _inputBox: ScmInputBoxImpl;
-    get inputBox(): ScmInputBoxImpl { return this._inputBox; }
+    readonly inputBox: ScmInputBoxImpl;
 
     private _count: number | undefined = undefined;
 
@@ -592,6 +700,39 @@ class SourceControlImpl implements theia.SourceControl {
         this.proxy.$updateSourceControl(this.handle, { statusBarCommands: internal });
     }
 
+    private _actionButtonDisposables = new DisposableCollection();
+    private _actionButton: theia.ScmActionButton | undefined = undefined;
+
+    get actionButton(): theia.ScmActionButton | undefined {
+        return this._actionButton;
+    }
+
+    set actionButton(actionButton: theia.ScmActionButton | undefined) {
+        this._actionButtonDisposables.dispose();
+        this._actionButtonDisposables = new DisposableCollection();
+        this._actionButton = actionButton;
+
+        if (actionButton) {
+            const command: Command = this.commands.converter.toSafeCommand(actionButton.command, this._actionButtonDisposables);
+            const secondaryCommands = actionButton.secondaryCommands?.map(row =>
+                row.map(cmd => {
+                    const safeCommand = this.commands.converter.toSafeCommand(cmd, this._actionButtonDisposables);
+                    return safeCommand;
+                })
+            );
+
+            const internal: ScmActionButton = {
+                command,
+                secondaryCommands: secondaryCommands,
+                enabled: actionButton.enabled,
+                description: actionButton.description
+            };
+            this.proxy.$setActionButton(this.handle, internal);
+        } else {
+            this.proxy.$setActionButton(this.handle, undefined);
+        }
+    }
+
     private _selected: boolean = false;
 
     get selected(): boolean {
@@ -601,25 +742,93 @@ class SourceControlImpl implements theia.SourceControl {
     private readonly onDidChangeSelectionEmitter = new Emitter<boolean>();
     readonly onDidChangeSelection = this.onDidChangeSelectionEmitter.event;
 
-    private handle: number = SourceControlImpl.handlePool++;
+    private _contextValue: string | undefined = undefined;
+
+    get contextValue(): string | undefined {
+        return this._contextValue;
+    }
+
+    set contextValue(contextValue: string | undefined) {
+        this._contextValue = contextValue;
+        this.proxy.$updateSourceControl(this.handle, { contextValue });
+    }
+
+    private _historyProvider: theia.SourceControlHistoryProvider | undefined = undefined;
+    private _historyProviderDisposables = new DisposableCollection();
+
+    readonly historyItems = new Map<string, theia.SourceControlHistoryItem>();
+    readonly historyItemRefs = new Map<string, theia.SourceControlHistoryItemRef>();
+
+    get historyProvider(): theia.SourceControlHistoryProvider | undefined {
+        return this._historyProvider;
+    }
+
+    set historyProvider(provider: theia.SourceControlHistoryProvider | undefined) {
+        this._historyProviderDisposables.dispose();
+        this._historyProviderDisposables = new DisposableCollection();
+        this._historyProvider = provider;
+
+        if (provider) {
+            this._historyProviderDisposables.push(
+                provider.onDidChangeCurrentHistoryItemRefs(() => {
+                    this.proxy.$updateSourceControl(this.handle, {
+                        hasHistoryProvider: true,
+                        currentHistoryItemRef: provider.currentHistoryItemRef ? historyItemRefToDto(provider.currentHistoryItemRef) : undefined,
+                        currentHistoryItemRemoteRef: provider.currentHistoryItemRemoteRef ? historyItemRefToDto(provider.currentHistoryItemRemoteRef) : undefined,
+                        currentHistoryItemBaseRef: provider.currentHistoryItemBaseRef ? historyItemRefToDto(provider.currentHistoryItemBaseRef) : undefined,
+                    });
+                    this.proxy.$onDidChangeCurrentHistoryItemRefs(this.handle);
+                })
+            );
+            this._historyProviderDisposables.push(
+                provider.onDidChangeHistoryItemRefs(event => {
+                    const dto: ScmHistoryItemRefsChangeEventDto = {
+                        added: event.added.map(historyItemRefToDto),
+                        removed: event.removed.map(historyItemRefToDto),
+                        modified: event.modified.map(historyItemRefToDto),
+                    };
+                    this.proxy.$onDidChangeHistoryItemRefs(this.handle, dto);
+                })
+            );
+        }
+
+        this.proxy.$updateSourceControl(this.handle, {
+            hasHistoryProvider: !!provider,
+            currentHistoryItemRef: provider?.currentHistoryItemRef ? historyItemRefToDto(provider.currentHistoryItemRef) : undefined,
+            currentHistoryItemRemoteRef: provider?.currentHistoryItemRemoteRef ? historyItemRefToDto(provider.currentHistoryItemRemoteRef) : undefined,
+            currentHistoryItemBaseRef: provider?.currentHistoryItemBaseRef ? historyItemRefToDto(provider.currentHistoryItemBaseRef) : undefined,
+        });
+    }
+
+    private readonly onDidDisposeEmitter = new Emitter<void>();
+    readonly onDidDispose = this.onDidDisposeEmitter.event;
+
+    readonly onDidDisposeParent: Event<void>;
+
+    readonly handle: number = SourceControlImpl.handlePool++;
 
     constructor(
-        plugin: Plugin,
+        private plugin: Plugin,
         private proxy: ScmMain,
         private commands: CommandRegistryImpl,
         private _id: string,
         private _label: string,
-        private _rootUri?: theia.Uri
+        private _rootUri?: theia.Uri,
+        _iconPath?: theia.IconPath,
+        _isHidden?: boolean,
+        _parent?: SourceControlImpl
     ) {
-        this._inputBox = new ScmInputBoxImpl(plugin, this.proxy, this.handle);
-        this.proxy.$registerSourceControl(this.handle, _id, _label, _rootUri);
+        this.inputBox = new ScmInputBoxImpl(plugin, this.proxy, this.handle);
+        this.proxy.$registerSourceControl(this.handle, _id, _label, _rootUri, _parent?.handle);
+        this.onDidDisposeParent = _parent ? _parent.onDidDispose : Event.None;
+        this.apiObject = createAPIObject(this);
     }
 
-    private createdResourceGroups = new Map<SsmResourceGroupImpl, Disposable>();
-    private updatedResourceGroups = new Set<SsmResourceGroupImpl>();
+    private createdResourceGroups = new Map<ScmResourceGroupImpl, Disposable>();
+    private updatedResourceGroups = new Set<ScmResourceGroupImpl>();
 
-    createResourceGroup(id: string, label: string): SsmResourceGroupImpl {
-        const group = new SsmResourceGroupImpl(this.proxy, this.commands, this.handle, id, label);
+    createResourceGroup(id: string, label: string): ScmResourceGroupImpl {
+        const group = new ScmResourceGroupImpl(this.proxy, this.commands, this.handle, this.plugin, id, label);
         const disposable = group.onDidDispose(() => this.createdResourceGroups.delete(group));
         this.createdResourceGroups.set(group, disposable);
         this.eventuallyAddResourceGroups();
@@ -681,8 +890,16 @@ class SourceControlImpl implements theia.SourceControl {
         this.updatedResourceGroups.clear();
     }
 
-    getResourceGroup(handle: GroupHandle): SsmResourceGroupImpl | undefined {
+    getResourceGroup(handle: GroupHandle): ScmResourceGroupImpl | undefined {
         return this.groups.get(handle);
+    }
+
+    getHistoryItem(id: string): theia.SourceControlHistoryItem | undefined {
+        return this.historyItems.get(id);
+    }
+
+    getHistoryItemRef(id: string): theia.SourceControlHistoryItemRef | undefined {
+        return this.historyItemRefs.get(id);
     }
 
     setSelectionState(selected: boolean): void {
@@ -693,9 +910,14 @@ class SourceControlImpl implements theia.SourceControl {
     dispose(): void {
         this.acceptInputDisposables.dispose();
         this._statusBarDisposables.dispose();
+        this._actionButtonDisposables.dispose();
+        this._historyProviderDisposables.dispose();
 
         this.groups.forEach(group => group.dispose());
         this.proxy.$unregisterSourceControl(this.handle);
+
+        this.onDidDisposeEmitter.fire();
+        this.onDidDisposeEmitter.dispose();
     }
 }
 
@@ -715,6 +937,32 @@ export class ScmExtImpl implements ScmExt {
     constructor(rpc: RPCProtocol, private commands: CommandRegistryImpl) {
         this.proxy = rpc.getProxy(PLUGIN_RPC_CONTEXT.SCM_MAIN);
 
+        // Register history item arg processor before the generic ScmCommandArg processor
+        // so the more-specific guard matches first.
+        commands.registerArgumentProcessor({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            processArgument: (arg: any) => {
+                if (!ScmHistoryItemCommandArg.is(arg) || arg.type !== 'historyItem') {
+                    return arg;
+                }
+                const sourceControl = this.sourceControls.get(arg.sourceControlHandle);
+                const item = sourceControl?.getHistoryItem(arg.id);
+                return item ?? { id: arg.id };
+            }
+        });
+
+        commands.registerArgumentProcessor({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            processArgument: (arg: any) => {
+                if (!ScmHistoryItemCommandArg.is(arg) || arg.type !== 'historyItemRef') {
+                    return arg;
+                }
+                const sourceControl = this.sourceControls.get(arg.sourceControlHandle);
+                const ref = sourceControl?.getHistoryItemRef(arg.id);
+                return ref ?? { id: arg.id };
+            }
+        });
+
         commands.registerArgumentProcessor({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             processArgument: (arg: any) => {
@@ -726,7 +974,7 @@ export class ScmExtImpl implements ScmExt {
                     return undefined;
                 }
                 if (typeof arg.resourceGroupHandle !== 'number') {
-                    return sourceControl;
+                    return sourceControl.apiObject;
                 }
                 const resourceGroup = sourceControl.getResourceGroup(arg.resourceGroupHandle);
                 if (typeof arg.resourceStateHandle !== 'number') {
@@ -737,16 +985,45 @@ export class ScmExtImpl implements ScmExt {
         });
     }
 
-    createSourceControl(extension: Plugin, id: string, label: string, rootUri: theia.Uri | undefined): theia.SourceControl {
+    createSourceControl(extension: Plugin, id: string, label: string, rootUri: theia.Uri | undefined,
+        iconPath?: theia.IconPath, isHidden?: boolean, parent?: theia.SourceControl): theia.SourceControl {
         const handle = ScmExtImpl.handlePool++;
-        const sourceControl = new SourceControlImpl(extension, this.proxy, this.commands, id, label, rootUri);
+        const parentImpl = parent ? this.findSourceControlImpl(parent) : undefined;
+        const sourceControl = new SourceControlImpl(extension, this.proxy, this.commands, id, label, rootUri, iconPath, isHidden, parentImpl);
         this.sourceControls.set(handle, sourceControl);
 
         const sourceControls = this.sourceControlsByExtension.get(extension.model.id) || [];
         sourceControls.push(sourceControl);
         this.sourceControlsByExtension.set(extension.model.id, sourceControls);
 
-        return sourceControl;
+        // Clean up registries when the source control is disposed. Without this,
+        // disposed entries leak and findSourceControlImpl() may return a stale
+        // (disposed) instance as a parent for a later-created source control
+        // with the same id + rootUri (e.g. a worktree recreated after removal).
+        sourceControl.onDidDispose(() => {
+            this.sourceControls.delete(handle);
+            const list = this.sourceControlsByExtension.get(extension.model.id);
+            if (list) {
+                const index = list.indexOf(sourceControl);
+                if (index >= 0) {
+                    list.splice(index, 1);
+                }
+                if (list.length === 0) {
+                    this.sourceControlsByExtension.delete(extension.model.id);
+                }
+            }
+        });
+
+        return sourceControl.apiObject;
+    }
+
+    private findSourceControlImpl(apiObject: theia.SourceControl): SourceControlImpl | undefined {
+        for (const impl of this.sourceControls.values()) {
+            if (impl.id === apiObject.id && impl.rootUri?.toString() === apiObject.rootUri?.toString()) {
+                return impl;
+            }
+        }
+        return undefined;
     }
 
     getLastInputBox(extension: Plugin): ScmInputBoxImpl | undefined {
@@ -755,15 +1032,15 @@ export class ScmExtImpl implements ScmExt {
         return sourceControl && sourceControl.inputBox;
     }
 
-    $provideOriginalResource(sourceControlHandle: number, uriComponents: string, token: theia.CancellationToken): Promise<UriComponents | undefined> {
-        const sourceControl = this.sourceControls.get(sourceControlHandle);
+    async $provideOriginalResource(sourceControlHandle: number, uriComponents: string, token: theia.CancellationToken): Promise<UriComponents | undefined> {
+        const quickDiffProvider = this.sourceControls.get(sourceControlHandle)?.quickDiffProvider;
 
-        if (!sourceControl || !sourceControl.quickDiffProvider || !sourceControl.quickDiffProvider.provideOriginalResource) {
-            return Promise.resolve(undefined);
+        if (!quickDiffProvider?.provideOriginalResource) {
+            return undefined;
         }
 
-        return new Promise<UriComponents | undefined>(() => sourceControl.quickDiffProvider!.provideOriginalResource!(URI.file(uriComponents), token))
-            .then<UriComponents | undefined>(r => r || undefined);
+        const result = await quickDiffProvider.provideOriginalResource(URI.file(uriComponents), token);
+        return result || undefined;
     }
 
     $onInputBoxValueChange(sourceControlHandle: number, value: string): Promise<void> {
@@ -809,6 +1086,73 @@ export class ScmExtImpl implements ScmExt {
             return Promise.resolve(undefined);
         }
         return [result.message, result.type];
+    }
+
+    async $provideHistoryItemRefs(sourceControlHandle: number, historyItemRefs: string[] | undefined, token: CancellationToken): Promise<ScmHistoryItemRefDto[] | undefined> {
+        const sourceControl = this.sourceControls.get(sourceControlHandle);
+        if (!sourceControl || !sourceControl.historyProvider) {
+            return undefined;
+        }
+        const result = await sourceControl.historyProvider.provideHistoryItemRefs(historyItemRefs, token);
+        if (!result) {
+            return undefined;
+        }
+        sourceControl.historyItemRefs.clear();
+        for (const ref of result) {
+            sourceControl.historyItemRefs.set(ref.id, ref);
+        }
+        return result.map(historyItemRefToDto);
+    }
+
+    async $provideHistoryItems(sourceControlHandle: number, options: ScmHistoryOptionsDto, token: CancellationToken): Promise<ScmHistoryItemDto[] | undefined> {
+        const sourceControl = this.sourceControls.get(sourceControlHandle);
+        if (!sourceControl || !sourceControl.historyProvider) {
+            return undefined;
+        }
+        const result = await sourceControl.historyProvider.provideHistoryItems(options, token);
+        if (!result) {
+            return undefined;
+        }
+        for (const item of result) {
+            sourceControl.historyItems.set(item.id, item);
+        }
+        return result.map(historyItemToDto);
+    }
+
+    async $provideHistoryItemChanges(
+        sourceControlHandle: number, historyItemId: string,
+        historyItemParentId: string | undefined, token: CancellationToken
+    ): Promise<ScmHistoryItemChangeDto[] | undefined> {
+        const sourceControl = this.sourceControls.get(sourceControlHandle);
+        if (!sourceControl || !sourceControl.historyProvider) {
+            return undefined;
+        }
+        const result = await sourceControl.historyProvider.provideHistoryItemChanges(historyItemId, historyItemParentId, token);
+        if (!result) {
+            return undefined;
+        }
+        return result.map(historyItemChangeToDto);
+    }
+
+    async $resolveHistoryItem(sourceControlHandle: number, historyItemId: string, token: CancellationToken): Promise<ScmHistoryItemDto | undefined> {
+        const sourceControl = this.sourceControls.get(sourceControlHandle);
+        if (!sourceControl || !sourceControl.historyProvider) {
+            return undefined;
+        }
+        const result = await sourceControl.historyProvider.resolveHistoryItem(historyItemId, token);
+        if (!result) {
+            return undefined;
+        }
+        return historyItemToDto(result);
+    }
+
+    async $resolveHistoryItemRefsCommonAncestor(sourceControlHandle: number, historyItemRefs: string[], token: CancellationToken): Promise<string | undefined> {
+        const sourceControl = this.sourceControls.get(sourceControlHandle);
+        if (!sourceControl || !sourceControl.historyProvider) {
+            return undefined;
+        }
+        const result = await sourceControl.historyProvider.resolveHistoryItemRefsCommonAncestor(historyItemRefs, token);
+        return result ?? undefined;
     }
 
     $setSelectedSourceControl(selectedSourceControlHandle: number | undefined): Promise<void> {

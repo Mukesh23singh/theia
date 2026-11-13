@@ -1,27 +1,24 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { enableJSDOM } from '@theia/core/lib/browser/test/jsdom';
 let disableJSDOM = enableJSDOM();
 
 import { FrontendApplicationConfigProvider } from '@theia/core/lib/browser/frontend-application-config-provider';
-import { ApplicationProps } from '@theia/application-package/lib/application-props';
-FrontendApplicationConfigProvider.set({
-    ...ApplicationProps.DEFAULT.frontend.config
-});
+FrontendApplicationConfigProvider.set({});
 
 import { expect } from 'chai';
 import URI from '@theia/core/lib/common/uri';
@@ -32,13 +29,14 @@ import { FileStat } from '@theia/filesystem/lib/common/files';
 import { LabelProvider, OpenerService, FrontendApplication } from '@theia/core/lib/browser';
 import { MessageService, OS } from '@theia/core/lib/common';
 import { SelectionService } from '@theia/core/lib/common/selection-service';
-import { WorkspaceCommandContribution } from './workspace-commands';
-import { WorkspaceCompareHandler } from './workspace-compare-handler';
-import { WorkspaceDeleteHandler } from './workspace-delete-handler';
-import { WorkspaceDuplicateHandler } from './workspace-duplicate-handler';
-import { WorkspacePreferences } from './workspace-preferences';
-import { WorkspaceService } from './workspace-service';
+import { WorkspaceCommandContribution } from './workspace-commands.js';
+import { WorkspaceCompareHandler } from './workspace-compare-handler.js';
+import { WorkspaceDeleteHandler } from './workspace-delete-handler.js';
+import { WorkspaceDuplicateHandler } from './workspace-duplicate-handler.js';
+import { WorkspacePreferences } from '../common/workspace-preferences.js';
+import { WorkspaceService } from './workspace-service.js';
 import { ApplicationServer } from '@theia/core/lib/common/application-protocol';
+import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
 
 disableJSDOM();
 
@@ -50,6 +48,7 @@ describe('workspace-commands', () => {
         isFile: true,
         isDirectory: false,
         isSymbolicLink: false,
+        isReadonly: false,
         resource: new URI('foo/bar'),
         name: 'bar',
     };
@@ -58,6 +57,7 @@ describe('workspace-commands', () => {
         isFile: false,
         isDirectory: true,
         isSymbolicLink: false,
+        isReadonly: false,
         resource: new URI('foo'),
         name: 'foo',
         children: [
@@ -88,6 +88,7 @@ describe('workspace-commands', () => {
         container.bind(WorkspaceDuplicateHandler).toConstantValue(<WorkspaceDuplicateHandler>{});
         container.bind(WorkspacePreferences).toConstantValue(<WorkspacePreferences>{});
         container.bind(WorkspaceService).toConstantValue(<WorkspaceService>{});
+        container.bind(ClipboardService).toConstantValue(<ClipboardService>{});
         container.bind(ApplicationServer).toConstantValue(<ApplicationServer>{
             getBackendOS(): Promise<OS.Type> {
                 return Promise.resolve(OS.type());

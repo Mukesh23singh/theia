@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -22,9 +22,10 @@
 /* eslint-disable no-null/no-null */
 /* eslint-disable @typescript-eslint/no-shadow */
 
-import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
+import { injectable, inject, postConstruct, named } from '@theia/core/shared/inversify';
+import { ILogger } from '@theia/core';
 import { basename, dirname, normalize, join } from 'path';
-import { v4 } from 'uuid';
+import { generateUuid } from '@theia/core/lib/common/uuid';
 import * as os from 'os';
 import * as fs from 'fs';
 import {
@@ -35,7 +36,7 @@ import {
 import { promisify } from 'util';
 import URI from '@theia/core/lib/common/uri';
 import { Path } from '@theia/core/lib/common/path';
-import { FileUri } from '@theia/core/lib/node/file-uri';
+import { FileUri } from '@theia/core/lib/common/file-uri';
 import { Event, Emitter } from '@theia/core/lib/common/event';
 import { Disposable, DisposableCollection } from '@theia/core/lib/common/disposable';
 import { OS, isWindows } from '@theia/core/lib/common/os';
@@ -54,17 +55,19 @@ import {
     FileSystemProviderError,
     FileChange,
     WatchOptions,
-    FileUpdateOptions, FileUpdateResult, FileReadStreamOptions
-} from '../common/files';
-import { FileSystemWatcherServer } from '../common/filesystem-watcher-protocol';
-import trash = require('trash');
+    FileUpdateOptions, FileUpdateResult, FileReadStreamOptions, FilePermission
+} from '../common/files.js';
+import { FileSystemWatcherServer } from '../common/filesystem-watcher-protocol.js';
+import trash from 'trash';
 import { TextDocumentContentChangeEvent } from '@theia/core/shared/vscode-languageserver-protocol';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { EncodingService } from '@theia/core/lib/common/encoding-service';
 import { BinaryBuffer } from '@theia/core/lib/common/buffer';
 import { ReadableStreamEvents, newWriteableStream } from '@theia/core/lib/common/stream';
 import { CancellationToken } from '@theia/core/lib/common/cancellation';
-import { readFileIntoStream } from '../common/io';
+import { readFileIntoStream } from '../common/io.js';
+// A CommonJS module whose exports cannot be detected statically, so it is imported as a whole.
+import statMode from 'stat-mode';
 
 export namespace DiskFileSystemProvider {
     export interface StatAndLink {
@@ -107,6 +110,9 @@ export class DiskFileSystemProvider implements Disposable,
 
     @inject(EncodingService)
     protected readonly encodingService: EncodingService;
+
+    @inject(ILogger) @named('filesystem:DiskFileSystemProvider')
+    protected readonly logger: ILogger;
 
     @postConstruct()
     protected init(): void {
@@ -151,12 +157,13 @@ export class DiskFileSystemProvider implements Disposable,
     async stat(resource: URI): Promise<Stat> {
         try {
             const { stat, symbolicLink } = await this.statLink(this.toFilePath(resource)); // cannot use fs.stat() here to support links properly
-
+            const mode = new statMode.Mode(stat);
             return {
                 type: this.toType(stat, symbolicLink),
                 ctime: stat.birthtime.getTime(), // intentionally not using ctime here, we want the creation time
                 mtime: stat.mtime.getTime(),
-                size: stat.size
+                size: stat.size,
+                permissions: !mode.owner.write ? FilePermission.Readonly : undefined,
             };
         } catch (error) {
             throw this.toFileSystemProviderError(error);
@@ -218,7 +225,7 @@ export class DiskFileSystemProvider implements Disposable,
                     const stat = await this.stat(resource.resolve(child));
                     result.push([child, stat.type]);
                 } catch (error) {
-                    console.trace(error); // ignore errors for individual entries that can arise from permission denied
+                    this.logger.error(error); // ignore errors for individual entries that can arise from permission denied
                 }
             }));
 
@@ -284,14 +291,13 @@ export class DiskFileSystemProvider implements Disposable,
             // Validate target unless { create: true, overwrite: true }
             if (!opts.create || !opts.overwrite) {
                 const fileExists = await promisify(exists)(filePath);
+
                 if (fileExists) {
                     if (!opts.overwrite) {
                         throw createFileSystemProviderError('File already exists', FileSystemProviderErrorCode.FileExists);
                     }
-                } else {
-                    if (!opts.create) {
-                        throw createFileSystemProviderError('File does not exist', FileSystemProviderErrorCode.FileNotFound);
-                    }
+                } else if (!opts.create) {
+                    throw createFileSystemProviderError('File does not exist', FileSystemProviderErrorCode.FileNotFound);
                 }
             }
 
@@ -331,7 +337,7 @@ export class DiskFileSystemProvider implements Disposable,
                         // After a successful truncate() the flag can be set to 'r+' which will not truncate.
                         flags = 'r+';
                     } catch (error) {
-                        console.trace(error);
+                        this.logger.error(error);
                     }
                 }
 
@@ -383,7 +389,7 @@ export class DiskFileSystemProvider implements Disposable,
                     // In some exotic setups it is well possible that node fails to sync
                     // In that case we disable flushing and log the error to our logger
                     this.canFlush = false;
-                    console.error(error);
+                    this.logger.error(error);
                 }
             }
 
@@ -507,7 +513,12 @@ export class DiskFileSystemProvider implements Disposable,
             if (opts.recursive) {
                 await this.rimraf(filePath);
             } else {
-                await promisify(unlink)(filePath);
+                const stat = await promisify(lstat)(filePath);
+                if (stat.isDirectory() && !stat.isSymbolicLink()) {
+                    await promisify(rmdir)(filePath);
+                } else {
+                    await promisify(unlink)(filePath);
+                }
             }
         } else {
             await trash(filePath);
@@ -523,7 +534,7 @@ export class DiskFileSystemProvider implements Disposable,
 
     protected async rimrafMove(path: string): Promise<void> {
         try {
-            const pathInTemp = join(os.tmpdir(), v4());
+            const pathInTemp = join(os.tmpdir(), generateUuid());
             try {
                 await promisify(rename)(path, pathInTemp);
             } catch (error) {
@@ -531,7 +542,9 @@ export class DiskFileSystemProvider implements Disposable,
             }
 
             // Delete but do not return as promise
-            this.rimrafUnlink(pathInTemp);
+            this.rimrafUnlink(pathInTemp).catch(error => {
+                this.logger.warn(`Failed to clean up temporary rimraf folder '${pathInTemp}':`, error);
+            });
         } catch (error) {
             if (error.code !== 'ENOENT') {
                 throw error;
@@ -708,7 +721,7 @@ export class DiskFileSystemProvider implements Disposable,
         copiedSources[source] = true; // remember as copied
 
         // Create folder
-        this.mkdirp(target, fileStat.mode & 511);
+        await this.mkdirp(target, fileStat.mode & 511);
 
         // Copy each file recursively
         const files = await promisify(readdir)(source);
@@ -823,7 +836,8 @@ export class DiskFileSystemProvider implements Disposable,
         };
         watcherService.watchFileChanges(resource.toString(), {
             // Convert from `files.WatchOptions` to internal `watcher-protocol.WatchOptions`:
-            ignored: opts.excludes
+            ignored: opts.excludes,
+            recursive: opts.recursive
         }).then(watcherId => {
             if (handle.disposed) {
                 watcherService.unwatchFileChanges(watcherId);

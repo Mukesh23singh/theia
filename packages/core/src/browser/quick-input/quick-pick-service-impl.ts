@@ -1,23 +1,23 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, inject, optional } from 'inversify';
-import { Emitter } from '../../common/event';
-import { QuickPickService } from '../../common/quick-pick-service';
-import { QuickInputService, QuickPickItem, QuickInputButtonHandle, QuickPick, QuickPickOptions } from './quick-input-service';
+import { Emitter } from '../../common/event.js';
+import { QuickPickSeparator, QuickPickService } from '../../common/quick-pick-service.js';
+import { QuickInputService, QuickPickItem, QuickInputButtonHandle, QuickPick, QuickPickOptions } from './quick-input-service.js';
 
 @injectable()
 export class QuickPickServiceImpl implements QuickPickService {
@@ -46,7 +46,7 @@ export class QuickPickServiceImpl implements QuickPickService {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private items: Array<any> = [];
 
-    async show<T extends QuickPickItem>(items: Array<T>, options?: QuickPickOptions<T>): Promise<T> {
+    async show<T extends QuickPickItem>(items: Array<T | QuickPickSeparator>, options?: QuickPickOptions<T>): Promise<T | undefined> {
         this.items = items;
         const opts = Object.assign({}, options, {
             onDidAccept: () => this.onDidAcceptEmitter.fire(),
@@ -56,7 +56,7 @@ export class QuickPickServiceImpl implements QuickPickService {
             onDidHide: () => this.onDidHideEmitter.fire(),
             onDidTriggerButton: (btn: QuickInputButtonHandle) => this.onDidTriggerButtonEmitter.fire(btn),
         });
-        return this.quickInputService?.showQuickPick(this.items, opts);
+        return this.quickInputService?.showQuickPick<T>(this.items, opts);
     }
 
     hide(): void {

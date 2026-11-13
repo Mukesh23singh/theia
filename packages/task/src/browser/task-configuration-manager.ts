@@ -1,37 +1,38 @@
-/********************************************************************************
- * Copyright (C) 2019 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as jsoncparser from 'jsonc-parser';
-import debounce = require('p-debounce');
-import { inject, injectable, postConstruct, named } from '@theia/core/shared/inversify';
+import debounce from 'p-debounce';
+import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
 import URI from '@theia/core/lib/common/uri';
 import { Emitter, Event } from '@theia/core/lib/common/event';
 import { EditorManager, EditorWidget } from '@theia/editor/lib/browser';
-import { PreferenceScope, PreferenceProvider, PreferenceService } from '@theia/core/lib/browser';
+import { PreferenceScope, PreferenceService, DisposableCollection, PreferenceProviderProvider, nls } from '@theia/core/lib/common';
 import { QuickPickService } from '@theia/core/lib/common/quick-pick-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
-import { TaskConfigurationModel } from './task-configuration-model';
-import { TaskTemplateSelector } from './task-templates';
-import { TaskCustomization, TaskConfiguration, TaskConfigurationScope, TaskScope } from '../common/task-protocol';
+import { TaskConfigurationModel } from './task-configuration-model.js';
+import { TaskTemplateSelector } from './task-templates.js';
+import { TaskCustomization, TaskConfiguration, TaskConfigurationScope, TaskScope } from '../common/task-protocol.js';
 import { WorkspaceVariableContribution } from '@theia/workspace/lib/browser/workspace-variable-contribution';
 import { FileChangeType } from '@theia/filesystem/lib/common/filesystem-watcher-protocol';
-import { PreferenceConfigurations } from '@theia/core/lib/browser/preferences/preference-configurations';
+import { PreferenceConfigurations } from '@theia/core/lib/common/preferences/preference-configurations';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
-import { DisposableCollection } from '@theia/core/lib/common';
-import { TaskSchemaUpdater } from './task-schema-updater';
+import { TaskSchemaUpdater } from './task-schema-updater.js';
+import { JSONObject } from '@theia/core/shared/@lumino/coreutils';
+import { PreferenceProvider } from '@theia/core/lib/common/preferences/preference-provider';
 
 export interface TasksChange {
     scope: TaskConfigurationScope;
@@ -62,14 +63,8 @@ export class TaskConfigurationManager {
     @inject(TaskSchemaUpdater)
     protected readonly taskSchemaProvider: TaskSchemaUpdater;
 
-    @inject(PreferenceProvider) @named(PreferenceScope.Folder)
-    protected readonly folderPreferences: PreferenceProvider;
-
-    @inject(PreferenceProvider) @named(PreferenceScope.User)
-    protected readonly userPreferences: PreferenceProvider;
-
-    @inject(PreferenceProvider) @named(PreferenceScope.Workspace)
-    protected readonly workspacePreferences: PreferenceProvider;
+    @inject(PreferenceProviderProvider)
+    protected readonly preferenceProviderProvider: PreferenceProviderProvider;
 
     @inject(PreferenceConfigurations)
     protected readonly preferenceConfigurations: PreferenceConfigurations;
@@ -84,13 +79,13 @@ export class TaskConfigurationManager {
     readonly onDidChangeTaskConfig: Event<TasksChange> = this.onDidChangeTaskConfigEmitter.event;
 
     protected readonly models = new Map<TaskConfigurationScope, TaskConfigurationModel>();
-    protected workspaceDelegate: PreferenceProvider;
+    protected workspaceDelegate: PreferenceProvider | undefined;
 
     @postConstruct()
-    protected async init(): Promise<void> {
+    protected init(): void {
         this.createModels();
-        this.folderPreferences.onDidPreferencesChanged(e => {
-            if (e['tasks']) {
+        this.preferenceProviderProvider(PreferenceScope.Folder)?.onDidPreferencesChanged(e => {
+            if (e.some(change => change.preferenceName === 'tasks')) {
                 this.updateModels();
             }
         });
@@ -103,7 +98,7 @@ export class TaskConfigurationManager {
     }
 
     protected createModels(): void {
-        const userModel = new TaskConfigurationModel(TaskScope.Global, this.userPreferences);
+        const userModel = new TaskConfigurationModel(TaskScope.Global, this.preferenceProviderProvider(PreferenceScope.User));
         userModel.onDidChange(() => this.onDidChangeTaskConfigEmitter.fire({ scope: TaskScope.Global, type: FileChangeType.UPDATED }));
         this.models.set(TaskScope.Global, userModel);
 
@@ -121,7 +116,7 @@ export class TaskConfigurationManager {
             const key = rootStat.resource.toString();
             toDelete.delete(key);
             if (!this.models.has(key)) {
-                const model = new TaskConfigurationModel(key, this.folderPreferences);
+                const model = new TaskConfigurationModel(key, this.preferenceProviderProvider(PreferenceScope.Folder));
                 model.onDidChange(() => this.onDidChangeTaskConfigEmitter.fire({ scope: key, type: FileChangeType.UPDATED }));
                 model.onDispose(() => this.models.delete(key));
                 this.models.set(key, model);
@@ -198,7 +193,7 @@ export class TaskConfigurationManager {
                 } catch {
                     taskContent = this.taskSchemaProvider.getTaskSchema().default ?? {};
                 }
-                await model.preferences.setPreference('tasks', taskContent);
+                await model.preferences?.setPreference('tasks', taskContent as JSONObject);
             }
         }
     }
@@ -216,7 +211,7 @@ export class TaskConfigurationManager {
 
     protected async getInitialConfigurationContent(): Promise<string | undefined> {
         const selected = await this.quickPickService.show(this.taskTemplateSelector.selectTemplates(), {
-            placeholder: 'Select a Task Template'
+            placeholder: nls.localizeByDefault('Select a Task Template')
         });
         if (selected) {
             return selected.value?.content;
@@ -225,8 +220,9 @@ export class TaskConfigurationManager {
 
     protected readonly toDisposeOnDelegateChange = new DisposableCollection();
     protected updateWorkspaceModel(): void {
-        const newDelegate = this.workspaceService.saved ? this.workspacePreferences : this.folderPreferences;
-        const effectiveScope = this.workspaceService.saved ? TaskScope.Workspace : this.workspaceService.tryGetRoots()[0]?.resource.toString();
+        const isFolderWorkspace = this.workspaceService.opened && !this.workspaceService.saved;
+        const newDelegate = isFolderWorkspace ? this.preferenceProviderProvider(PreferenceScope.Folder) : this.preferenceProviderProvider(PreferenceScope.Workspace);
+        const effectiveScope = isFolderWorkspace ? this.workspaceService.tryGetRoots()[0]?.resource.toString() : TaskScope.Workspace;
         if (newDelegate !== this.workspaceDelegate) {
             this.workspaceDelegate = newDelegate;
             this.toDisposeOnDelegateChange.dispose();
@@ -234,13 +230,13 @@ export class TaskConfigurationManager {
             const workspaceModel = new TaskConfigurationModel(effectiveScope, newDelegate);
             this.toDisposeOnDelegateChange.push(workspaceModel);
             // If the delegate is the folder preference provider, its events will be relayed via the folder scope models.
-            if (newDelegate === this.workspacePreferences) {
+            if (newDelegate === this.preferenceProviderProvider(PreferenceScope.Workspace)) {
                 this.toDisposeOnDelegateChange.push(workspaceModel.onDidChange(() => {
                     this.onDidChangeTaskConfigEmitter.fire({ scope: TaskScope.Workspace, type: FileChangeType.UPDATED });
                 }));
             }
             this.models.set(TaskScope.Workspace, workspaceModel);
-            this.onDidChangeTaskConfigEmitter.fire({ scope: TaskScope.Workspace, type: FileChangeType.UPDATED });
+            this.onDidChangeTaskConfigEmitter.fire({ scope: effectiveScope, type: FileChangeType.UPDATED });
         }
     }
 }

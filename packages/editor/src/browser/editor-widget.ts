@@ -1,25 +1,29 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { Disposable, SelectionService, Event } from '@theia/core/lib/common';
-import { Widget, BaseWidget, Message, Saveable, SaveableSource, Navigatable, StatefulWidget } from '@theia/core/lib/browser';
+import { Disposable, SelectionService, Event, UNTITLED_SCHEME } from '@theia/core/lib/common';
+import {
+    Widget, BaseWidget, Message, Saveable, SaveableSource, Navigatable, StatefulWidget, lock, TabBar, TabBarTracker, unlock, ExtractableWidget
+} from '@theia/core/lib/browser';
 import URI from '@theia/core/lib/common/uri';
-import { TextEditor } from './editor';
+import { TextEditor } from './editor.js';
 
-export class EditorWidget extends BaseWidget implements SaveableSource, Navigatable, StatefulWidget {
+export class EditorWidget extends BaseWidget implements SaveableSource, Navigatable, StatefulWidget, ExtractableWidget {
+
+    protected readonly tabBarTracker = new TabBarTracker(this, (oldTabBar, newTabBar) => this.handleTabBarChange(oldTabBar, newTabBar));
 
     constructor(
         readonly editor: TextEditor,
@@ -27,20 +31,40 @@ export class EditorWidget extends BaseWidget implements SaveableSource, Navigata
     ) {
         super(editor);
         this.addClass('theia-editor');
+        if (editor.isReadonly) {
+            lock(this.title);
+        }
         this.toDispose.push(this.editor);
         this.toDispose.push(this.editor.onSelectionChanged(() => this.setSelection()));
         this.toDispose.push(this.editor.onFocusChanged(() => this.setSelection()));
+        this.toDispose.push(this.editor.onDidChangeReadOnly(isReadonly => {
+            if (isReadonly) {
+                lock(this.title);
+            } else {
+                unlock(this.title);
+            }
+        }));
+        this.toDispose.push(this.tabBarTracker);
         this.toDispose.push(Disposable.create(() => {
             if (this.selectionService.selection === this.editor) {
                 this.selectionService.selection = undefined;
             }
         }));
     }
+    isExtractable: boolean = true;
+    secondaryWindow: Window | undefined;
+
+    navigationHistorySupport: boolean = true;
 
     setSelection(): void {
         if (this.editor.isFocused() && this.selectionService.selection !== this.editor) {
             this.selectionService.selection = this.editor;
         }
+    }
+
+    protected override handleVisiblityChanged(isNowVisible: boolean): void {
+        this.editor.handleVisibilityChanged(isNowVisible);
+        super.handleVisiblityChanged(isNowVisible);
     }
 
     get saveable(): Saveable {
@@ -54,25 +78,44 @@ export class EditorWidget extends BaseWidget implements SaveableSource, Navigata
         return this.editor.createMoveToUri(resourceUri);
     }
 
-    protected onActivateRequest(msg: Message): void {
+    override getPreviewNode(): Node | undefined {
+        if (!this.isVisible && this.editor.stageForPreview) {
+            this.editor.stageForPreview();
+            queueMicrotask(() => this.editor.unstagePreview?.());
+        }
+        return this.node;
+    }
+
+    protected override onActivateRequest(msg: Message): void {
         super.onActivateRequest(msg);
         this.editor.focus();
         this.selectionService.selection = this.editor;
     }
 
-    protected onAfterAttach(msg: Message): void {
+    protected override onAfterAttach(msg: Message): void {
         super.onAfterAttach(msg);
         if (this.isVisible) {
             this.editor.refresh();
         }
+        this.tabBarTracker.check();
     }
 
-    protected onAfterShow(msg: Message): void {
+    protected handleTabBarChange(oldTabBar?: TabBar<Widget>, newTabBar?: TabBar<Widget>): void {
+        const ownSaveable = Saveable.get(this);
+        const competingEditors = ownSaveable && newTabBar?.titles.filter(title => title !== this.title
+            && (title.owner instanceof EditorWidget)
+            && title.owner.editor.uri.isEqual(this.editor.uri)
+            && Saveable.get(title.owner) === ownSaveable
+        );
+        competingEditors?.forEach(title => title.owner.close());
+    }
+
+    protected override onAfterShow(msg: Message): void {
         super.onAfterShow(msg);
         this.editor.refresh();
     }
 
-    protected onResize(msg: Widget.ResizeMessage): void {
+    protected override onResize(msg: Widget.ResizeMessage): void {
         if (msg.width < 0 || msg.height < 0) {
             this.editor.resizeToFit();
         } else {
@@ -80,8 +123,8 @@ export class EditorWidget extends BaseWidget implements SaveableSource, Navigata
         }
     }
 
-    storeState(): object {
-        return this.editor.storeViewState();
+    storeState(): object | undefined {
+        return this.getResourceUri()?.scheme === UNTITLED_SCHEME ? undefined : this.editor.storeViewState();
     }
 
     restoreState(oldState: object): void {

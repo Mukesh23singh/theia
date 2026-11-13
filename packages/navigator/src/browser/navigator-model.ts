@@ -1,24 +1,24 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import URI from '@theia/core/lib/common/uri';
 import { FileNode, FileTreeModel } from '@theia/filesystem/lib/browser';
 import { OpenerService, open, TreeNode, ExpandableTreeNode, CompositeTreeNode, SelectableTreeNode } from '@theia/core/lib/browser';
-import { FileNavigatorTree, WorkspaceRootNode, WorkspaceNode } from './navigator-tree';
+import { FileNavigatorTree, WorkspaceRootNode, WorkspaceNode } from './navigator-tree.js';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { FrontendApplicationStateService } from '@theia/core/lib/browser/frontend-application-state';
 import { ProgressService } from '@theia/core/lib/common/progress-service';
@@ -29,7 +29,7 @@ import { Disposable } from '@theia/core/lib/common/disposable';
 export class FileNavigatorModel extends FileTreeModel {
 
     @inject(OpenerService) protected readonly openerService: OpenerService;
-    @inject(FileNavigatorTree) protected readonly tree: FileNavigatorTree;
+    @inject(FileNavigatorTree) protected override readonly tree: FileNavigatorTree;
     @inject(WorkspaceService) protected readonly workspaceService: WorkspaceService;
     @inject(FrontendApplicationStateService) protected readonly applicationState: FrontendApplicationStateService;
 
@@ -37,7 +37,7 @@ export class FileNavigatorModel extends FileTreeModel {
     protected readonly progressService: ProgressService;
 
     @postConstruct()
-    protected init(): void {
+    protected override init(): void {
         super.init();
         this.reportBusyProgress();
         this.initializeRoot();
@@ -98,17 +98,15 @@ export class FileNavigatorModel extends FileTreeModel {
         }
     }
 
-    protected doOpenNode(node: TreeNode): void {
+    protected override doOpenNode(node: TreeNode): void {
         if (node.visible === false) {
             return;
         } else if (FileNode.is(node)) {
             open(this.openerService, node.uri);
-        } else {
-            super.doOpenNode(node);
         }
     }
 
-    *getNodesByUri(uri: URI): IterableIterator<TreeNode> {
+    override *getNodesByUri(uri: URI): IterableIterator<TreeNode> {
         const workspace = this.root;
         if (WorkspaceNode.is(workspace)) {
             for (const root of workspace.children) {
@@ -160,7 +158,7 @@ export class FileNavigatorModel extends FileTreeModel {
     /**
      * Move the given source file or directory to the given target directory.
      */
-    async move(source: TreeNode, target: TreeNode): Promise<URI | undefined> {
+    override async move(source: TreeNode, target: TreeNode): Promise<URI | undefined> {
         if (source.parent && WorkspaceRootNode.is(source)) {
             // do not support moving a root folder
             return undefined;

@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2020 RedHat and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 RedHat and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
@@ -22,6 +22,9 @@
 
 import { Command, Disposable, Event } from '@theia/core/lib/common';
 import { URI } from '@theia/core/shared/vscode-uri';
+import { ThemeIcon } from '@theia/core/lib/common/theme';
+import { MarkdownString } from '@theia/core/lib/common/markdown-rendering';
+import { AccessibilityInformation } from '@theia/core/lib/common/accessibility';
 
 export interface TimelineItem {
     source: string;
@@ -30,10 +33,12 @@ export interface TimelineItem {
     timestamp: number;
     label: string;
     id?: string;
+    icon?: string | { light: string; dark: string } | ThemeIcon
     description?: string;
-    detail?: string;
-    command?: Command;
+    tooltip?: string | MarkdownString | undefined;
+    command?: Command & { arguments?: unknown[] };
     contextValue?: string;
+    accessibilityInformation?: AccessibilityInformation;
 }
 
 export interface TimelineChangeEvent {

@@ -16,13 +16,16 @@
       "path": "../editor"
     },
     {
+      "path": "../file-search"
+    },
+    {
       "path": "../filesystem"
     },
     {
-      "path": "../monaco"
+      "path": "../process"
     },
     {
-      "path": "../process"
+      "path": "../variable-resolver"
     },
     {
       "path": "../workspace"

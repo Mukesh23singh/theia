@@ -1,27 +1,26 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as assert from 'assert';
-import { TreeNode, CompositeTreeNode } from './tree';
-import { TreeModel } from './tree-model';
-import { MockTreeModel } from './test/mock-tree-model';
+import { TreeNode, CompositeTreeNode } from './tree.js';
+import { TreeModel } from './tree-model.js';
+import { MockTreeModel } from './test/mock-tree-model.js';
 import { expect } from 'chai';
-import { createTreeTestContainer } from './test/tree-test-container';
+import { createTreeTestContainer } from './test/tree-test-container.js';
 
-/* eslint-disable no-unused-expressions */
 describe('Tree', () => {
 
     it('addChildren', () => {
@@ -119,6 +118,36 @@ describe('Tree', () => {
     }
   ]
 }`, node);
+    });
+
+    it('removeChild - clears parent and sibling pointers on the removed node', () => {
+        const node = getNode();
+        const middle = node.children[1];
+        CompositeTreeNode.removeChild(node, middle);
+        expect(middle.parent).to.be.undefined;
+        expect(middle.previousSibling).to.be.undefined;
+        expect(middle.nextSibling).to.be.undefined;
+    });
+
+    it('removeChild - purges the detached subtree from the tree index when a tree is provided', () => {
+        const target = model.getNode('1.2');
+        expect(target).to.not.be.undefined;
+        const parent = target!.parent!;
+        expect(model.getNode('1.2.1')).to.not.be.undefined;
+        CompositeTreeNode.removeChild(parent, target!, model);
+        expect(model.getNode('1.2')).to.be.undefined;
+        expect(model.getNode('1.2.1')).to.be.undefined;
+    });
+
+    it('removeChild - leaves the index untouched when no tree is provided', () => {
+        const target = model.getNode('1.2')!;
+        const parent = target.parent!;
+        CompositeTreeNode.removeChild(parent, target);
+        // Until the caller explicitly purges, the orphan is still in the index.
+        expect(model.getNode('1.2')).to.equal(target);
+        // Explicit purge cleans it up.
+        model.removeNode(target);
+        expect(model.getNode('1.2')).to.be.undefined;
     });
 
     let model: TreeModel;

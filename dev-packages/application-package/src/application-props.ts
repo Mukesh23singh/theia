@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import type { BrowserWindowConstructorOptions } from 'electron';
 export import deepmerge = require('deepmerge');
@@ -32,19 +32,40 @@ export interface ApplicationConfig {
 export type ElectronFrontendApplicationConfig = RequiredRecursive<ElectronFrontendApplicationConfig.Partial>;
 export namespace ElectronFrontendApplicationConfig {
     export const DEFAULT: ElectronFrontendApplicationConfig = {
-        disallowReloadKeybinding: false,
-        windowOptions: {}
+        windowOptions: {},
+        showWindowEarly: true,
+        splashScreenOptions: {},
+        appUserModelId: '',
+        uriScheme: 'theia'
     };
-    export interface Partial {
-
+    export interface SplashScreenOptions {
         /**
-         * If set to `true`, reloading the current browser window won't be possible with the `Ctrl/Cmd + R` keybinding.
-         *
-         * Has no effect if not in an electron environment.
-         *
-         * Defaults to `false`.
+         * Initial width of the splash screen. Defaults to 640.
          */
-        readonly disallowReloadKeybinding?: boolean;
+        width?: number;
+        /**
+         * Initial height of the splash screen. Defaults to 480.
+         */
+        height?: number;
+        /**
+         * Minimum amount of time in milliseconds to show the splash screen before main window is shown.
+         * Defaults to 0, i.e. the splash screen will be shown until the frontend application is ready.
+         */
+        minDuration?: number;
+        /**
+         * Maximum amount of time in milliseconds before splash screen is removed and main window is shown.
+         * Defaults to 30000.
+         */
+        maxDuration?: number;
+        /**
+         * The content to load in the splash screen.
+         * Will be resolved from application root.
+         *
+         * Mandatory attribute.
+         */
+        content?: string;
+    }
+    export interface Partial {
 
         /**
          * Override or add properties to the electron `windowOptions`.
@@ -52,6 +73,55 @@ export namespace ElectronFrontendApplicationConfig {
          * Defaults to `{}`.
          */
         readonly windowOptions?: BrowserWindowConstructorOptions;
+
+        /**
+         * Whether or not to show an empty Electron window as early as possible.
+         *
+         * Defaults to `true`.
+         */
+        readonly showWindowEarly?: boolean;
+
+        /**
+         * Configuration options for splash screen.
+         *
+         * Defaults to `{}` which results in no splash screen being displayed.
+         */
+        readonly splashScreenOptions?: SplashScreenOptions;
+
+        /**
+         * Id for the Jump List in the Windows Menu. It **MUST** be the same as the "appId" field
+         * in the electron-builder config.
+         *
+         * Defaults to an empty string.
+         */
+        readonly appUserModelId?: string;
+
+        /**
+         * The custom uri scheme the application registers to in the operating system.
+         */
+        readonly uriScheme: string;
+    }
+}
+
+export type DefaultTheme = string | Readonly<{ light: string, dark: string }>;
+export namespace DefaultTheme {
+    export function defaultForOSTheme(theme: DefaultTheme): string {
+        if (typeof theme === 'string') {
+            return theme;
+        }
+        if (
+            typeof window !== 'undefined' &&
+            window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches
+        ) {
+            return theme.dark;
+        }
+        return theme.light;
+    }
+    export function defaultBackgroundColor(dark?: boolean): string {
+        // The default light background color is based on the `colors#editor.background` value from
+        // `packages/monaco/data/monaco-themes/vscode/dark_vs.json` and the dark background comes from the `light_vs.json`.
+        return dark ? '#1E1E1E' : '#FFFFFF';
     }
 }
 
@@ -62,18 +132,22 @@ export type FrontendApplicationConfig = RequiredRecursive<FrontendApplicationCon
 export namespace FrontendApplicationConfig {
     export const DEFAULT: FrontendApplicationConfig = {
         applicationName: 'Eclipse Theia',
-        defaultTheme: 'dark',
-        defaultIconTheme: 'none',
-        electron: ElectronFrontendApplicationConfig.DEFAULT
+        defaultTheme: { light: 'light', dark: 'dark' },
+        defaultIconTheme: 'theia-file-icons',
+        electron: ElectronFrontendApplicationConfig.DEFAULT,
+        defaultLocale: '',
+        validatePreferencesSchema: true,
+        reloadOnReconnect: false,
+        uriScheme: 'theia'
     };
     export interface Partial extends ApplicationConfig {
 
         /**
          * The default theme for the application.
          *
-         * Defaults to `dark`.
+         * Defaults to `dark` if the OS's theme is dark. Otherwise `light`.
          */
-        readonly defaultTheme?: string;
+        readonly defaultTheme?: DefaultTheme;
 
         /**
          * The default icon theme for the application.
@@ -95,6 +169,27 @@ export namespace FrontendApplicationConfig {
          * Defaults to `ElectronFrontendApplicationConfig.DEFAULT`.
          */
         readonly electron?: ElectronFrontendApplicationConfig.Partial;
+
+        /**
+         * The default locale for the application.
+         *
+         * Defaults to "".
+         */
+        readonly defaultLocale?: string;
+
+        /**
+         * When `true`, the application will validate the JSON schema of the preferences on start
+         * and log warnings to the console if the schema is not valid.
+         *
+         * Defaults to `true`.
+         */
+        readonly validatePreferencesSchema?: boolean;
+
+        /**
+         * When 'true', the window will reload in case the front end reconnects to a back-end,
+         * but the back end does not have a connection context for this front end anymore.
+         */
+        readonly reloadOnReconnect?: boolean;
     }
 }
 
@@ -104,7 +199,10 @@ export namespace FrontendApplicationConfig {
 export type BackendApplicationConfig = RequiredRecursive<BackendApplicationConfig.Partial>;
 export namespace BackendApplicationConfig {
     export const DEFAULT: BackendApplicationConfig = {
-        singleInstance: false,
+        singleInstance: true,
+        frontendConnectionTimeout: 0,
+        configurationFolder: '.theia',
+        configureProxyFromPreferences: false
     };
     export interface Partial extends ApplicationConfig {
 
@@ -114,6 +212,32 @@ export namespace BackendApplicationConfig {
          * Defaults to `false`.
          */
         readonly singleInstance?: boolean;
+
+        /**
+         * The time in ms the connection context will be preserved for reconnection after a front end disconnects.
+         */
+        readonly frontendConnectionTimeout?: number;
+
+        /**
+         * Configuration folder within the home user folder
+         *
+         * Defaults to `.theia`
+         */
+        readonly configurationFolder?: string;
+
+        /**
+         * When `true`, proxy-related user preferences (`http.proxy`, `http.proxyStrictSSL`,
+         * `http.proxyAuthorization`) will be read from the backend PreferenceService and applied
+         * to the backend's NodeRequestService. When `false` (the default), proxy settings can only
+         * be configured via CLI flags (`--proxy-url`, etc.) or environment variables (`HTTP_PROXY`,
+         * `HTTPS_PROXY`).
+         *
+         * Enable this for desktop/Electron deployments where the user is trusted. Leave disabled
+         * for cloud deployments where proxy configuration should be controlled by the operator.
+         *
+         * Defaults to `false`.
+         */
+        readonly configureProxyFromPreferences?: boolean;
     }
 }
 
@@ -191,10 +315,11 @@ export interface ApplicationProps extends NpmRegistryProps {
     };
 }
 export namespace ApplicationProps {
-    export type Target = keyof typeof ApplicationTarget;
+    export type Target = `${ApplicationTarget}`;
     export enum ApplicationTarget {
         browser = 'browser',
-        electron = 'electron'
+        electron = 'electron',
+        browserOnly = 'browser-only'
     };
     export const DEFAULT: ApplicationProps = {
         ...NpmRegistryProps.DEFAULT,

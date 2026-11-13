@@ -16,7 +16,16 @@
       "path": "../application-package"
     },
     {
+      "path": "../ffmpeg"
+    },
+    {
+      "path": "../localization-manager"
+    },
+    {
       "path": "../ovsx-client"
+    },
+    {
+      "path": "../request"
     }
   ]
 }

@@ -1,35 +1,36 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import * as PDFObject from 'pdfobject';
-import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
-import { Message } from '@theia/core/shared/@phosphor/messaging';
+// A CommonJS module whose exports cannot be detected statically, so it is imported as a whole.
+import PDFObject from 'pdfobject';
+import { inject, injectable, postConstruct, named } from '@theia/core/shared/inversify';
+import { Message } from '@theia/core/shared/@lumino/messaging';
 import URI from '@theia/core/lib/common/uri';
-import { ILogger } from '@theia/core/lib/common/logger';
+import { ILogger } from '@theia/core';
 import { Emitter } from '@theia/core/lib/common/event';
 import { KeybindingRegistry } from '@theia/core/lib/browser/keybinding';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
 import { parseCssTime, Key, KeyCode } from '@theia/core/lib/browser';
 import { DisposableCollection, Disposable } from '@theia/core/lib/common/disposable';
 import { BaseWidget, addEventListener, codiconArray } from '@theia/core/lib/browser/widgets/widget';
-import { LocationMapperService } from './location-mapper-service';
+import { LocationMapperService } from './location-mapper-service.js';
 import { ApplicationShellMouseTracker } from '@theia/core/lib/browser/shell/application-shell-mouse-tracker';
 
-import debounce = require('@theia/core/shared/lodash.debounce');
-import { MiniBrowserContentStyle } from './mini-browser-content-style';
+import debounce from '@theia/core/shared/lodash.debounce';
+import { MiniBrowserContentStyle } from './mini-browser-content-style.js';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { FileChangesEvent, FileChangeType } from '@theia/filesystem/lib/common/files';
 
@@ -162,7 +163,7 @@ export type MiniBrowserContentFactory = (props: MiniBrowserProps) => MiniBrowser
 @injectable()
 export class MiniBrowserContent extends BaseWidget {
 
-    @inject(ILogger)
+    @inject(ILogger) @named('mini-browser:MiniBrowserContent')
     protected readonly logger: ILogger;
 
     @inject(WindowService)
@@ -240,7 +241,7 @@ export class MiniBrowserContent extends BaseWidget {
         }
     }
 
-    protected onActivateRequest(msg: Message): void {
+    protected override onActivateRequest(msg: Message): void {
         super.onActivateRequest(msg);
         if (this.getToolbarProps() !== 'hide') {
             this.input.focus();
@@ -583,7 +584,7 @@ export class MiniBrowserContent extends BaseWidget {
                     this.pdfContainer.style.display = 'block';
                     this.frame.style.display = 'none';
                     PDFObject.embed(url, this.pdfContainer, {
-                        // eslint-disable-next-line max-len, @typescript-eslint/quotes
+                        // eslint-disable-next-line max-len, @stylistic/quotes
                         fallbackLink: `<p style="padding: 0px 15px 0px 15px">Your browser does not support inline PDFs. Click on this <a href='[url]' target="_blank">link</a> to open the PDF in a new tab.</p>`
                     });
                     clearTimeout(this.frameLoadTimeout);
@@ -622,7 +623,7 @@ export class MiniBrowserContent extends BaseWidget {
                 clearTimeout(this.frameLoadTimeout);
                 this.hideLoadIndicator();
                 this.showErrorBar(String(e));
-                console.log(e);
+                this.logger.info(e);
             }
         }
     }

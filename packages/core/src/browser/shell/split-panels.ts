@@ -1,21 +1,21 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable } from 'inversify';
-import { SplitPanel, SplitLayout, Widget } from '@phosphor/widgets';
+import { SplitPanel, SplitLayout, Widget } from '@lumino/widgets';
 
 export interface SplitPositionOptions {
     /** The side of the side panel that shall be resized. */
@@ -91,40 +91,49 @@ export class SplitPositionHandler {
             move.resolve = resolve;
             move.reject = reject;
             if (this.splitMoves.length === 0) {
-                window.requestAnimationFrame(this.animationFrame.bind(this));
+                setTimeout(this.animationFrame.bind(this), 10);
             }
             this.splitMoves.push(move);
         });
     }
 
-    protected animationFrame(time: number): void {
+    protected animationFrame(): void {
+        const time = Date.now();
         const move = this.splitMoves[this.currentMoveIndex];
         let rejectedOrResolved = false;
-        if (move.ended || move.referenceWidget && move.referenceWidget.isHidden) {
+        try {
+            if (move.ended || move.referenceWidget && move.referenceWidget.isHidden) {
+                this.splitMoves.splice(this.currentMoveIndex, 1);
+                if (move.startPosition === undefined || move.targetPosition === undefined) {
+                    move.reject!('Panel is not visible.');
+                } else {
+                    move.resolve!(move.targetPosition);
+                }
+                rejectedOrResolved = true;
+            } else if (!move.started) {
+                this.startMove(move, time);
+                if (move.duration <= 0 || move.startPosition === undefined || move.targetPosition === undefined
+                    || move.startPosition === move.targetPosition) {
+                    this.endMove(move);
+                }
+            } else {
+                const elapsedTime = time - move.startTime!;
+                if (elapsedTime >= move.duration) {
+                    this.endMove(move);
+                } else {
+                    const t = elapsedTime / move.duration;
+                    const start = move.startPosition || 0;
+                    const target = move.targetPosition || 0;
+                    const pos = start + (target - start) * t;
+                    (move.parent.layout as SplitLayout).moveHandle(move.index, pos);
+                }
+            }
+        } catch (error) {
+            // All split moves of the application share this queue: a move that cannot be performed, for example because
+            // its panel was disposed or its handle removed, is dropped so that it cannot stop the moves after it.
             this.splitMoves.splice(this.currentMoveIndex, 1);
-            if (move.startPosition === undefined || move.targetPosition === undefined) {
-                move.reject!('Panel is not visible.');
-            } else {
-                move.resolve!(move.targetPosition);
-            }
+            move.reject!(error);
             rejectedOrResolved = true;
-        } else if (!move.started) {
-            this.startMove(move, time);
-            if (move.duration <= 0 || move.startPosition === undefined || move.targetPosition === undefined
-                || move.startPosition === move.targetPosition) {
-                this.endMove(move);
-            }
-        } else {
-            const elapsedTime = time - move.startTime!;
-            if (elapsedTime >= move.duration) {
-                this.endMove(move);
-            } else {
-                const t = elapsedTime / move.duration;
-                const start = move.startPosition || 0;
-                const target = move.targetPosition || 0;
-                const pos = start + (target - start) * t;
-                (move.parent.layout as SplitLayout).moveHandle(move.index, pos);
-            }
         }
         if (!rejectedOrResolved) {
             this.currentMoveIndex++;
@@ -133,7 +142,7 @@ export class SplitPositionHandler {
             this.currentMoveIndex = 0;
         }
         if (this.splitMoves.length > 0) {
-            window.requestAnimationFrame(this.animationFrame.bind(this));
+            setTimeout(this.animationFrame.bind(this));
         }
     }
 

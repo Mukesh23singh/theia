@@ -1,54 +1,78 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
-import debounce = require('@theia/core/shared/lodash.debounce');
-import { CommandRegistry } from '@theia/core/lib/common/command';
-import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
-import { VSXExtensionsViewContainer } from './vsx-extensions-view-container';
-import { VSXExtensionsModel } from './vsx-extensions-model';
-import { ColorContribution } from '@theia/core/lib/browser/color-application-contribution';
-import { ColorRegistry, Color } from '@theia/core/lib/browser/color-registry';
-import { FrontendApplicationContribution, FrontendApplication } from '@theia/core/lib/browser/frontend-application';
-import { MenuModelRegistry, MessageService } from '@theia/core/lib/common';
-import { FileDialogService, OpenFileDialogProps } from '@theia/filesystem/lib/browser';
-import { LabelProvider, PreferenceService } from '@theia/core/lib/browser';
-import { VscodeCommands } from '@theia/plugin-ext-vscode/lib/browser/plugin-vscode-commands-contribution';
-import { VSXExtensionsContextMenu, VSXExtension } from './vsx-extension';
+import { PreferenceScope } from '@theia/core/lib/common/preferences/preference-scope';
+import { CommonMenus, LabelProvider, QuickInputService, QuickPickItem } from '@theia/core/lib/browser';
+import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
-import { BUILTIN_QUERY, INSTALLED_QUERY, RECOMMENDED_QUERY } from './vsx-extensions-search-model';
-import { IGNORE_RECOMMENDATIONS_ID } from './recommended-extensions/recommended-extensions-preference-contribution';
-import { VSXExtensionsCommands } from './vsx-extension-commands';
+import { ColorContribution } from '@theia/core/lib/browser/color-application-contribution';
+import { ColorRegistry } from '@theia/core/lib/browser/color-registry';
+import { FrontendApplication } from '@theia/core/lib/browser/frontend-application';
+import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
+import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
+import { MenuModelRegistry, MessageService, SelectionService, nls } from '@theia/core/lib/common';
+import { Color } from '@theia/core/lib/common/color';
+import { Command, CommandRegistry } from '@theia/core/lib/common/command';
+import URI from '@theia/core/lib/common/uri';
+import { UriAwareCommandHandler } from '@theia/core/lib/common/uri-command-handler';
+import { inject, injectable, named, postConstruct } from '@theia/core/shared/inversify';
+import { FileDialogService, OpenFileDialogProps } from '@theia/filesystem/lib/browser';
+import { NAVIGATOR_CONTEXT_MENU } from '@theia/navigator/lib/browser/navigator-contribution';
+import { VSXExtensionRaw } from '@theia/ovsx-client';
+import { VscodeCommands } from '@theia/plugin-ext-vscode/lib/browser/plugin-vscode-commands-contribution';
+import { DuplicateExtensionError } from '@theia/plugin-ext/lib/common/plugin-protocol';
+import { DateTime } from 'luxon';
+import { VSXRegistryService } from '../common/vsx-registry-service.js';
+import { IGNORE_RECOMMENDATIONS_ID } from '../common/recommended-extensions-preference-contribution.js';
+import { VSXExtension, VSXExtensionsContextMenu } from './vsx-extension.js';
+import { VSXExtensionsCommands } from './vsx-extension-commands.js';
+import { VSXExtensionsModel } from './vsx-extensions-model.js';
+import { BUILTIN_QUERY, INSTALLED_QUERY, RECOMMENDED_QUERY } from './vsx-extensions-search-model.js';
+import { VSXExtensionsViewContainer } from './vsx-extensions-view-container.js';
+import { ApplicationServer } from '@theia/core/lib/common/application-protocol';
+import { ContributionProvider } from '@theia/core/lib/common/contribution-provider';
+import { ExtensionsSourceContribution } from './extensions-source-contribution.js';
+import debounce from '@theia/core/shared/lodash.debounce';
+import { ILogger } from '@theia/core';
 
-/**
- * @deprecated since 1.17.0. - Moved to `vsx-extension-commands.ts` to avoid circular dependencies. Import from there, instead.
- */
-export { VSXExtensionsCommands };
+export namespace VSXCommands {
+    export const TOGGLE_EXTENSIONS: Command = {
+        id: 'vsxExtensions.toggle',
+    };
+}
 
 @injectable()
-export class VSXExtensionsContribution extends AbstractViewContribution<VSXExtensionsViewContainer>
-    implements ColorContribution, FrontendApplicationContribution {
+export class VSXExtensionsContribution extends AbstractViewContribution<VSXExtensionsViewContainer> implements ColorContribution, FrontendApplicationContribution {
 
-    @inject(VSXExtensionsModel) protected readonly model: VSXExtensionsModel;
-    @inject(CommandRegistry) protected readonly commandRegistry: CommandRegistry;
-    @inject(FileDialogService) protected readonly fileDialogService: FileDialogService;
-    @inject(MessageService) protected readonly messageService: MessageService;
-    @inject(LabelProvider) protected readonly labelProvider: LabelProvider;
-    @inject(ClipboardService) protected readonly clipboardService: ClipboardService;
-    @inject(PreferenceService) protected readonly preferenceService: PreferenceService;
+    @inject(VSXExtensionsModel) protected model: VSXExtensionsModel;
+    @inject(CommandRegistry) protected commandRegistry: CommandRegistry;
+    @inject(FileDialogService) protected fileDialogService: FileDialogService;
+    @inject(MessageService) protected messageService: MessageService;
+    @inject(LabelProvider) protected labelProvider: LabelProvider;
+    @inject(ClipboardService) protected clipboardService: ClipboardService;
+    @inject(PreferenceService) protected preferenceService: PreferenceService;
+    @inject(VSXRegistryService) protected vsxRegistryService: VSXRegistryService;
+    @inject(ApplicationServer) protected applicationServer: ApplicationServer;
+    @inject(QuickInputService) protected quickInput: QuickInputService;
+    @inject(SelectionService) protected readonly selectionService: SelectionService;
+    @inject(ContributionProvider) @named(ExtensionsSourceContribution)
+    protected readonly extensionsContributions: ContributionProvider<ExtensionsSourceContribution>;
+
+    @inject(ILogger) @named('vsx-registry:VSXExtensionsContribution')
+    protected readonly logger: ILogger;
 
     constructor() {
         super({
@@ -58,7 +82,7 @@ export class VSXExtensionsContribution extends AbstractViewContribution<VSXExten
                 area: 'left',
                 rank: 500
             },
-            toggleCommandId: 'vsxExtensions.toggle',
+            toggleCommandId: VSXCommands.TOGGLE_EXTENSIONS.id,
             toggleKeybinding: 'ctrlcmd+shift+x'
         });
     }
@@ -75,7 +99,7 @@ export class VSXExtensionsContribution extends AbstractViewContribution<VSXExten
         await this.openView({ activate: false });
     }
 
-    registerCommands(commands: CommandRegistry): void {
+    override registerCommands(commands: CommandRegistry): void {
         super.registerCommands(commands);
         commands.registerCommand(VSXExtensionsCommands.CLEAR_ALL, {
             execute: () => this.model.search.query = '',
@@ -85,6 +109,33 @@ export class VSXExtensionsContribution extends AbstractViewContribution<VSXExten
 
         commands.registerCommand(VSXExtensionsCommands.INSTALL_FROM_VSIX, {
             execute: () => this.installFromVSIX()
+        });
+
+        commands.registerCommand(VSXExtensionsCommands.INSTALL_VSIX_FILE,
+            UriAwareCommandHandler.MonoSelect(this.selectionService, {
+                execute: fileURI => this.installVsixFile(fileURI),
+                isEnabled: fileURI => fileURI.scheme === 'file' && fileURI.path.ext === '.vsix'
+            })
+        );
+
+        commands.registerCommand(VSXExtensionsCommands.INSTALL_ANOTHER_VERSION, {
+            // Versions are queried from the registry on execution, so only built-in extensions are excluded here.
+            // `downloadUrl` must not be required: it is registry-only data that is not populated for already
+            // installed extensions after a restart (see #17607).
+            isEnabled: (extension: VSXExtension) => !extension.builtin,
+            execute: async (extension: VSXExtension) => this.installAnotherVersion(extension),
+        });
+
+        commands.registerCommand(VSXExtensionsCommands.DISABLE, {
+            isVisible: (extension: VSXExtension) => extension.installed && !extension.disabled,
+            isEnabled: (extension: VSXExtension) => extension.installed && !extension.disabled,
+            execute: async (extension: VSXExtension) => extension.disable(),
+        });
+
+        commands.registerCommand(VSXExtensionsCommands.ENABLE, {
+            isVisible: (extension: VSXExtension) => extension.installed && extension.disabled,
+            isEnabled: (extension: VSXExtension) => extension.installed && extension.disabled,
+            execute: async (extension: VSXExtension) => extension.enable(),
         });
 
         commands.registerCommand(VSXExtensionsCommands.COPY, {
@@ -106,19 +157,60 @@ export class VSXExtensionsContribution extends AbstractViewContribution<VSXExten
         commands.registerCommand(VSXExtensionsCommands.SHOW_RECOMMENDATIONS, {
             execute: () => this.showRecommendedExtensions()
         });
+
+        commands.registerCommand(VSXExtensionsCommands.REFRESH, {
+            execute: () => this.refresh()
+        });
     }
 
-    registerMenus(menus: MenuModelRegistry): void {
+    /** Refreshes every contribution that opts in - e.g. MCP re-fetches its registry JSON. */
+    protected async refresh(): Promise<void> {
+        const failures = await Promise.allSettled(
+            this.extensionsContributions.getContributions()
+                .filter(c => !!c.refresh)
+                .map(c => c.refresh!())
+        );
+        for (const result of failures) {
+            if (result.status === 'rejected') {
+                this.logger.warn('Extensions view refresh failed for one contribution:', result.reason);
+            }
+        }
+    }
+
+    override registerMenus(menus: MenuModelRegistry): void {
         super.registerMenus(menus);
+        menus.registerMenuAction(CommonMenus.MANAGE_SETTINGS, {
+            commandId: VSXCommands.TOGGLE_EXTENSIONS.id,
+            label: VSXExtensionsViewContainer.LABEL,
+            order: 'a20'
+        });
         menus.registerMenuAction(VSXExtensionsContextMenu.COPY, {
             commandId: VSXExtensionsCommands.COPY.id,
-            label: 'Copy',
+            label: nls.localizeByDefault('Copy'),
             order: '0'
         });
         menus.registerMenuAction(VSXExtensionsContextMenu.COPY, {
             commandId: VSXExtensionsCommands.COPY_EXTENSION_ID.id,
-            label: 'Copy Extension Id',
+            label: nls.localizeByDefault('Copy Extension ID'),
             order: '1'
+        });
+        menus.registerMenuAction(VSXExtensionsContextMenu.DISABLE, {
+            commandId: VSXExtensionsCommands.DISABLE.id,
+            label: nls.localizeByDefault('Disable')
+        });
+
+        menus.registerMenuAction(VSXExtensionsContextMenu.ENABLE, {
+            commandId: VSXExtensionsCommands.ENABLE.id,
+            label: nls.localizeByDefault('Enable')
+        });
+        menus.registerMenuAction(VSXExtensionsContextMenu.INSTALL, {
+            commandId: VSXExtensionsCommands.INSTALL_ANOTHER_VERSION.id,
+            label: nls.localizeByDefault('Install Specific Version...'),
+        });
+        menus.registerMenuAction(NAVIGATOR_CONTEXT_MENU, {
+            commandId: VSXExtensionsCommands.INSTALL_VSIX_FILE.id,
+            label: VSXExtensionsCommands.INSTALL_VSIX_FILE.label,
+            when: 'resourceScheme == file && resourceExtname == .vsix'
         });
     }
 
@@ -142,7 +234,29 @@ export class VSXExtensionsContribution extends AbstractViewContribution<VSXExten
                     dark: '#28632b',
                     light: '#28632b'
                 }, description: 'Button background hover color for actions extension that stand out (e.g. install button).'
-            }
+            },
+            {
+                id: 'extensionEditor.tableHeadBorder', defaults: {
+                    dark: Color.transparent('#ffffff', 0.7),
+                    light: Color.transparent('#000000', 0.7),
+                    hcDark: Color.white,
+                    hcLight: Color.black
+                }, description: 'Border color for the table head row of the extension editor view'
+            },
+            {
+                id: 'extensionEditor.tableCellBorder', defaults: {
+                    dark: Color.transparent('#ffffff', 0.2),
+                    light: Color.transparent('#000000', 0.2),
+                    hcDark: Color.white,
+                    hcLight: Color.black
+                }, description: 'Border color for a table row of the extension editor view'
+            },
+            {
+                id: 'extensionIcon.verifiedForeground', defaults: {
+                    dark: '#40a6ff',
+                    light: '#40a6ff'
+                }, description: 'The icon color for extension verified publisher.'
+            },
         );
     }
 
@@ -152,23 +266,132 @@ export class VSXExtensionsContribution extends AbstractViewContribution<VSXExten
     protected async installFromVSIX(): Promise<void> {
         const props: OpenFileDialogProps = {
             title: VSXExtensionsCommands.INSTALL_FROM_VSIX.dialogLabel,
-            openLabel: 'Install',
+            openLabel: nls.localizeByDefault('Install from VSIX'),
             filters: { 'VSIX Extensions (*.vsix)': ['vsix'] },
-            canSelectMany: false
+            canSelectMany: false,
+            canSelectFiles: true
         };
         const extensionUri = await this.fileDialogService.showOpenDialog(props);
         if (extensionUri) {
             if (extensionUri.path.ext === '.vsix') {
-                const extensionName = this.labelProvider.getName(extensionUri);
-                try {
-                    await this.commandRegistry.executeCommand(VscodeCommands.INSTALL_FROM_VSIX.id, extensionUri);
-                    this.messageService.info(`Completed installing ${extensionName} from VSIX.`);
-                } catch (e) {
-                    this.messageService.error(`Failed to install ${extensionName} from VSIX.`);
-                    console.warn(e);
-                }
+                await this.installVsixFile(extensionUri);
             } else {
-                this.messageService.error('The selected file is not a valid "*.vsix" plugin.');
+                this.messageService.error(nls.localize('theia/vsx-registry/invalidVSIX', 'The selected file is not a valid "*.vsix" plugin.'));
+            }
+        }
+    }
+
+    /**
+     * Installs a local vs-code extension file.
+     * The implementation doesn't check if the file is a valid VSIX file, or the URI has a *.vsix extension.
+     * The caller should ensure the file is a valid VSIX file.
+     *
+     * @param fileURI the URI of the file to install.
+     */
+    protected async installVsixFile(fileURI: URI): Promise<void> {
+        const extensionName = this.labelProvider.getName(fileURI);
+        try {
+            await this.commandRegistry.executeCommand(VscodeCommands.INSTALL_EXTENSION_FROM_ID_OR_URI.id, fileURI);
+            this.messageService.info(nls.localizeByDefault('Completed installing extension.', extensionName));
+        } catch (e) {
+            if (DuplicateExtensionError.is(e)) {
+                this.messageService.error(
+                    nls.localize('theia/vsx-registry/duplicateVSIX',
+                        'Failed to install {0} from VSIX. The extension is already installed. Uninstall the existing extension before installing a new version from VSIX.',
+                        extensionName)
+                );
+            } else {
+                this.messageService.error(nls.localize('theia/vsx-registry/failedInstallingVSIX', 'Failed to install {0} from VSIX.', extensionName));
+            }
+            this.logger.warn(e);
+        }
+    }
+
+    /**
+     * Given an extension, displays a quick pick of other compatible versions and installs the selected version.
+     *
+     * @param extension a VSX extension.
+     */
+    protected async installAnotherVersion(extension: VSXExtension): Promise<void> {
+        const extensionId = extension.id;
+        const currentVersion = extension.version;
+        const targetPlatform = await this.applicationServer.getApplicationPlatform();
+        const { extensions } = await this.vsxRegistryService.query({ extensionId, includeAllVersions: true });
+        const latestCompatible = await this.vsxRegistryService.findLatestCompatibleExtension({
+            extensionId,
+            includeAllVersions: true,
+            targetPlatform
+        });
+        let compatibleExtensions: VSXExtensionRaw[] = [];
+        let activeItem = undefined;
+        if (latestCompatible) {
+            compatibleExtensions = extensions.slice(extensions.findIndex(ext => ext.version === latestCompatible.version));
+        }
+
+        // Group extensions by version
+        const extensionsByVersion = new Map<string, VSXExtensionRaw[]>();
+        for (const ext of compatibleExtensions) {
+            if (!extensionsByVersion.has(ext.version)) {
+                extensionsByVersion.set(ext.version, []);
+            }
+            extensionsByVersion.get(ext.version)!.push(ext);
+        }
+
+        // Filter extensions to one per version, preferring the current platform or universal
+        const filteredExtensions: VSXExtensionRaw[] = [];
+        for (const exts of extensionsByVersion.values()) {
+            if (exts.length === 1) {
+                // Only one extension for this version, use it directly
+                filteredExtensions.push(exts[0]);
+            } else {
+                // Multiple extensions for this version with different platforms
+                // Try to find one matching the current platform
+                const matchingPlatform = exts.find(e => e.targetPlatform === targetPlatform);
+                if (matchingPlatform) {
+                    filteredExtensions.push(matchingPlatform);
+                } else {
+                    // No match for current platform, try to find universal
+                    const universal = exts.find(e => e.targetPlatform === 'universal');
+                    if (universal) {
+                        filteredExtensions.push(universal);
+                    } else {
+                        // No universal either, just use the first one
+                        filteredExtensions.push(exts[0]);
+                    }
+                }
+            }
+        }
+
+        if (filteredExtensions.length === 0) {
+            // Extensions not on the registry (e.g. VSIX or private installs) have no other versions to offer.
+            // Show feedback instead of an empty quick pick, matching the `NO_TASKS_FOUND` pattern in the task package.
+            await this.quickInput.showQuickPick(
+                [{ label: nls.localize('theia/vsx-registry/vsx-extensions-contribution/no-other-versions', 'No other versions are available.') }],
+                { placeholder: nls.localizeByDefault('Select Version to Install') }
+            );
+            return;
+        }
+
+        const items: QuickPickItem[] = filteredExtensions.map(ext => {
+            const item = {
+                label: ext.version,
+                description: DateTime.fromISO(ext.timestamp).toRelative({ locale: nls.locale }) ?? ''
+            };
+            if (currentVersion === ext.version) {
+                item.description += ` (${nls.localizeByDefault('Current')})`;
+                activeItem = item;
+            }
+            return item;
+        });
+        const selectedItem = await this.quickInput.showQuickPick(items, {
+            placeholder: nls.localizeByDefault('Select Version to Install'),
+            runIfSingle: false,
+            activeItem
+        });
+        if (selectedItem) {
+            const selectedExtension = this.model.getExtension(extensionId);
+            if (selectedExtension) {
+                await this.updateVersion(selectedExtension, selectedItem.label);
             }
         }
     }
@@ -181,20 +404,57 @@ export class VSXExtensionsContribution extends AbstractViewContribution<VSXExten
         this.clipboardService.writeText(extension.id);
     }
 
+    /**
+     * Updates an extension to a specific version.
+     *
+     * @param extension the extension to update.
+     * @param updateToVersion the version to update to.
+     * @param revertToVersion the version to revert to (in case of failure).
+     */
+    protected async updateVersion(extension: VSXExtension, updateToVersion: string): Promise<void> {
+        try {
+            await extension.install({ version: updateToVersion, ignoreOtherVersions: true });
+        } catch {
+            this.messageService.warn(nls.localize('theia/vsx-registry/vsx-extensions-contribution/update-version-version-error', 'Failed to install version {0} of {1}.',
+                updateToVersion, extension.displayName));
+            return;
+        }
+        try {
+            if (extension.version !== updateToVersion) {
+                await extension.uninstall();
+            }
+        } catch {
+            this.messageService.warn(nls.localize('theia/vsx-registry/vsx-extensions-contribution/update-version-uninstall-error', 'Error while removing the extension: {0}.',
+                extension.displayName));
+        }
+    }
+
     protected async showRecommendedToast(): Promise<void> {
         if (!this.preferenceService.get(IGNORE_RECOMMENDATIONS_ID, false)) {
-            const recommended = new Set([...this.model.recommended]);
-            for (const installed of this.model.installed) {
-                recommended.delete(installed);
+            const recommended = new Set<string>();
+            for (const recommendation of this.model.recommended) {
+                if (!this.model.isInstalled(recommendation)) {
+                    recommended.add(recommendation);
+                }
             }
             if (recommended.size) {
-                const userResponse = await this.messageService.info('Would you like to install the recommended extensions?', 'Install', 'Show Recommended');
-                if (userResponse === 'Install') {
+                const install = nls.localizeByDefault('Install');
+                const showRecommendations = nls.localizeByDefault('Show Recommendations');
+                const neverAskAgain = nls.localizeByDefault('Never ask me again');
+                const userResponse = await this.messageService.info(
+                    nls.localize('theia/vsx-registry/recommendedExtensions', 'Do you want to install the recommended extensions for this repository?'),
+                    install,
+                    showRecommendations,
+                    neverAskAgain
+                );
+                if (userResponse === install) {
                     for (const recommendation of recommended) {
                         this.model.getExtension(recommendation)?.install();
                     }
-                } else if (userResponse === 'Show Recommended') {
+                } else if (userResponse === showRecommendations) {
                     await this.showRecommendedExtensions();
+                } else if (userResponse === neverAskAgain) {
+                    await this.preferenceService.set(IGNORE_RECOMMENDATIONS_ID, true, PreferenceScope.Workspace);
                 }
             }
         }

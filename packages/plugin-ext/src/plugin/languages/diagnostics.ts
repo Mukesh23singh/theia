@@ -1,28 +1,28 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as theia from '@theia/plugin';
 import { Event, Emitter } from '@theia/core/lib/common/event';
-import { convertDiagnosticToMarkerData } from '../type-converters';
-import { DiagnosticSeverity, MarkerSeverity } from '../types-impl';
-import { MarkerData } from '../../common/plugin-api-rpc-model';
-import { RPCProtocol } from '../../common/rpc-protocol';
-import { PLUGIN_RPC_CONTEXT, LanguagesMain } from '../../common/plugin-api-rpc';
+import { convertDiagnosticToMarkerData } from '../type-converters.js';
+import { DiagnosticSeverity, MarkerSeverity } from '../types-impl.js';
+import { MarkerData } from '../../common/plugin-api-rpc-model.js';
+import { RPCProtocol } from '../../common/rpc-protocol.js';
+import { PLUGIN_RPC_CONTEXT, LanguagesMain } from '../../common/plugin-api-rpc.js';
 import { URI } from '@theia/core/shared/vscode-uri';
-import { v4 } from 'uuid';
+import { generateUuid } from '@theia/core/lib/common/uuid';
 
 export class DiagnosticCollection implements theia.DiagnosticCollection {
     private static DIAGNOSTICS_PRIORITY = [
@@ -30,6 +30,7 @@ export class DiagnosticCollection implements theia.DiagnosticCollection {
     ];
 
     private collectionName: string;
+    private ownerId: string;
     private diagnosticsLimitPerResource: number;
     private proxy: LanguagesMain;
     private onDidChangeDiagnosticsEmitter: Emitter<theia.DiagnosticChangeEvent>;
@@ -38,8 +39,9 @@ export class DiagnosticCollection implements theia.DiagnosticCollection {
     private isDisposed: boolean;
     private onDisposeCallback: (() => void) | undefined;
 
-    constructor(name: string, maxCountPerFile: number, proxy: LanguagesMain, onDidChangeDiagnosticsEmitter: Emitter<theia.DiagnosticChangeEvent>) {
+    constructor(name: string, owner: string, maxCountPerFile: number, proxy: LanguagesMain, onDidChangeDiagnosticsEmitter: Emitter<theia.DiagnosticChangeEvent>) {
         this.collectionName = name;
+        this.ownerId = owner;
         this.diagnosticsLimitPerResource = maxCountPerFile;
         this.proxy = proxy;
         this.onDidChangeDiagnosticsEmitter = onDidChangeDiagnosticsEmitter;
@@ -51,6 +53,10 @@ export class DiagnosticCollection implements theia.DiagnosticCollection {
 
     get name(): string {
         return this.collectionName;
+    }
+
+    get owner(): string {
+        return this.ownerId;
     }
 
     set(uri: theia.Uri, diagnostics: theia.Diagnostic[] | undefined): void;
@@ -115,7 +121,7 @@ export class DiagnosticCollection implements theia.DiagnosticCollection {
         if (this.has(uri)) {
             this.fireDiagnosticChangeEvent(uri);
             this.diagnostics.delete(uri.toString());
-            this.proxy.$changeDiagnostics(this.name, [[uri.toString(), []]]);
+            this.proxy.$changeDiagnostics(this.ownerId, [[uri.toString(), []]]);
         }
     }
 
@@ -123,7 +129,7 @@ export class DiagnosticCollection implements theia.DiagnosticCollection {
         this.ensureNotDisposed();
         this.fireDiagnosticChangeEvent(this.getAllResourcesUris());
         this.diagnostics.clear();
-        this.proxy.$clearDiagnostics(this.name);
+        this.proxy.$clearDiagnostics(this.ownerId);
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -135,9 +141,16 @@ export class DiagnosticCollection implements theia.DiagnosticCollection {
         });
     }
 
-    get(uri: URI): theia.Diagnostic[] | undefined {
+    *[Symbol.iterator](): IterableIterator<[uri: theia.Uri, diagnostics: readonly theia.Diagnostic[]]> {
         this.ensureNotDisposed();
-        return this.getDiagnosticsByUri(uri);
+        for (const [uriString, diag] of this.diagnostics.entries()) {
+            yield [URI.parse(uriString), diag instanceof Array ? Object.freeze(diag) : []];
+        }
+    }
+
+    get(uri: URI): theia.Diagnostic[] {
+        this.ensureNotDisposed();
+        return this.getDiagnosticsByUri(uri) || [];
     }
 
     has(uri: URI): boolean {
@@ -240,7 +253,7 @@ export class DiagnosticCollection implements theia.DiagnosticCollection {
             }
         }
 
-        this.proxy.$changeDiagnostics(this.name, markers);
+        this.proxy.$changeDiagnostics(this.ownerId, markers);
     }
 }
 
@@ -249,7 +262,12 @@ export class Diagnostics {
     private static GENERATED_DIAGNOSTIC_COLLECTION_NAME_PREFIX = '_generated_diagnostic_collection_name_#';
 
     private proxy: LanguagesMain;
-    private diagnosticCollections: Map<string, DiagnosticCollection>; // id -> diagnostic collection
+    // Collections are keyed by their unique `owner` id (which is the same as `name` for the first
+    // collection with that name, but is suffixed when a duplicate name is requested). This matches
+    // VS Code's behavior and prevents collisions on the main side's marker owner namespace as well
+    // as a latent bug where disposing the first collection would evict the second from the map.
+    private diagnosticCollections: Map<string, DiagnosticCollection>;
+    private nextOwnerSuffix = 1;
 
     private diagnosticsChangedEmitter = new Emitter<theia.DiagnosticChangeEvent>();
     public readonly onDidChangeDiagnostics: Event<theia.DiagnosticChangeEvent> = this.diagnosticsChangedEmitter.event;
@@ -271,24 +289,31 @@ export class Diagnostics {
     }
 
     createDiagnosticCollection(name?: string): theia.DiagnosticCollection {
+        let owner: string;
         if (!name) {
             do {
                 name = Diagnostics.GENERATED_DIAGNOSTIC_COLLECTION_NAME_PREFIX + this.getNextId();
             } while (this.diagnosticCollections.has(name));
-        } else if (this.diagnosticCollections.has(name)) {
-            console.warn(`Diagnostic collection with name '${name}' already exist.`);
+            owner = name;
+        } else if (!this.diagnosticCollections.has(name)) {
+            owner = name;
+        } else {
+            console.warn(`Diagnostic collection with name '${name}' already exists.`);
+            do {
+                owner = name + this.nextOwnerSuffix++;
+            } while (this.diagnosticCollections.has(owner));
         }
 
-        const diagnosticCollection = new DiagnosticCollection(name, Diagnostics.MAX_DIAGNOSTICS_PER_FILE, this.proxy, this.diagnosticsChangedEmitter);
+        const diagnosticCollection = new DiagnosticCollection(name, owner, Diagnostics.MAX_DIAGNOSTICS_PER_FILE, this.proxy, this.diagnosticsChangedEmitter);
         diagnosticCollection.setOnDisposeCallback(() => {
-            this.diagnosticCollections.delete(name!);
+            this.diagnosticCollections.delete(owner);
         });
-        this.diagnosticCollections.set(name, diagnosticCollection);
+        this.diagnosticCollections.set(owner, diagnosticCollection);
         return diagnosticCollection;
     }
 
     private getNextId(): string {
-        return v4();
+        return generateUuid();
     }
 
     private getAllDiagnosticsForResource(uri: URI): theia.Diagnostic[] {

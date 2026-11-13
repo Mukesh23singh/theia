@@ -1,35 +1,53 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import {
     QuickOpenExt, PLUGIN_RPC_CONTEXT as Ext, QuickOpenMain, TransferInputBox, Plugin,
-    Item, TransferQuickInputButton, TransferQuickPickItems, TransferQuickInput
-} from '../common/plugin-api-rpc';
+    TransferQuickInputButton, TransferQuickInput, TransferQuickPickItem
+} from '../common/plugin-api-rpc.js';
 import * as theia from '@theia/plugin';
-import { QuickPickItem, InputBoxOptions, InputBox, QuickPick, QuickInput } from '@theia/plugin';
 import { CancellationToken } from '@theia/core/lib/common/cancellation';
-import { RPCProtocol } from '../common/rpc-protocol';
+import { RPCProtocol } from '../common/rpc-protocol.js';
 import { Emitter, Event } from '@theia/core/lib/common/event';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
-import { QuickInputButtons, ThemeIcon } from './types-impl';
+import { InputBoxValidationSeverity, QuickInputButtons, QuickPickItemKind, ThemeIcon } from './types-impl.js';
+import { Severity } from '@theia/core/lib/common/severity';
 import { URI } from '@theia/core/shared/vscode-uri';
 import * as path from 'path';
-import { convertToTransferQuickPickItems } from './type-converters';
-import { PluginPackage } from '../common/plugin-protocol';
+import { convertToTransferQuickPickItems } from './type-converters.js';
+import { PluginPackage } from '../common/plugin-protocol.js';
 import { QuickInputButtonHandle } from '@theia/core/lib/browser';
+import { MaybePromise } from '@theia/core/lib/common/types';
+import { PluginIconPath } from './plugin-icon-path.js';
+
+/**
+ * Converts plugin API {@link InputBoxValidationSeverity} values to Theia's {@link Severity} enum.
+ *
+ * Note: These enums have different numeric values:
+ * - {@link InputBoxValidationSeverity}: Info=1, Warning=2, Error=3 (matches Monaco/VS Code)
+ * - {@link Severity}: Ignore=0, Error=1, Warning=2, Info=3
+ */
+function inputBoxValidationSeverityToSeverity(severity: InputBoxValidationSeverity): Severity {
+    switch (severity) {
+        case InputBoxValidationSeverity.Error: return Severity.Error;
+        case InputBoxValidationSeverity.Warning: return Severity.Warning;
+        case InputBoxValidationSeverity.Info: return Severity.Info;
+        default: return Severity.Ignore;
+    }
+}
 
 const canceledName = 'Canceled';
 /**
@@ -40,31 +58,12 @@ export function isPromiseCanceledError(error: any): boolean {
     return error instanceof Error && error.name === canceledName && error.message === canceledName;
 }
 
-export function getIconUris(iconPath: theia.QuickInputButton['iconPath']): { dark: URI, light: URI } | { id: string } {
-    if (ThemeIcon.is(iconPath)) {
-        return { id: iconPath.id };
-    }
-    const dark = getDarkIconUri(iconPath as URI | { light: URI; dark: URI; });
-    const light = getLightIconUri(iconPath as URI | { light: URI; dark: URI; });
-    // Tolerate strings: https://github.com/microsoft/vscode/issues/110432#issuecomment-726144556
-    return {
-        dark: typeof dark === 'string' ? URI.file(dark) : dark,
-        light: typeof light === 'string' ? URI.file(light) : light
-    };
-}
-
-export function getLightIconUri(iconPath: URI | { light: URI; dark: URI; }): URI {
-    return typeof iconPath === 'object' && 'light' in iconPath ? iconPath.light : iconPath;
-}
-
-export function getDarkIconUri(iconPath: URI | { light: URI; dark: URI; }): URI {
-    return typeof iconPath === 'object' && 'dark' in iconPath ? iconPath.dark : iconPath;
-}
+type Item = theia.QuickPickItem | string;
 
 export class QuickOpenExtImpl implements QuickOpenExt {
     private proxy: QuickOpenMain;
     private onDidSelectItem: undefined | ((handle: number) => void);
-    private validateInputHandler: (input: string) => Promise<string | null | undefined> | undefined;
+    private validateInputHandler?: (input: string) => MaybePromise<string | theia.InputBoxValidationMessage | null | undefined>;
     private _sessions = new Map<number, QuickInputExt>(); // Each quickinput will have a number so that we know where to fire events
     private _instances = 0;
 
@@ -73,19 +72,21 @@ export class QuickOpenExtImpl implements QuickOpenExt {
     }
 
     /* eslint-disable max-len */
-    showQuickPick(itemsOrItemsPromise: Array<QuickPickItem> | Promise<Array<QuickPickItem>>, options: theia.QuickPickOptions & { canPickMany: true; }, token?: theia.CancellationToken): Promise<Array<QuickPickItem> | undefined>;
-    showQuickPick(itemsOrItemsPromise: string[] | Promise<string[]>, options?: theia.QuickPickOptions, token?: theia.CancellationToken): Promise<string | undefined>;
-    showQuickPick(itemsOrItemsPromise: Array<QuickPickItem> | Promise<Array<QuickPickItem>>, options?: theia.QuickPickOptions, token?: theia.CancellationToken): Promise<QuickPickItem | undefined>;
-    showQuickPick(itemsOrItemsPromise: Item[] | Promise<Item[]>, options?: theia.QuickPickOptions, token: theia.CancellationToken = CancellationToken.None): Promise<Item | Item[] | undefined> {
+    showQuickPick(plugin: Plugin, itemsOrItemsPromise: theia.QuickPickItem[] | Promise<theia.QuickPickItem[]>, options: theia.QuickPickOptions & { canPickMany: true; }, token?: theia.CancellationToken): Promise<Array<theia.QuickPickItem> | undefined>;
+    showQuickPick(plugin: Plugin, itemsOrItemsPromise: string[] | Promise<string[]>, options?: theia.QuickPickOptions, token?: theia.CancellationToken): Promise<string | undefined>;
+    showQuickPick(plugin: Plugin, itemsOrItemsPromise: theia.QuickPickItem[] | Promise<theia.QuickPickItem[]>, options?: theia.QuickPickOptions, token?: theia.CancellationToken): Promise<theia.QuickPickItem | undefined>;
+    showQuickPick(plugin: Plugin, itemsOrItemsPromise: Item[] | Promise<Item[]>, options?: theia.QuickPickOptions, token: theia.CancellationToken = CancellationToken.None): Promise<Item | Item[] | undefined> {
         this.onDidSelectItem = undefined;
 
-        const itemsPromise = <Promise<Item[]>>Promise.resolve(itemsOrItemsPromise);
+        const itemsPromise = Promise.resolve(itemsOrItemsPromise);
 
         const instance = ++this._instances;
 
         const widgetPromise = this.proxy.$show(instance, {
+            title: options && options.title,
             canPickMany: options && options.canPickMany,
             placeHolder: options && options.placeHolder,
+            prompt: options && options.prompt,
             matchOnDescription: options && options.matchOnDescription,
             matchOnDetail: options && options.matchOnDetail,
             ignoreFocusLost: options && options.ignoreFocusOut
@@ -99,7 +100,7 @@ export class QuickOpenExtImpl implements QuickOpenExt {
                 return undefined;
             }
             return itemsPromise.then(async items => {
-                const pickItems: Array<TransferQuickPickItems> = convertToTransferQuickPickItems(items);
+                const pickItems = convertToTransferQuickPickItems(plugin, items);
 
                 if (options && typeof options.onDidSelectItem === 'function') {
                     this.onDidSelectItem = handle => {
@@ -142,37 +143,42 @@ export class QuickOpenExtImpl implements QuickOpenExt {
 
     // ---- input
 
-    showInput(options?: InputBoxOptions, token: theia.CancellationToken = CancellationToken.None): PromiseLike<string | undefined> {
-        if (options?.validateInput) {
-            this.validateInputHandler = options.validateInput;
-        }
-
+    showInput(options?: theia.InputBoxOptions, token: theia.CancellationToken = CancellationToken.None): PromiseLike<string | undefined> {
+        this.validateInputHandler = options?.validateInput;
         if (!options) { options = { placeHolder: '' }; }
         return this.proxy.$input(options, typeof this.validateInputHandler === 'function', token);
     }
 
     async showInputBox(options: TransferInputBox): Promise<string | undefined> {
-        this.validateInputHandler = options && options.validateInput;
-
+        this.validateInputHandler = typeof options.validateInput === 'function' ? options.validateInput : undefined;
         return this.proxy.$showInputBox(options, typeof this.validateInputHandler === 'function');
     }
 
-    $validateInput(input: string): Promise<string | null | undefined> | undefined {
-        if (this.validateInputHandler) {
-            return Promise.resolve(this.validateInputHandler(input));
+    async $validateInput(input: string): Promise<string | { content: string; severity: Severity; } | null | undefined> {
+        if (!this.validateInputHandler) {
+            return;
         }
-        return undefined;
+
+        const result = await this.validateInputHandler(input);
+        if (!result || typeof result === 'string') {
+            return result;
+        }
+
+        return {
+            content: result.message,
+            severity: inputBoxValidationSeverityToSeverity(result.severity ?? InputBoxValidationSeverity.Error)
+        };
     }
 
     // ---- QuickInput
 
-    createQuickPick<T extends QuickPickItem>(plugin: Plugin): QuickPick<T> {
+    createQuickPick<T extends theia.QuickPickItem>(plugin: Plugin): theia.QuickPick<T> {
         const session: any = new QuickPickExt<T>(this, this.proxy, plugin, () => this._sessions.delete(session._id));
         this._sessions.set(session._id, session);
         return session;
     }
 
-    createInputBox(plugin: Plugin): InputBox {
+    createInputBox(plugin: Plugin): theia.InputBox {
         const session: any = new InputBoxExt(this, this.proxy, plugin, () => this._sessions.delete(session._id));
         this._sessions.set(session._id, session);
         return session;
@@ -206,11 +212,11 @@ export class QuickOpenExtImpl implements QuickOpenExt {
     async $acceptOnDidTriggerButton(sessionId: number, btn: QuickInputButtonHandle): Promise<void> {
         const session = this._sessions.get(sessionId);
         if (session) {
-            if (btn.index === -1) {
+            if (btn.handle === -1) {
                 session._fireButtonTrigger(QuickInputButtons.Back);
             } else if (session && (session instanceof InputBoxExt || session instanceof QuickPickExt)) {
-                const btnFromIndex = session.buttons[btn.index];
-                session._fireButtonTrigger(btnFromIndex as theia.QuickInputButton);
+                const btnFromHandle = session.buttons[btn.handle];
+                session._fireButtonTrigger(btnFromHandle as theia.QuickInputButton);
             }
         }
     }
@@ -228,9 +234,17 @@ export class QuickOpenExtImpl implements QuickOpenExt {
             session._fireDidChangeSelection(handles);
         }
     }
+
+    $onDidTriggerItemButton(sessionId: number, itemHandle: number, buttonHandle: number): void {
+        const session = this._sessions.get(sessionId);
+        if (session instanceof QuickPickExt) {
+            session._fireDidTriggerItemButton(itemHandle, buttonHandle);
+        }
+    }
+
 }
 
-export class QuickInputExt implements QuickInput {
+export class QuickInputExt implements theia.QuickInput {
 
     private static _nextId = 1;
     _id = QuickInputExt._nextId++;
@@ -243,6 +257,7 @@ export class QuickInputExt implements QuickInput {
     private _totalSteps: number | undefined;
     private _value: string;
     private _placeholder: string | undefined;
+    private _prompt: string | undefined;
     private _buttons: theia.QuickInputButton[] = [];
     private _handlesToButtons = new Map<number, theia.QuickInputButton>();
     protected expectingHide = false;
@@ -259,7 +274,7 @@ export class QuickInputExt implements QuickInput {
     private onDidHideEmitter: Emitter<void>;
     private onDidTriggerButtonEmitter: Emitter<theia.QuickInputButton>;
     private _updateTimeout: any;
-    private _pendingUpdate: TransferQuickInput<any> = { id: this._id };
+    private _pendingUpdate: TransferQuickInput = { id: this._id };
 
     constructor(readonly quickOpen: QuickOpenExtImpl, readonly quickOpenMain: QuickOpenMain, readonly plugin: Plugin, private _onDidDispose: () => void) {
         this.title = undefined;
@@ -351,6 +366,15 @@ export class QuickInputExt implements QuickInput {
         this.update({ placeholder });
     }
 
+    get prompt(): string | undefined {
+        return this._prompt;
+    }
+
+    set prompt(prompt: string | undefined) {
+        this._prompt = prompt;
+        this.update({ prompt });
+    }
+
     get buttons(): theia.QuickInputButton[] {
         return this._buttons;
     }
@@ -364,9 +388,11 @@ export class QuickInputExt implements QuickInput {
         });
         this.update({
             buttons: buttons.map<TransferQuickInputButton>((button, i) => ({
-                iconPath: getIconUris(button.iconPath),
+                iconUrl: PluginIconPath.toUrl(button.iconPath, this.plugin) ?? ThemeIcon.get(button.iconPath),
                 tooltip: button.tooltip,
                 handle: button === QuickInputButtons.Back ? -1 : i,
+                location: button.location,
+                toggle: button.toggle,
             }))
         });
     }
@@ -420,13 +446,12 @@ export class QuickInputExt implements QuickInput {
 
     hide(): void {
         this.quickOpenMain.$hide();
-        this.dispose();
     }
 
-    protected convertURL(iconPath: monaco.Uri | { light: string | monaco.Uri; dark: string | monaco.Uri } | monaco.theme.ThemeIcon):
+    protected convertURL(iconPath: URI | { light: string | URI; dark: string | URI } | ThemeIcon):
         URI | { light: string | URI; dark: string | URI } | ThemeIcon {
-        const toUrl = (arg: string | monaco.Uri) => {
-            arg = arg instanceof monaco.Uri && arg.scheme === 'file' ? arg.fsPath : arg;
+        const toUrl = (arg: string | URI) => {
+            arg = arg instanceof URI && arg.scheme === 'file' ? arg.fsPath : arg;
             if (typeof arg !== 'string') {
                 return arg.toString(true);
             }
@@ -438,10 +463,10 @@ export class QuickInputExt implements QuickInput {
         };
         if (ThemeIcon.is(iconPath)) {
             return iconPath;
-        } else if (typeof iconPath === 'string' || iconPath instanceof monaco.Uri) {
+        } else if (typeof iconPath === 'string' || iconPath instanceof URI) {
             return URI.parse(toUrl(iconPath));
         } else {
-            const { light, dark } = iconPath as { light: string | monaco.Uri, dark: string | monaco.Uri };
+            const { light, dark } = iconPath as { light: string | URI, dark: string | URI };
             return {
                 light: toUrl(light),
                 dark: toUrl(dark)
@@ -454,6 +479,7 @@ export class QuickInputExt implements QuickInput {
     }
 
     _fireChangedValue(changedValue: string): void {
+        this._value = changedValue;
         this._onDidChangeValueEmitter.fire(changedValue);
     }
 
@@ -489,17 +515,18 @@ export class QuickInputExt implements QuickInput {
  * Base implementation of {@link InputBox} that uses {@link QuickOpenExt}.
  * Missing functionality is going to be implemented in the scope of https://github.com/eclipse-theia/theia/issues/5109
  */
-export class InputBoxExt extends QuickInputExt implements InputBox {
+export class InputBoxExt extends QuickInputExt implements theia.InputBox {
 
     private _password: boolean;
-    private _prompt: string | undefined;
-    private _validationMessage: string | undefined;
+    private _valueSelection: readonly [number, number] | undefined;
+    private _validationMessage: string | theia.InputBoxValidationMessage | undefined;
 
-    constructor(readonly quickOpen: QuickOpenExtImpl,
-        readonly quickOpenMain: QuickOpenMain,
-        readonly plugin: Plugin,
-        onDispose: () => void) {
-
+    constructor(
+        override readonly quickOpen: QuickOpenExtImpl,
+        override readonly quickOpenMain: QuickOpenMain,
+        override readonly plugin: Plugin,
+        onDispose: () => void
+    ) {
         super(quickOpen, quickOpenMain, plugin, onDispose);
 
         this.buttons = [];
@@ -516,57 +543,34 @@ export class InputBoxExt extends QuickInputExt implements InputBox {
         this.update({ password });
     }
 
-    get prompt(): string | undefined {
-        return this._prompt;
+    get valueSelection(): readonly [number, number] | undefined {
+        return this._valueSelection;
     }
 
-    set prompt(prompt: string | undefined) {
-        this._prompt = prompt;
-        this.update({ prompt });
+    set valueSelection(valueSelection: readonly [number, number] | undefined) {
+        this._valueSelection = valueSelection;
+        this.update({ valueSelection });
     }
 
-    get validationMessage(): string | undefined {
+    get validationMessage(): string | theia.InputBoxValidationMessage | undefined {
         return this._validationMessage;
     }
 
-    set validationMessage(validationMessage: string | undefined) {
+    set validationMessage(validationMessage: string | theia.InputBoxValidationMessage | undefined) {
         if (this._validationMessage !== validationMessage) {
             this._validationMessage = validationMessage;
-            this.update({ validationMessage });
+            if (typeof validationMessage === 'object' && validationMessage) {
+                this.update({
+                    validationMessage: validationMessage.message,
+                    severity: inputBoxValidationSeverityToSeverity(validationMessage.severity)
+                });
+            } else {
+                this.update({
+                    validationMessage,
+                    severity: validationMessage ? Severity.Error : Severity.Ignore
+                });
+            }
         }
-    }
-
-    async show(): Promise<void> {
-        super.show();
-
-        const update = (value: string) => {
-            this.value = value;
-            if (this.validationMessage && this.validationMessage.length > 0) {
-                return this.validationMessage;
-            }
-        };
-
-        this.quickOpen.showInputBox({
-            id: this._id,
-            busy: this.busy,
-            buttons: this.buttons,
-            enabled: this.enabled,
-            ignoreFocusOut: this.ignoreFocusOut,
-            password: this.password,
-            placeholder: this.placeholder,
-            prompt: this.prompt,
-            step: this.step,
-            title: this.title,
-            totalSteps: this.totalSteps,
-            validationMessage: this.validationMessage,
-            value: this.value,
-            visible: this.visible,
-            validateInput(value: string): string | undefined {
-                if (value.length > 0) {
-                    return update(value);
-                }
-            }
-        });
     }
 }
 
@@ -574,7 +578,7 @@ export class InputBoxExt extends QuickInputExt implements InputBox {
  * Base implementation of {@link QuickPick} that uses {@link QuickOpenExt}.
  * Missing functionality is going to be implemented in the scope of https://github.com/eclipse-theia/theia/issues/5059
  */
-export class QuickPickExt<T extends theia.QuickPickItem> extends QuickInputExt implements QuickPick<T> {
+export class QuickPickExt<T extends theia.QuickPickItem> extends QuickInputExt implements theia.QuickPick<T> {
     private _items: T[] = [];
     private _handlesToItems = new Map<number, T>();
     private _itemsToHandles = new Map<T, number>();
@@ -582,21 +586,25 @@ export class QuickPickExt<T extends theia.QuickPickItem> extends QuickInputExt i
     private _matchOnDescription = true;
     private _matchOnDetail = true;
     private _sortByLabel = true;
+    private _keepScrollPosition = false;
     private _activeItems: T[] = [];
     private _selectedItems: T[] = [];
     private readonly _onDidChangeActiveEmitter = new Emitter<T[]>();
     private readonly _onDidChangeSelectionEmitter = new Emitter<T[]>();
+    private readonly _onDidTriggerItemButtonEmitter = new Emitter<theia.QuickPickItemButtonEvent<T>>();
 
-    constructor(readonly quickOpen: QuickOpenExtImpl,
-        readonly quickOpenMain: QuickOpenMain,
-        readonly plugin: Plugin,
-        onDispose: () => void) {
-
+    constructor(
+        override readonly quickOpen: QuickOpenExtImpl,
+        override readonly quickOpenMain: QuickOpenMain,
+        override readonly plugin: Plugin,
+        onDispose: () => void
+    ) {
         super(quickOpen, quickOpenMain, plugin, onDispose);
         this.buttons = [];
 
         this.disposableCollection.push(this._onDidChangeActiveEmitter);
         this.disposableCollection.push(this._onDidChangeSelectionEmitter);
+        this.disposableCollection.push(this._onDidTriggerItemButtonEmitter);
 
         this.update({ type: 'quickPick' });
     }
@@ -613,9 +621,33 @@ export class QuickPickExt<T extends theia.QuickPickItem> extends QuickInputExt i
             this._handlesToItems.set(i, item);
             this._itemsToHandles.set(item, i);
         });
-        items.forEach((item, i) => Object.assign(item, { handle: i }));
+
+        const pickItems: TransferQuickPickItem[] = [];
+        for (let handle = 0; handle < items.length; handle++) {
+            const item = items[handle];
+            if (item.kind === QuickPickItemKind.Separator) {
+                pickItems.push({ kind: 'separator', label: item.label, handle });
+            } else {
+                pickItems.push({
+                    kind: 'item',
+                    label: item.label,
+                    iconUrl: PluginIconPath.toUrl(item.iconPath, this.plugin) ?? ThemeIcon.get(item.iconPath),
+                    description: item.description,
+                    handle,
+                    detail: item.detail,
+                    picked: item.picked,
+                    alwaysShow: item.alwaysShow,
+                    buttons: item.buttons?.map<TransferQuickInputButton>((button, index) => ({
+                        iconUrl: PluginIconPath.toUrl(button.iconPath, this.plugin) ?? ThemeIcon.get(button.iconPath),
+                        tooltip: button.tooltip,
+                        handle: button === QuickInputButtons.Back ? -1 : index,
+                    }))
+                });
+            }
+        }
+
         this.update({
-            items
+            items: pickItems,
         });
     }
 
@@ -655,6 +687,15 @@ export class QuickPickExt<T extends theia.QuickPickItem> extends QuickInputExt i
         this.update({ sortByLabel });
     }
 
+    get keepScrollPosition(): boolean {
+        return this._keepScrollPosition;
+    }
+
+    set keepScrollPosition(keepScrollPosition: boolean) {
+        this._keepScrollPosition = keepScrollPosition;
+        this.update({ keepScrollPosition });
+    }
+
     get activeItems(): T[] {
         return this._activeItems;
     }
@@ -687,5 +728,21 @@ export class QuickPickExt<T extends theia.QuickPickItem> extends QuickInputExt i
         const items = handles.map(handle => this._handlesToItems.get(handle)).filter(e => !!e) as T[];
         this._selectedItems = items;
         this._onDidChangeSelectionEmitter.fire(items);
+    }
+
+    onDidTriggerItemButton = this._onDidTriggerItemButtonEmitter.event;
+
+    _fireDidTriggerItemButton(itemHandle: number, buttonHandle: number): void {
+        const item = this._handlesToItems.get(itemHandle)!;
+        if (!item || !item.buttons || !item.buttons.length) {
+            return;
+        }
+        const button = item.buttons[buttonHandle];
+        if (button) {
+            this._onDidTriggerItemButtonEmitter.fire({
+                button,
+                item
+            });
+        }
     }
 }

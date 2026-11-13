@@ -25,14 +25,12 @@
       "path": "../monaco"
     },
     {
-      "path": "../preferences"
-    },
-    {
       "path": "../process"
     },
     {
       "path": "../terminal"
     },
+
     {
       "path": "../userstorage"
     },

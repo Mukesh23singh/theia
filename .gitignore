@@ -2,6 +2,7 @@
 node_modules
 build
 lib
+tmp
 *.log
 .idea
 .metadata
@@ -12,9 +13,7 @@ lerna-debug.log
 coverage
 errorShots
 examples/*/src-gen
-examples/*/gen-webpack.config.js
-examples/*/.theia
-examples/*/.vscode
+examples/*/gen-esbuild.*.mjs
 examples/*/.test
 .browser_modules
 **/docs/api
@@ -28,5 +27,14 @@ gh-pages
 dev-packages/electron/compile_commands.json
 *.tsbuildinfo
 .eslintcache
-scripts/download
+*-trace.json
+.tours
+/performance-result.json
+*.vsix
+/scripts/native-dependencies-*
+allure-results
+.claude
 license-check-summary.txt*
+.playwright-mcp/*
+/.theia/chatSessions
+.tmp.cfg

@@ -1,23 +1,23 @@
-/********************************************************************************
- * Copyright (c) 2021 SAP SE or an SAP affiliate company and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 SAP SE or an SAP affiliate company and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { inject, injectable } from 'inversify';
-import { CancellationToken } from '../../common';
-import { QuickAccessContribution, QuickAccessProvider, QuickAccessRegistry } from './quick-access';
-import { QuickInputService, QuickPickItem, QuickPickSeparator } from './quick-input-service';
+import { CancellationToken } from '../../common/index.js';
+import { QuickAccessContribution, QuickAccessProvider, QuickAccessRegistry } from './quick-access.js';
+import { QuickInputService, QuickPickItem, QuickPickSeparator } from './quick-input-service.js';
 
 @injectable()
 export class QuickHelpService implements QuickAccessProvider, QuickAccessContribution {
@@ -60,7 +60,7 @@ export class QuickHelpService implements QuickAccessProvider, QuickAccessContrib
 
             for (const helpEntry of provider.helpEntries) {
                 const prefix = helpEntry.prefix || provider.prefix;
-                const label = prefix || '\u2026' /* ... */;
+                const label = prefix || '\u2026'; // ...
 
                 (helpEntry.needsEditor ? editorProviders : globalProviders).push({
                     label,

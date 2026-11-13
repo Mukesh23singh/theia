@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -20,30 +20,33 @@
 // based on https://github.com/microsoft/vscode/blob/04c36be045a94fee58e5f8992d3e3fd980294a84/src/vs/workbench/api/browser/mainThreadFileSystemEventService.ts
 
 import { interfaces } from '@theia/core/shared/inversify';
-import { RPCProtocol } from '../../common/rpc-protocol';
-import { MAIN_RPC_CONTEXT, FileSystemEvents } from '../../common/plugin-api-rpc';
-import { DisposableCollection } from '@theia/core/lib/common/disposable';
+import { RPCProtocol } from '../../common/rpc-protocol.js';
+import { MAIN_RPC_CONTEXT, FileSystemEvents, MainFileSystemEventServiceShape } from '../../common/plugin-api-rpc.js';
+import { UriComponents } from '../../common/uri-components.js';
+import { URI } from '@theia/core';
+import { Disposable, DisposableCollection } from '@theia/core/lib/common/disposable';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
-import { FileChangeType } from '@theia/filesystem/lib/common/files';
+import { FileChangeType, WatchOptions } from '@theia/filesystem/lib/common/files';
 
-export class MainFileSystemEventService {
+export class MainFileSystemEventService implements MainFileSystemEventServiceShape {
 
     private readonly toDispose = new DisposableCollection();
+    private readonly watches = new Map<number, Disposable>();
 
     constructor(
         rpc: RPCProtocol,
-        container: interfaces.Container
+        container: interfaces.Container,
+        private readonly fileService = container.get(FileService)
     ) {
         const proxy = rpc.getProxy(MAIN_RPC_CONTEXT.ExtHostFileSystemEventService);
-        const fileService = container.get(FileService);
 
-        // file system events - (changes the editor and other make)
-        const events: FileSystemEvents = {
-            created: [],
-            changed: [],
-            deleted: []
-        };
         this.toDispose.push(fileService.onDidFilesChange(event => {
+            // file system events - (changes the editor and others make)
+            const events: FileSystemEvents = {
+                created: [],
+                changed: [],
+                deleted: []
+            };
             for (const change of event.changes) {
                 switch (change.type) {
                     case FileChangeType.ADDED:
@@ -59,9 +62,6 @@ export class MainFileSystemEventService {
             }
 
             proxy.$onFileEvent(events);
-            events.created.length = 0;
-            events.changed.length = 0;
-            events.deleted.length = 0;
         }));
 
         // BEFORE file operation
@@ -75,5 +75,25 @@ export class MainFileSystemEventService {
 
     dispose(): void {
         this.toDispose.dispose();
+    }
+
+    $watch(session: number, resource: UriComponents, options: WatchOptions): void {
+        if (this.watches.has(session)) {
+            throw new Error(`There is already a watch request for the key ${session}`);
+        }
+        // Plugin/language-server watchers (`vscode.workspace.createFileSystemWatcher`) arrive here
+        // with an empty `excludes` list; `FileService.watch` applies `files.watcherExclude` centrally
+        // for all watchers, so they stay bounded without merging the excludes here.
+        const watch = this.fileService.watch(URI.fromComponents(resource), options);
+        this.toDispose.push(watch);
+        this.watches.set(session, watch);
+    }
+
+    $unwatch(session: number): void {
+        const watch = this.watches.get(session);
+        if (watch) {
+            watch.dispose();
+            this.watches.delete(session);
+        }
     }
 }

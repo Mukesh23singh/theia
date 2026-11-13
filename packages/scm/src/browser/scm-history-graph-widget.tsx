@@ -1,0 +1,872 @@
+// *****************************************************************************
+// Copyright (C) 2026 EclipseSource GmbH and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+
+import * as React from '@theia/core/shared/react';
+import { Virtuoso, VirtuosoHandle } from '@theia/core/shared/react-virtuoso';
+import { injectable, inject, postConstruct, named } from '@theia/core/shared/inversify';
+import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { LabelProvider } from '@theia/core/lib/browser/label-provider';
+import { HoverService } from '@theia/core/lib/browser/hover-service';
+import { ClipboardService } from '@theia/core/lib/browser/clipboard-service';
+import { MarkdownRenderer, MarkdownRendererFactory } from '@theia/core/lib/browser/markdown-rendering/markdown-renderer';
+import { ScmHistoryGraphModel, HistoryGraphEntry } from './scm-history-graph-model.js';
+import { ScmHistoryItemRef, ScmHistoryItemChange } from './scm-provider.js';
+import { ScmService } from './scm-service.js';
+import { GraphRow } from './scm-history-graph-lanes.js';
+import URI from '@theia/core/lib/common/uri';
+import { nls } from '@theia/core/lib/common/nls';
+import { CancellationTokenSource } from '@theia/core/lib/common/cancellation';
+import { DisposableCollection } from '@theia/core/lib/common/disposable';
+import { Emitter, Event } from '@theia/core/lib/common/event';
+import { DynamicToolbarWidget } from '@theia/core/lib/browser/view-container';
+import { MenuPath } from '@theia/core/lib/common/menu/menu-types';
+import { ContextMenuRenderer } from '@theia/core/lib/browser/context-menu-renderer';
+import { OpenerService, open } from '@theia/core/lib/browser/opener-service';
+import { DiffUris } from '@theia/core/lib/browser/diff-uris';
+import { ScmContextKeyService } from './scm-context-key-service.js';
+import { ScmPreferences } from '../common/scm-preferences.js';
+import {
+    laneColor, filterRefsForBadges, getChangeStatus, getFileName, getFilePath, getRepoRelativePath,
+    getRefBadgeClass, getRefBadgePresentation, isTagRef, isRemoteRef, deduplicateRefs, DeduplicatedRef,
+    buildChangeTreeRows, ChangeTreeFolderRow
+} from './scm-history-graph-helpers.js';
+import { ILogger } from '@theia/core';
+import { buildHtmlTooltip, buildProviderTooltip } from './scm-history-graph-tooltip.js';
+
+/** Menu path matching the VS Code 'scm/history/title' contribution point (graph section toolbar). */
+export const SCM_HISTORY_TITLE_MENU: MenuPath = ['plugin_scm/history/title'];
+/** Menu path matching the VS Code 'scm/historyItem/context' contribution point (commit row context menu). */
+export const SCM_HISTORY_ITEM_CONTEXT_MENU: MenuPath = ['plugin_scm/historyItem/context'];
+/** Menu path matching the VS Code 'scm/historyItemRef/context' contribution point (ref badge context menu). */
+export const SCM_HISTORY_ITEM_REF_CONTEXT_MENU: MenuPath = ['plugin_scm/historyItemRef/context'];
+
+// ── Layout constants ────────────────────────────────────────────────────────
+
+const ROW_HEIGHT = 22;
+/** Horizontal width of each lane column in the SVG — matches VS Code exactly. */
+const LANE_WIDTH = 22;
+/** Y position of the commit dot — vertically centered in the row. */
+const DOT_CY = 11;
+
+/** Indentation of one level of the change tree, in pixels. */
+const TREE_INDENT = 8;
+/** Shared empty set for history items whose change tree is fully expanded. */
+const EMPTY_FOLDER_SET: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Indentation for a row of the change tree. Like Theia's tree widget, the depth
+ * is applied as padding rather than through a class, as it is not known upfront.
+ */
+function indentStyle(depth: number): React.CSSProperties | undefined {
+    return depth > 0 ? { paddingLeft: `${4 + depth * TREE_INDENT}px` } : undefined;
+}
+
+/** Renders a ref badge as a JSX element for the commit row. */
+function renderJsxRefBadge(
+    ref: ScmHistoryItemRef,
+    iconClass: string,
+    showText: boolean,
+    style: React.CSSProperties,
+    key: string,
+    onContextMenu?: (e: React.MouseEvent) => void
+): React.ReactElement {
+    return (
+        <span
+            key={key}
+            className={`scm-history-ref-badge ${getRefBadgeClass(ref)}`}
+            title={ref.description ?? ref.name}
+            style={style}
+            onContextMenu={onContextMenu}
+        >
+            <i className={`codicon ${iconClass} scm-history-ref-icon`} />
+            {showText && <span className='scm-history-ref-text'>{ref.name}</span>}
+        </span>
+    );
+}
+
+// ── Widget ──────────────────────────────────────────────────────────────────
+
+@injectable()
+export class ScmHistoryGraphWidget extends ReactWidget implements DynamicToolbarWidget {
+
+    static readonly ID = 'scm-history-graph-widget';
+    static readonly LABEL = nls.localizeByDefault('Graph');
+
+    @inject(ScmHistoryGraphModel) protected readonly model: ScmHistoryGraphModel;
+    @inject(HoverService) protected readonly hoverService: HoverService;
+    @inject(ClipboardService) protected readonly clipboardService: ClipboardService;
+    @inject(MarkdownRendererFactory) protected readonly markdownRendererFactory: MarkdownRendererFactory;
+    @inject(ScmService) protected readonly scmService: ScmService;
+    @inject(LabelProvider) protected readonly labelProvider: LabelProvider;
+    @inject(ContextMenuRenderer) protected readonly contextMenuRenderer: ContextMenuRenderer;
+    @inject(OpenerService) protected readonly openerService: OpenerService;
+    @inject(ScmContextKeyService) protected readonly scmContextKeys: ScmContextKeyService;
+    @inject(ScmPreferences) protected readonly scmPreferences: ScmPreferences;
+
+    @inject(ILogger) @named('scm:ScmHistoryGraphWidget')
+    protected readonly logger: ILogger;
+
+    protected selectedIndex = -1;
+    /** Handle on the virtualized list, used to scroll an entry into view. */
+    protected readonly listRef = React.createRef<VirtuosoHandle>();
+    /** Currently selected change row key (`${itemId}-${ci}`), or undefined. */
+    protected selectedChangeKey: string | undefined;
+    /** Map from commit id → loaded changes (undefined = not loaded yet). */
+    protected expandedChanges = new Map<string, ScmHistoryItemChange[] | 'loading'>();
+    /** Set of commit ids that are currently expanded. */
+    protected expandedIds = new Set<string>();
+    /** Map from commit id → folder paths collapsed in its change tree. */
+    protected collapsedFolders = new Map<string, Set<string>>();
+    /** Map from commit id → in-flight CancellationTokenSource for loadChanges. */
+    protected loadChangesCts = new Map<string, CancellationTokenSource>();
+    /** Cleanup for the content of the hover currently being shown. */
+    protected readonly toDisposeOnHover = new DisposableCollection();
+
+    protected readonly onDidChangeToolbarItemsEmitter = new Emitter<void>();
+    /** Re-renders the part toolbar on model changes, e.g. to reflect the toggled state of the ref filter picker. */
+    readonly onDidChangeToolbarItems: Event<void> = this.onDidChangeToolbarItemsEmitter.event;
+
+    constructor() {
+        super();
+        this.id = ScmHistoryGraphWidget.ID;
+        this.title.label = ScmHistoryGraphWidget.LABEL;
+        this.title.caption = ScmHistoryGraphWidget.LABEL;
+        this.title.closable = false;
+        this.addClass('scm-history-graph-container');
+        this.node.tabIndex = 0;
+    }
+
+    @postConstruct()
+    protected init(): void {
+        this.toDispose.push(this.onDidChangeToolbarItemsEmitter);
+        this.toDispose.push(
+            this.model.onDidChange(() => {
+                this.updateContextKeys();
+                this.update();
+                this.onDidChangeToolbarItemsEmitter.fire();
+            })
+        );
+        this.toDispose.push(
+            this.model.onDidRequestReveal(index => this.revealIndex(index))
+        );
+        this.toDispose.push(
+            this.scmPreferences.onPreferenceChanged(e => {
+                if (e.preferenceName.startsWith('scm.graph.')) {
+                    this.update();
+                }
+            })
+        );
+        this.toDispose.push({
+            dispose: () => {
+                for (const cts of this.loadChangesCts.values()) {
+                    cts.cancel();
+                    cts.dispose();
+                }
+                this.loadChangesCts.clear();
+            }
+        });
+        this.toDispose.push(this.toDisposeOnHover);
+        this.update();
+    }
+
+    /** Scrolls the entry at `index` into view and selects it. */
+    protected revealIndex(index: number): void {
+        this.selectedIndex = index;
+        this.selectedChangeKey = undefined;
+        this.listRef.current?.scrollToIndex({ index, align: 'center' });
+        this.update();
+    }
+
+    protected updateContextKeys(): void {
+        const provider = this.model.provider;
+        this.scmContextKeys.scmCurrentHistoryItemRefHasRemote.set(!!provider?.currentHistoryItemRemoteRef);
+        this.scmContextKeys.scmCurrentHistoryItemRefHasBase.set(!!provider?.currentHistoryItemBaseRef);
+        // Commands like git.pullRef/git.pushRef gate their enablement on this key.
+        this.scmContextKeys.scmCurrentHistoryItemRefInFilter.set(!!provider?.currentHistoryItemRef && this.model.isCurrentRefInFilter());
+    }
+
+    protected render(): React.ReactNode {
+        const { entries, hasMore, loading } = this.model;
+
+        // Only show the empty state once the model has completed at least one load attempt.
+        // While the model is still initializing (provider not yet set, no load attempted),
+        // render a loading indicator to avoid a flash of "no history" on startup.
+        if (!loading && entries.length === 0) {
+            if (!this.model.hasAttemptedLoad) {
+                return (
+                    <div className='scm-history-loading'>
+                        {nls.localizeByDefault('Loading')}
+                    </div>
+                );
+            }
+            return (
+                <div className='scm-history-empty'>
+                    {nls.localize('theia/scm/noHistory', 'No source control history available.')}
+                </div>
+            );
+        }
+
+        // Determine how many lanes are active for SVG width
+        const maxLane = entries.reduce((max, e) => {
+            const rowMax = Math.max(e.graphRow.lane, ...e.graphRow.edges.map(ed => Math.max(ed.fromLane, ed.toLane)));
+            return Math.max(max, rowMax);
+        }, 0);
+        const svgWidth = (maxLane + 1) * LANE_WIDTH;
+
+        const footer = loading
+            ? () => <div className='scm-history-loading'>{nls.localizeByDefault('Loading')}</div>
+            : hasMore
+                ? () => (
+                    <div
+                        className='scm-history-load-more'
+                        onClick={this.handleLoadMore}
+                        role='button'
+                        tabIndex={0}
+                        onKeyDown={this.handleLoadMoreKey}
+                    >
+                        {nls.localizeByDefault('Load more')}
+                    </div>
+                )
+                : undefined;
+
+        return (
+            <Virtuoso
+                ref={this.listRef}
+                className='scm-history-graph-list'
+                data={entries as HistoryGraphEntry[]}
+                itemContent={(idx, entry) => this.renderRow(entry, idx, svgWidth)}
+                endReached={hasMore && !loading && this.scmPreferences['scm.graph.pageOnScroll'] !== false ? this.handleEndReached : undefined}
+                overscan={500}
+                components={footer ? { Footer: footer } : {}}
+                style={{ overflowX: 'hidden' }}
+            />
+        );
+    }
+
+    protected handleEndReached = (): void => {
+        if (this.model.hasMore && !this.model.loading) {
+            this.model.loadMore();
+        }
+    };
+
+    protected renderRow(entry: HistoryGraphEntry, idx: number, svgWidth: number): React.ReactElement {
+        const { item, graphRow } = entry;
+        const isSelected = idx === this.selectedIndex;
+        const isExpanded = this.expandedIds.has(item.id);
+        const changes = this.expandedChanges.get(item.id);
+        const isHead = entry.isCurrent;
+
+        return (
+            <React.Fragment key={item.id}>
+                <div
+                    className={`scm-history-graph-row${isSelected ? ' selected' : ''}`}
+                    onClick={() => this.handleRowClick(idx, entry)}
+                    onContextMenu={e => this.handleRowContextMenu(e, entry)}
+                    onMouseEnter={e => this.handleRowMouseEnter(e, entry)}
+                >
+                    {this.renderGraphSvg(graphRow, svgWidth, isHead)}
+                    <div className='scm-history-graph-info'>
+                        <span className='scm-history-subject'>{item.subject}</span>
+                        {item.author && (
+                            <span className='scm-history-author'>{item.author}</span>
+                        )}
+                        {item.references && item.references.length > 0 && (
+                            <span className='scm-history-badges scm-history-badges-right'>
+                                {this.renderRefBadges(item.references, entry)}
+                            </span>
+                        )}
+                    </div>
+                </div>
+                {isExpanded && this.renderChangesRows(item.id, svgWidth, graphRow, changes)}
+            </React.Fragment>
+        );
+    }
+
+    protected _markdownRenderer: MarkdownRenderer | undefined;
+    protected get markdownRenderer(): MarkdownRenderer {
+        this._markdownRenderer ||= this.markdownRendererFactory();
+        return this._markdownRenderer;
+    }
+
+    protected handleRowMouseEnter = (e: React.MouseEvent<HTMLDivElement>, entry: HistoryGraphEntry): void => {
+        this.toDisposeOnHover.dispose();
+        this.hoverService.requestHover({
+            content: this.buildTooltip(entry),
+            target: e.currentTarget,
+            position: 'right',
+            interactive: true,
+        });
+    };
+
+    /**
+     * Prefers the hover content supplied by the provider, so that its own links and commands
+     * (author `mailto:`, "Open Commit", remote actions) stay intact, and falls back to the hover
+     * derived from the history item's fields for providers that supply none.
+     */
+    protected buildTooltip(entry: HistoryGraphEntry): HTMLElement {
+        const { tooltip } = entry.item;
+        if (tooltip) {
+            const provided = buildProviderTooltip(tooltip, this.markdownRenderer, this.openerService, this.toDisposeOnHover);
+            if (provided) {
+                return provided;
+            }
+        }
+        return buildHtmlTooltip(entry, this.markdownRenderer, this.model.provider, {
+            openCommit: () => this.openCommitFromTooltip(entry),
+            copyCommitHash: () => this.clipboardService.writeText(entry.item.id),
+        });
+    }
+
+    /** Selects the commit and expands its changes, closing the hover first. */
+    protected openCommitFromTooltip(entry: HistoryGraphEntry): void {
+        this.hoverService.cancelHover();
+        const idx = this.model.entries.indexOf(entry);
+        if (idx < 0) {
+            return;
+        }
+        if (this.expandedIds.has(entry.item.id)) {
+            this.selectedIndex = idx;
+            this.update();
+        } else {
+            this.handleRowClick(idx, entry);
+        }
+    }
+
+    protected renderChangesRows(
+        itemId: string,
+        svgWidth: number,
+        graphRow: GraphRow,
+        changes: ScmHistoryItemChange[] | 'loading' | undefined
+    ): React.ReactElement {
+        if (changes === 'loading' || changes === undefined) {
+            return (
+                <div key={`${itemId}-loading`} className='scm-history-changes-loading'>
+                    {nls.localizeByDefault('Loading')}
+                </div>
+            );
+        }
+
+        if (changes.length === 0) {
+            return (
+                <div key={`${itemId}-empty`} className='scm-history-changes-empty'>
+                    {nls.localize('theia/scm/noChanges', 'No changed files.')}
+                </div>
+            );
+        }
+
+        if (this.model.viewMode === 'tree') {
+            const rootUri = this.scmService.selectedRepository?.provider.rootUri;
+            const rows = buildChangeTreeRows(changes, rootUri, this.collapsedFolders.get(itemId) ?? EMPTY_FOLDER_SET);
+            return (
+                <React.Fragment key={`${itemId}-changes`}>
+                    {rows.map(row => row.type === 'folder'
+                        ? this.renderChangeFolderRow(row, itemId, svgWidth, graphRow)
+                        : this.renderChangeRow(row.change, row.index, itemId, svgWidth, graphRow, row.depth))}
+                </React.Fragment>
+            );
+        }
+
+        return (
+            <React.Fragment key={`${itemId}-changes`}>
+                {changes.map((change, ci) =>
+                    this.renderChangeRow(change, ci, itemId, svgWidth, graphRow)
+                )}
+            </React.Fragment>
+        );
+    }
+
+    protected renderChangeFolderRow(
+        row: ChangeTreeFolderRow,
+        itemId: string,
+        svgWidth: number,
+        graphRow: GraphRow
+    ): React.ReactElement {
+        const collapsed = this.isFolderCollapsed(itemId, row.path);
+        return (
+            <div
+                key={`${itemId}-folder-${row.path}`}
+                className='scm-history-change-row scm-history-change-folder-row'
+                onClick={e => this.handleFolderClick(e, itemId, row.path)}
+                role='treeitem'
+                aria-expanded={!collapsed}
+                tabIndex={-1}
+            >
+                {this.renderChangeRowSvg(graphRow, svgWidth)}
+                <div className='scm-history-change-info' style={indentStyle(row.depth)}>
+                    <span className={`codicon ${collapsed ? 'codicon-chevron-right' : 'codicon-chevron-down'} scm-history-change-twistie`} />
+                    <span className='name scm-history-change-name' title={row.path}>{row.label}</span>
+                </div>
+            </div>
+        );
+    }
+
+    protected isFolderCollapsed(itemId: string, path: string): boolean {
+        return !!this.collapsedFolders.get(itemId)?.has(path);
+    }
+
+    protected toggleFolder(itemId: string, path: string): void {
+        let collapsed = this.collapsedFolders.get(itemId);
+        if (!collapsed) {
+            collapsed = new Set<string>();
+            this.collapsedFolders.set(itemId, collapsed);
+        }
+        if (!collapsed.delete(path)) {
+            collapsed.add(path);
+        }
+        this.update();
+    }
+
+    protected handleFolderClick = (e: React.MouseEvent, itemId: string, path: string): void => {
+        e.stopPropagation();
+        this.toggleFolder(itemId, path);
+    };
+
+    protected renderChangeRow(
+        change: ScmHistoryItemChange,
+        ci: number,
+        itemId: string,
+        svgWidth: number,
+        graphRow: GraphRow,
+        depth = 0
+    ): React.ReactElement {
+        const rootUri = this.scmService.selectedRepository?.provider.rootUri;
+        const uri = change.modifiedUri ?? change.originalUri ?? change.uri;
+        const relativePath = getRepoRelativePath(uri, rootUri);
+        const fileName = getFileName(relativePath);
+        // In tree mode the folder rows already carry the directory.
+        const dirPath = this.model.viewMode === 'list' && relativePath.includes('/')
+            ? relativePath.slice(0, relativePath.lastIndexOf('/'))
+            : '';
+        const status = getChangeStatus(change);
+        const statusClass = status === 'A' ? 'added' : status === 'D' ? 'deleted' : status === 'R' ? 'renamed' : 'modified';
+        const resourceUri = new URI(uri);
+        const fileIcon = this.labelProvider.getIcon(resourceUri);
+        const changeKey = `${itemId}-change-${ci}`;
+        const isSelected = this.selectedChangeKey === changeKey;
+
+        return (
+            <div
+                key={changeKey}
+                className={`scm-history-change-row${isSelected ? ' selected' : ''}`}
+                onClick={e => this.handleChangeClick(e, change, changeKey)}
+                role='treeitem'
+                tabIndex={-1}
+            >
+                {this.renderChangeRowSvg(graphRow, svgWidth)}
+                <div className='scm-history-change-info' style={indentStyle(depth)}>
+                    <span className={`${fileIcon} file-icon scm-history-change-file-icon`} />
+                    <div className='scm-history-change-name-container'>
+                        <span className='name scm-history-change-name' title={relativePath}>{fileName}</span>
+                        {dirPath && <span className='path scm-history-change-dir'>{dirPath}</span>}
+                    </div>
+                    <span className={`scm-history-change-status ${statusClass}`}>{status}</span>
+                </div>
+            </div>
+        );
+    }
+
+    protected handleChangeClick = (e: React.MouseEvent, change: ScmHistoryItemChange, changeKey: string): void => {
+        e.stopPropagation();
+        this.selectedChangeKey = changeKey;
+        this.update();
+        this.openChange(change);
+    };
+
+    protected openChange(change: ScmHistoryItemChange): void {
+        try {
+            if (change.originalUri && change.modifiedUri) {
+                const originalUri = new URI(change.originalUri);
+                const modifiedUri = new URI(change.modifiedUri);
+                const label = getFileName(getFilePath(change.modifiedUri));
+                open(this.openerService, DiffUris.encode(originalUri, modifiedUri, label));
+            } else if (change.modifiedUri) {
+                open(this.openerService, new URI(change.modifiedUri));
+            } else if (change.originalUri) {
+                open(this.openerService, new URI(change.originalUri));
+            } else {
+                open(this.openerService, new URI(change.uri));
+            }
+        } catch (err) {
+            this.logger.error('Failed to open change', err);
+        }
+    }
+
+    protected renderChangeRowSvg(graphRow: GraphRow, svgWidth: number): React.ReactElement {
+        const commitX = graphRow.lane * LANE_WIDTH + 11;
+        const commitColor = laneColor(graphRow.color);
+        const elements: React.ReactElement[] = [];
+        let keyIdx = 0;
+
+        for (const edge of graphRow.edges) {
+            if (edge.type !== 'pass-through') {
+                continue;
+            }
+            const x = edge.fromLane * LANE_WIDTH + 11;
+            const color = laneColor(edge.color);
+            elements.push(
+                <path
+                    key={`pass-${keyIdx++}`}
+                    fill='none'
+                    strokeWidth='1px'
+                    strokeLinecap='round'
+                    d={`M ${x} 0 V 22`}
+                    style={{ stroke: color }}
+                />
+            );
+        }
+
+        if (graphRow.hasContinuation) {
+            elements.push(
+                <path
+                    key={`commit-${keyIdx++}`}
+                    fill='none'
+                    strokeWidth='1px'
+                    strokeLinecap='round'
+                    d={`M ${commitX} 0 V 22`}
+                    style={{ stroke: commitColor }}
+                />
+            );
+        }
+
+        return (
+            <svg
+                className='scm-history-graph-svg'
+                style={{ height: `${ROW_HEIGHT}px`, width: `${svgWidth}px` }}
+            >
+                {elements}
+            </svg>
+        );
+    }
+
+    /**
+     * Renders the SVG graph column for a commit row, matching VS Code's SVG structure:
+     *
+     * - Each lane is 22px wide; circle cx = lane * 22 + 11, cy = 11
+     * - Pass-through lanes: full vertical line M x 0 V 22
+     * - Commit lane: top segment (M commitX 0 V 11) + bottom segment (M commitX 11 V 22)
+     * - HEAD/current commit (first entry): r=7 with inner dot, NO top segment
+     * - Normal commit: r=5
+     * - Branch-out edge: diagonal S-curve bezier from commit position (commitX, cy)
+     *   sweeping down to the new lane at the bottom: M commitX cy C commitX 22 newX cy newX 22
+     * - Merge-in edge: bezier from the source lane at the top curving into
+     *   the commit position: M srcX 0 C srcX cy commitX cy commitX cy
+     */
+    protected renderGraphSvg(row: GraphRow, svgWidth: number, isHead: boolean): React.ReactElement {
+        const commitX = row.lane * LANE_WIDTH + 11;
+        const cy = DOT_CY;
+        const commitColor = laneColor(row.color);
+
+        const elements: React.ReactElement[] = [];
+        let keyIdx = 0;
+
+        // Pass-through lines: straight vertical line through the full row height
+        for (const edge of row.edges) {
+            if (edge.type !== 'pass-through') {
+                continue;
+            }
+            const x = edge.fromLane * LANE_WIDTH + 11;
+            const color = laneColor(edge.color);
+            elements.push(
+                <path
+                    key={`pass-${keyIdx++}`}
+                    fill='none'
+                    strokeWidth='1px'
+                    strokeLinecap='round'
+                    d={`M ${x} 0 V 22`}
+                    style={{ stroke: color }}
+                />
+            );
+        }
+
+        // Merge-in edges: source lane at top curves into the commit position (mid-row)
+        for (const edge of row.edges) {
+            if (edge.type !== 'merge-in') {
+                continue;
+            }
+            const srcX = edge.fromLane * LANE_WIDTH + 11;
+            const color = laneColor(edge.color);
+            // Cubic bezier: start at (srcX, 0), control points pull both ends to mid-row,
+            // end at commit position (commitX, cy)
+            const d = `M ${srcX} 0 C ${srcX} ${cy}, ${commitX} ${cy}, ${commitX} ${cy}`;
+            elements.push(
+                <path
+                    key={`merge-${keyIdx++}`}
+                    fill='none'
+                    strokeWidth='1px'
+                    strokeLinecap='round'
+                    d={d}
+                    style={{ stroke: color }}
+                />
+            );
+        }
+
+        // Commit lane lines — split at cy=11
+        // Top segment: only drawn if there is an incoming line from above
+        // (i.e. this commit was referenced as a parent by an earlier row).
+        // It keeps the color inherited from the chain above, which may differ
+        // from the commit's own (ref-based) color.
+        if (row.hasTopLine) {
+            elements.push(
+                <path
+                    key={`top-${keyIdx++}`}
+                    fill='none'
+                    strokeWidth='1px'
+                    strokeLinecap='round'
+                    d={`M ${commitX} 0 V ${cy}`}
+                    style={{ stroke: laneColor(row.topColor) }}
+                />
+            );
+        }
+        // Bottom segment: only drawn if the lane continues to a parent below
+        if (row.hasContinuation) {
+            elements.push(
+                <path
+                    key={`bottom-${keyIdx++}`}
+                    fill='none'
+                    strokeWidth='1px'
+                    strokeLinecap='round'
+                    d={`M ${commitX} ${cy} V 22`}
+                    style={{ stroke: commitColor }}
+                />
+            );
+        }
+
+        // Branch-out edges: commit position (mid-row) curves down to a new lane at bottom
+        for (const edge of row.edges) {
+            if (edge.type !== 'branch-out') {
+                continue;
+            }
+            const dstX = edge.toLane * LANE_WIDTH + 11;
+            const color = laneColor(edge.color);
+            // Diagonal S-curve bezier: CP1 keeps x at srcX while y goes to bottom;
+            // CP2 keeps y at cy while x reaches dstX — produces a smooth sweep
+            // down-and-right (or left) from the commit circle to the target lane.
+            const srcX = edge.fromLane * LANE_WIDTH + 11;
+            const d = `M ${srcX} ${cy} C ${srcX} 22, ${dstX} ${cy}, ${dstX} 22`;
+            elements.push(
+                <path
+                    key={`branch-${keyIdx++}`}
+                    fill='none'
+                    strokeWidth='1px'
+                    strokeLinecap='round'
+                    d={d}
+                    style={{ stroke: color }}
+                />
+            );
+        }
+
+        // Commit circle — drawn last so it renders on top of all lines
+        if (isHead) {
+            elements.push(
+                <circle
+                    key={`circle-${keyIdx++}`}
+                    cx={commitX}
+                    cy={cy}
+                    r={7}
+                    style={{ strokeWidth: '2px', fill: commitColor }}
+                />
+            );
+            elements.push(
+                <circle
+                    key={`inner-${keyIdx++}`}
+                    cx={commitX}
+                    cy={cy}
+                    r={2}
+                    style={{ strokeWidth: '4px', fill: 'var(--theia-editor-background)', stroke: 'var(--theia-editor-background)' }}
+                />
+            );
+        } else {
+            elements.push(
+                <circle
+                    key={`circle-${keyIdx++}`}
+                    cx={commitX}
+                    cy={cy}
+                    r={5}
+                    style={{ strokeWidth: '2px', fill: commitColor }}
+                />
+            );
+        }
+
+        return (
+            <svg
+                className='scm-history-graph-svg'
+                style={{ height: `${ROW_HEIGHT}px`, width: `${svgWidth}px` }}
+            >
+                {elements}
+            </svg>
+        );
+    }
+
+    protected renderRefBadges(refs?: readonly ScmHistoryItemRef[], entry?: HistoryGraphEntry): React.ReactNode {
+        if (!refs || refs.length === 0) {
+            return undefined;
+        }
+
+        const provider = this.model.provider;
+        const visibleRefs = filterRefsForBadges(refs, provider, this.scmPreferences['scm.graph.badges'] ?? 'filter', this.model.historyItemRefFilter);
+        if (visibleRefs.length === 0) {
+            return undefined;
+        }
+        const laneColorValue = entry ? laneColor(entry.graphRow.color) : undefined;
+        const deduplicated = deduplicateRefs(visibleRefs);
+        const badgeForeground = 'var(--theia-scmGraph-historyItemRefForeground, var(--theia-badge-foreground))';
+
+        const badges: React.ReactElement[] = [];
+        for (const info of deduplicated) {
+            if (badges.length >= 3) {
+                break;
+            }
+            const { ref, hasBoth } = info as DeduplicatedRef;
+            const isTag = isTagRef(ref);
+            const isRemote = isRemoteRef(ref);
+            const onContextMenu = entry ? (e: React.MouseEvent) => this.handleRefBadgeContextMenu(e, entry, ref) : undefined;
+
+            // Current/remote/base refs are colored by role, others by the row's lane color
+            const { iconClass, colorIndex } = getRefBadgePresentation(ref, provider);
+            const backgroundColor = colorIndex !== undefined ? laneColor(colorIndex) : laneColorValue;
+            const style: React.CSSProperties = backgroundColor
+                ? { backgroundColor, color: badgeForeground }
+                : {};
+
+            badges.push(renderJsxRefBadge(ref, iconClass, !isTag, style, ref.id, onContextMenu));
+            if (!isTag && !isRemote && hasBoth && badges.length < 3) {
+                badges.push(
+                    <span
+                        key={`${ref.id}-cloud`}
+                        className='scm-history-ref-badge scm-history-ref-badge-cloud'
+                        title={ref.description ?? ref.name}
+                        style={style}
+                    >
+                        <i className='codicon codicon-cloud scm-history-ref-icon' />
+                    </span>
+                );
+            }
+        }
+        return badges;
+    }
+
+    protected handleRowContextMenu = (e: React.MouseEvent, entry: HistoryGraphEntry): void => {
+        e.preventDefault();
+        e.stopPropagation();
+        const repo = this.scmService.selectedRepository;
+        if (!repo) {
+            return;
+        }
+        const { item } = entry;
+        if (item.references && item.references.length > 0) {
+            this.scmContextKeys.scmHistoryItemRef.set(item.references[0].id);
+        } else {
+            this.scmContextKeys.scmHistoryItemRef.set(undefined);
+        }
+        const sourceControlHandle = repo.provider.handle;
+        const args = sourceControlHandle !== undefined
+            ? [{ sourceControlHandle }, { sourceControlHandle, id: item.id, type: 'historyItem' as const }]
+            : [];
+        this.contextMenuRenderer.render({
+            menuPath: SCM_HISTORY_ITEM_CONTEXT_MENU,
+            anchor: e.nativeEvent,
+            args,
+            context: this.node
+        });
+    };
+
+    protected handleRefBadgeContextMenu = (e: React.MouseEvent, entry: HistoryGraphEntry, ref: ScmHistoryItemRef): void => {
+        e.preventDefault();
+        e.stopPropagation();
+        const repo = this.scmService.selectedRepository;
+        if (!repo) {
+            return;
+        }
+        this.scmContextKeys.scmHistoryItemRef.set(ref.id);
+        const sourceControlHandle = repo.provider.handle;
+        const args = sourceControlHandle !== undefined
+            ? [{ sourceControlHandle }, { sourceControlHandle, id: ref.id, type: 'historyItemRef' as const }]
+            : [];
+        this.contextMenuRenderer.render({
+            menuPath: SCM_HISTORY_ITEM_REF_CONTEXT_MENU,
+            anchor: e.nativeEvent,
+            args,
+            context: this.node
+        });
+    };
+
+    protected handleRowClick = (idx: number, entry: HistoryGraphEntry): void => {
+        this.selectedIndex = idx;
+        const { item } = entry;
+
+        if (this.expandedIds.has(item.id)) {
+            this.expandedIds.delete(item.id);
+            this.collapsedFolders.delete(item.id);
+            const cts = this.loadChangesCts.get(item.id);
+            if (cts) {
+                cts.cancel();
+                cts.dispose();
+                this.loadChangesCts.delete(item.id);
+            }
+        } else {
+            this.expandedIds.add(item.id);
+            if (!this.expandedChanges.has(item.id)) {
+                this.loadChanges(entry);
+            }
+        }
+
+        this.update();
+    };
+
+    protected async loadChanges(entry: HistoryGraphEntry): Promise<void> {
+        const { item } = entry;
+        const provider = this.model.provider;
+        if (!provider) {
+            this.expandedChanges.set(item.id, []);
+            this.update();
+            return;
+        }
+
+        this.expandedChanges.set(item.id, 'loading');
+        this.update();
+
+        const cts = new CancellationTokenSource();
+        this.loadChangesCts.set(item.id, cts);
+        this.toDispose.push(cts);
+        try {
+            const parentId = item.parentIds?.[0];
+            const changes = await provider.provideHistoryItemChanges(item.id, parentId, cts.token);
+            if (!cts.token.isCancellationRequested) {
+                this.expandedChanges.set(item.id, changes ?? []);
+                this.update();
+            }
+        } catch (err) {
+            if (!cts.token.isCancellationRequested) {
+                this.logger.error('Failed to load changes', err);
+                this.expandedChanges.set(item.id, []);
+                this.update();
+            }
+        } finally {
+            this.loadChangesCts.delete(item.id);
+        }
+    }
+
+    protected handleLoadMore = (): void => {
+        this.model.loadMore();
+    };
+
+    protected handleLoadMoreKey = (e: React.KeyboardEvent): void => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            this.model.loadMore();
+        }
+    };
+
+}

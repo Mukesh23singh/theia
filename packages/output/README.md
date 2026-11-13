@@ -19,7 +19,7 @@ and help identify internal operations which a user can act upon if problems occu
 
 ## Additional Information
 
-- [API documentation for `@theia/output`](https://eclipse-theia.github.io/theia/docs/next/modules/output.html)
+- [API documentation for `@theia/output`](https://eclipse-theia.github.io/theia/docs/next/modules/_theia_output.html)
 - [Theia - GitHub](https://github.com/eclipse-theia/theia)
 - [Theia - Website](https://theia-ide.org/)
 
@@ -29,5 +29,6 @@ and help identify internal operations which a user can act upon if problems occu
 - [一 (Secondary) GNU General Public License, version 2 with the GNU Classpath Exception](https://projects.eclipse.org/license/secondary-gpl-2.0-cp)
 
 ## Trademark
+
 "Theia" is a trademark of the Eclipse Foundation
-https://www.eclipse.org/theia
+<https://www.eclipse.org/theia>

@@ -31,9 +31,6 @@
       "path": "../output"
     },
     {
-      "path": "../preferences"
-    },
-    {
       "path": "../process"
     },
     {
@@ -43,7 +40,7 @@
       "path": "../terminal"
     },
     {
-      "path": "../userstorage"
+      "path": "../test"
     },
     {
       "path": "../variable-resolver"

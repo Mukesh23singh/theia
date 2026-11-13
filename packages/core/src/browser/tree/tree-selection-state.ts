@@ -1,22 +1,22 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { Tree, TreeNode } from './tree';
-import { DepthFirstTreeIterator } from './tree-iterator';
-import { TreeSelection, SelectableTreeNode } from './tree-selection';
+import { Tree, TreeNode } from './tree.js';
+import { DepthFirstTreeIterator } from './tree-iterator.js';
+import { TreeSelection, SelectableTreeNode } from './tree-selection.js';
 
 /**
  * A tree selection that might contain additional information about the tree node that has the focus.
@@ -36,7 +36,7 @@ export namespace FocusableTreeSelection {
     /**
      * `true` if the argument is a focusable tree selection. Otherwise, `false`.
      */
-    export function is(arg: object | undefined): arg is FocusableTreeSelection {
+    export function is(arg: unknown): arg is FocusableTreeSelection {
         return TreeSelection.is(arg) && 'focus' in arg;
     }
 
@@ -54,9 +54,48 @@ export namespace FocusableTreeSelection {
  */
 export class TreeSelectionState {
 
+    /**
+     * The stack of selections, by the id of the nodes they refer to.
+     *
+     * Everything this state does with a selection resolves the node through the tree anyway, so keeping the nodes
+     * themselves would only pin a subtree that a refresh has since replaced, along with whatever its elements refer
+     * to. Keeping the ids also lets a selection outlive its nodes briefly leaving the tree, as happens when a tree
+     * updates itself by clearing its contents before filling them in again.
+     */
+    protected readonly ids: ReadonlyArray<{
+        readonly node: string,
+        readonly focus?: string,
+        readonly type?: TreeSelection.SelectionType
+    }>;
+
     constructor(
         protected readonly tree: Tree,
-        readonly selectionStack: ReadonlyArray<FocusableTreeSelection> = []) {
+        selectionStack: ReadonlyArray<FocusableTreeSelection> = []) {
+        this.ids = selectionStack.map(({ node, focus, type }) => ({ node: node.id, focus: focus?.id, type }));
+    }
+
+    /**
+     * The selections of this state that refer to a node the tree currently has. Selections of nodes that are not in
+     * the tree are left out, but are kept by this state, so that they apply again if their nodes come back.
+     */
+    get selectionStack(): ReadonlyArray<FocusableTreeSelection> {
+        const stack: FocusableTreeSelection[] = [];
+        for (const { node, focus, type } of this.ids) {
+            const selected = this.findSelectableTreeNode(node);
+            if (selected) {
+                stack.push({ node: selected, focus: this.findSelectableTreeNode(focus), type });
+            }
+        }
+        return stack;
+    }
+
+    /**
+     * Resolves a node id against the tree. Unlike {@link toSelectableTreeNode} this does not report an id that does
+     * not resolve, because the stack is expected to outlive the nodes it refers to.
+     */
+    protected findSelectableTreeNode(id: string | undefined): SelectableTreeNode | undefined {
+        const candidate = id === undefined ? undefined : this.tree.getNode(id);
+        return SelectableTreeNode.is(candidate) ? candidate : undefined;
     }
 
     nextState(selection: FocusableTreeSelection): TreeSelectionState {
@@ -95,8 +134,13 @@ export class TreeSelectionState {
 
     get focus(): SelectableTreeNode | undefined {
         const copy = this.checkNoDefaultSelection(this.selectionStack);
-        const candidate = copy[copy.length - 1].focus;
+        const candidate = copy[copy.length - 1]?.focus;
         return this.toSelectableTreeNode(candidate);
+    }
+
+    get node(): SelectableTreeNode | undefined {
+        const copy = this.checkNoDefaultSelection(this.selectionStack);
+        return this.toSelectableTreeNode(copy[copy.length - 1]?.node);
     }
 
     protected handleDefault(state: TreeSelectionState, node: Readonly<SelectableTreeNode>): TreeSelectionState {
@@ -116,7 +160,7 @@ export class TreeSelectionState {
             for (let i = allRanges.length - 1; i >= 0; i--) {
                 const latestRangeIndex = copy.indexOf(allRanges[i]);
                 const latestRangeSelection = copy[latestRangeIndex];
-                const latestRange = latestRangeSelection && latestRangeSelection.focus ? this.selectionRange(latestRangeSelection) : [];
+                const latestRange = latestRangeSelection?.focus ? this.selectionRange(latestRangeSelection) : [];
                 if (latestRange.indexOf(node) !== -1) {
                     if (this.focus === latestRangeSelection.focus) {
                         return latestRangeSelection.focus || node;

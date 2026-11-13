@@ -1,34 +1,33 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, inject } from '@theia/core/shared/inversify';
-import DocumentSymbol = monaco.languages.DocumentSymbol;
-import SymbolKind = monaco.languages.SymbolKind;
 import { FrontendApplicationContribution, FrontendApplication, TreeNode } from '@theia/core/lib/browser';
 import { Range, EditorManager, EditorOpenerOptions } from '@theia/editor/lib/browser';
-import DocumentSymbolProviderRegistry = monaco.modes.DocumentSymbolProviderRegistry;
-import CancellationTokenSource = monaco.CancellationTokenSource;
-import CancellationToken = monaco.CancellationToken;
 import { DisposableCollection, Disposable } from '@theia/core';
 import { OutlineViewService } from '@theia/outline-view/lib/browser/outline-view-service';
 import { OutlineSymbolInformationNode } from '@theia/outline-view/lib/browser/outline-view-widget';
 import URI from '@theia/core/lib/common/uri';
-import { MonacoEditor } from './monaco-editor';
-
-import debounce = require('@theia/core/shared/lodash.debounce');
+import { MonacoEditor } from './monaco-editor.js';
+import debounce from '@theia/core/shared/lodash.debounce';
+import * as monaco from '@theia/monaco-editor-core';
+import { ILanguageFeaturesService } from '@theia/monaco-editor-core/esm/vs/editor/common/services/languageFeatures.js';
+import { StandaloneServices } from '@theia/monaco-editor-core/esm/vs/editor/standalone/browser/standaloneServices.js';
+import { ITextModel } from '@theia/monaco-editor-core/esm/vs/editor/common/model.js';
+import { DocumentSymbol } from '@theia/monaco-editor-core/esm/vs/editor/common/languages.js';
 
 @injectable()
 export class MonacoOutlineContribution implements FrontendApplicationContribution {
@@ -44,7 +43,7 @@ export class MonacoOutlineContribution implements FrontendApplicationContributio
 
         // updateOutline and handleCurrentEditorChanged need to be called even when the outline view widget is closed
         // in order to update breadcrumbs.
-        DocumentSymbolProviderRegistry.onDidChange(
+        StandaloneServices.get(ILanguageFeaturesService).documentSymbolProvider.onDidChange(
             debounce(() => this.updateOutline())
         );
         this.editorManager.onCurrentEditorChanged(
@@ -100,13 +99,13 @@ export class MonacoOutlineContribution implements FrontendApplicationContributio
         this.updateOutline();
     }
 
-    protected tokenSource = new CancellationTokenSource();
+    protected tokenSource = new monaco.CancellationTokenSource();
     protected async updateOutline(editorSelection?: Range): Promise<void> {
         if (!this.canUpdateOutline) {
             return;
         }
         this.tokenSource.cancel();
-        this.tokenSource = new CancellationTokenSource();
+        this.tokenSource = new monaco.CancellationTokenSource();
         const token = this.tokenSource.token;
 
         const editor = MonacoEditor.get(this.editorManager.currentEditor);
@@ -118,7 +117,10 @@ export class MonacoOutlineContribution implements FrontendApplicationContributio
         this.outlineViewService.publish(roots || []);
     }
 
-    protected async createRoots(model: monaco.editor.IModel, token: CancellationToken, editorSelection?: Range): Promise<MonacoOutlineSymbolInformationNode[]> {
+    protected async createRoots(
+        model: monaco.editor.ITextModel | ITextModel, token: monaco.CancellationToken, editorSelection?: Range
+    ): Promise<MonacoOutlineSymbolInformationNode[]> {
+        model = model as ITextModel;
         if (this.roots && this.roots.length > 0) {
             // Reset the selection on the tree nodes, so that we can apply the new ones based on the `editorSelection`.
             const resetSelection = (node: MonacoOutlineSymbolInformationNode) => {
@@ -128,20 +130,24 @@ export class MonacoOutlineContribution implements FrontendApplicationContributio
             this.roots.forEach(resetSelection);
         } else {
             this.roots = [];
-            // eslint-disable-next-line @typescript-eslint/await-thenable
-            const providers = await DocumentSymbolProviderRegistry.all(model);
+            const providers = StandaloneServices.get(ILanguageFeaturesService).documentSymbolProvider.all(model);
             if (token.isCancellationRequested) {
                 return [];
             }
             const uri = new URI(model.uri.toString());
             for (const provider of providers) {
                 try {
-                    const symbols = await provider.provideDocumentSymbols(model, token);
+                    const symbols = await provider.provideDocumentSymbols(model, token) ?? [];
                     if (token.isCancellationRequested) {
                         return [];
                     }
-                    const nodes = this.createNodes(uri, symbols || []);
-                    this.roots.push(...nodes);
+                    const nodes = this.createNodes(uri, symbols);
+                    if (providers.length > 1 && provider.displayName) {
+                        const providerRoot = this.createProviderRootNode(uri, provider.displayName, nodes);
+                        this.roots.push(providerRoot);
+                    } else {
+                        this.roots.push(...nodes);
+                    }
                 } catch {
                     /* collect symbols from other providers */
                 }
@@ -151,7 +157,24 @@ export class MonacoOutlineContribution implements FrontendApplicationContributio
         return this.roots;
     }
 
-    protected createNodes(uri: URI, symbols: DocumentSymbol[]): MonacoOutlineSymbolInformationNode[] {
+    protected createProviderRootNode(uri: URI, displayName: string, children: MonacoOutlineSymbolInformationNode[]): MonacoOutlineSymbolInformationNode {
+        const node: MonacoOutlineSymbolInformationNode = {
+            uri,
+            id: displayName,
+            name: displayName,
+            iconClass: '',
+            range: this.asRange(new monaco.Range(1, 1, 1, 1)),
+            fullRange: this.asRange(new monaco.Range(1, 1, 1, 1)),
+            children,
+            parent: undefined,
+            selected: false,
+            expanded: true
+        };
+        return node;
+    }
+
+    protected createNodes(uri: URI, symbols: monaco.languages.DocumentSymbol[] | DocumentSymbol[]): MonacoOutlineSymbolInformationNode[] {
+        symbols = symbols as monaco.languages.DocumentSymbol[];
         let rangeBased = false;
         const ids = new Map();
         const roots: MonacoOutlineSymbolInformationNode[] = [];
@@ -216,7 +239,7 @@ export class MonacoOutlineContribution implements FrontendApplicationContributio
      *
      * If the argument is a `DocumentSymbol`, then `getFullRange` will be used to retrieve the range of the underlying symbol.
      */
-    protected parentContains(candidate: DocumentSymbol | Range, parent: DocumentSymbol | Range, rangeBased: boolean): boolean {
+    protected parentContains(candidate: monaco.languages.DocumentSymbol | Range, parent: monaco.languages.DocumentSymbol | Range, rangeBased: boolean): boolean {
         // TODO: move this code to the `monaco-languageclient`: https://github.com/eclipse-theia/theia/pull/2885#discussion_r217800446
         const candidateRange = Range.is(candidate) ? candidate : this.getFullRange(candidate);
         const parentRange = Range.is(parent) ? parent : this.getFullRange(parent);
@@ -254,7 +277,7 @@ export class MonacoOutlineContribution implements FrontendApplicationContributio
      *
      * See: [`DocumentSymbol#range`](https://microsoft.github.io/language-server-protocol/specification#textDocument_documentSymbol) for more details.
      */
-    protected getFullRange(documentSymbol: DocumentSymbol): Range {
+    protected getFullRange(documentSymbol: monaco.languages.DocumentSymbol): Range {
         return this.asRange(documentSymbol.range);
     }
 
@@ -263,19 +286,22 @@ export class MonacoOutlineContribution implements FrontendApplicationContributio
      *
      * See: [`DocumentSymbol#selectionRange`](https://microsoft.github.io/language-server-protocol/specification#textDocument_documentSymbol) for more details.
      */
-    protected getNameRange(documentSymbol: DocumentSymbol): Range {
+    protected getNameRange(documentSymbol: monaco.languages.DocumentSymbol): Range {
         return this.asRange(documentSymbol.selectionRange);
     }
 
-    protected createNode(uri: URI, symbol: DocumentSymbol, ids: Map<string, number>, parent?: MonacoOutlineSymbolInformationNode): MonacoOutlineSymbolInformationNode {
+    protected createNode(
+        uri: URI, symbol: monaco.languages.DocumentSymbol, ids: Map<string, number>, parent?: MonacoOutlineSymbolInformationNode
+    ): MonacoOutlineSymbolInformationNode {
         const id = this.createId(symbol.name, ids);
         const children: MonacoOutlineSymbolInformationNode[] = [];
         const node: MonacoOutlineSymbolInformationNode = {
             children,
             id,
-            iconClass: SymbolKind[symbol.kind].toString().toLowerCase(),
+            iconClass: monaco.languages.SymbolKind[symbol.kind].toString().toLowerCase(),
             name: this.getName(symbol),
             detail: this.getDetail(symbol),
+            deprecated: this.isDeprecated(symbol),
             parent,
             uri,
             range: this.getNameRange(symbol),
@@ -291,12 +317,16 @@ export class MonacoOutlineContribution implements FrontendApplicationContributio
         return node;
     }
 
-    protected getName(symbol: DocumentSymbol): string {
+    protected getName(symbol: monaco.languages.DocumentSymbol): string {
         return symbol.name;
     }
 
-    protected getDetail(symbol: DocumentSymbol): string {
+    protected getDetail(symbol: monaco.languages.DocumentSymbol): string {
         return symbol.detail;
+    }
+
+    protected isDeprecated(symbol: monaco.languages.DocumentSymbol): boolean {
+        return !!symbol.tags?.includes(monaco.languages.SymbolTag.Deprecated);
     }
 
     protected createId(name: string, ids: Map<string, number>): string {
@@ -306,17 +336,17 @@ export class MonacoOutlineContribution implements FrontendApplicationContributio
         return name + '_' + index;
     }
 
-    protected shouldExpand(symbol: DocumentSymbol): boolean {
+    protected shouldExpand(symbol: monaco.languages.DocumentSymbol): boolean {
         return [
-            SymbolKind.Class,
-            SymbolKind.Enum, SymbolKind.File,
-            SymbolKind.Interface, SymbolKind.Module,
-            SymbolKind.Namespace, SymbolKind.Object,
-            SymbolKind.Package, SymbolKind.Struct
+            monaco.languages.SymbolKind.Class,
+            monaco.languages.SymbolKind.Enum, monaco.languages.SymbolKind.File,
+            monaco.languages.SymbolKind.Interface, monaco.languages.SymbolKind.Module,
+            monaco.languages.SymbolKind.Namespace, monaco.languages.SymbolKind.Object,
+            monaco.languages.SymbolKind.Package, monaco.languages.SymbolKind.Struct
         ].indexOf(symbol.kind) !== -1;
     }
 
-    protected orderByPosition(symbol: DocumentSymbol, symbol2: DocumentSymbol): number {
+    protected orderByPosition(symbol: monaco.languages.DocumentSymbol, symbol2: monaco.languages.DocumentSymbol): number {
         const startLineComparison = symbol.range.startLineNumber - symbol2.range.startLineNumber;
         if (startLineComparison !== 0) {
             return startLineComparison;
@@ -336,7 +366,7 @@ export class MonacoOutlineContribution implements FrontendApplicationContributio
 export namespace MonacoOutlineContribution {
     export interface NodeAndSymbol {
         node: MonacoOutlineSymbolInformationNode;
-        symbol: DocumentSymbol
+        symbol: monaco.languages.DocumentSymbol
     }
 }
 
@@ -345,6 +375,8 @@ export interface MonacoOutlineSymbolInformationNode extends OutlineSymbolInforma
     range: Range;
     fullRange: Range;
     detail?: string;
+    /** Whether the symbol is tagged as deprecated. */
+    deprecated?: boolean;
     parent: MonacoOutlineSymbolInformationNode | undefined;
     children: MonacoOutlineSymbolInformationNode[];
 }

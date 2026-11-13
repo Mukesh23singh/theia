@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2019 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as theia from '@theia/plugin';
 import {
@@ -22,12 +22,11 @@ import {
     DecorationsExt,
     DecorationsMain,
     PLUGIN_RPC_CONTEXT, PluginInfo
-} from '../common/plugin-api-rpc';
-import { RPCProtocol } from '../common/rpc-protocol';
-import { URI } from './types-impl';
-import { Disposable, FileDecoration } from './types-impl';
+} from '../common/plugin-api-rpc.js';
+import { RPCProtocol } from '../common/rpc-protocol.js';
+import { Disposable, FileDecoration, URI } from './types-impl.js';
 import { CancellationToken } from '@theia/core/lib/common';
-import { dirname } from 'path';
+import { PluginLogger } from './logger.js';
 
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
@@ -46,9 +45,11 @@ export class DecorationsExtImpl implements DecorationsExt {
 
     private readonly providersMap: Map<number, ProviderData>;
     private readonly proxy: DecorationsMain;
+    private readonly logger: PluginLogger;
 
     constructor(readonly rpc: RPCProtocol) {
         this.proxy = rpc.getProxy(PLUGIN_RPC_CONTEXT.DECORATIONS_MAIN);
+        this.logger = new PluginLogger(rpc, 'decorations-plugin');
         this.providersMap = new Map();
     }
 
@@ -68,24 +69,12 @@ export class DecorationsExtImpl implements DecorationsExt {
                 return;
             }
 
-            // too many resources per event. pick one resource per folder, starting
-            // with parent folders
-            const mapped = array.map(uri => ({ uri, rank: (uri.path.match(/\//g) || []).length }));
-            const groups = groupBy(mapped, (a, b) => a.rank - b.rank);
-            const picked: URI[] = [];
-            outer: for (const uris of groups) {
-                let lastDirname: string | undefined;
-                for (const obj of uris) {
-                    const myDirname = dirname(obj.uri.path);
-                    if (lastDirname !== myDirname) {
-                        lastDirname = myDirname;
-                        if (picked.push(obj.uri) >= DecorationsExtImpl.maxEventSize) {
-                            break outer;
-                        }
-                    }
-                }
-            }
-            this.proxy.$onDidChange(handle, picked);
+            // too many resources per event: send a flush instead, so that the renderer
+            // drops cached data for this provider and re-fetches the decorations it
+            // displays on demand. Truncating the event (as upstream VS Code does by
+            // picking one resource per folder) loses decorations for the dropped
+            // resources, see https://github.com/eclipse-theia/theia/issues/17507
+            this.proxy.$onDidChange(handle, null);
         });
 
         return new Disposable(() => {
@@ -93,20 +82,6 @@ export class DecorationsExtImpl implements DecorationsExt {
             this.proxy.$unregisterDecorationProvider(handle);
             this.providersMap.delete(handle);
         });
-
-        function groupBy<T>(data: ReadonlyArray<T>, compareFn: (a: T, b: T) => number): T[][] {
-            const result: T[][] = [];
-            let currentGroup: T[] | undefined = undefined;
-            for (const element of data.slice(0).sort(compareFn)) {
-                if (!currentGroup || compareFn(currentGroup[0], element) !== 0) {
-                    currentGroup = [element];
-                    result.push(currentGroup);
-                } else {
-                    currentGroup.push(element);
-                }
-            }
-            return result;
-        }
     }
 
     async $provideDecorations(handle: number, requests: DecorationRequest[], token: CancellationToken): Promise<DecorationReply> {
@@ -129,10 +104,10 @@ export class DecorationsExtImpl implements DecorationsExt {
                     FileDecoration.validate(data);
                     result[id] = <DecorationData>[data.propagate, data.tooltip, data.badge, data.color];
                 } catch (e) {
-                    console.warn(`INVALID decoration from extension '${pluginInfo.name}': ${e}`);
+                    this.logger.warn(`INVALID decoration from extension '${pluginInfo.name}': ${e}`);
                 }
             } catch (err) {
-                console.error(err);
+                this.logger.error(err);
             }
         }));
 

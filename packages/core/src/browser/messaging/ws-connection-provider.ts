@@ -1,234 +1,49 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable, interfaces, decorate, unmanaged, inject, optional } from 'inversify';
-import { JsonRpcProxyFactory, JsonRpcProxy, Emitter, Event, MessageService, MessageServiceFactory } from '../../common';
-import { WebSocketChannel } from '../../common/messaging/web-socket-channel';
-import { Endpoint } from '../endpoint';
-import ReconnectingWebSocket from 'reconnecting-websocket';
-import { AbstractConnectionProvider } from '../../common/messaging/abstract-connection-provider';
-import { v4 as uuid } from 'uuid';
+import { injectable, interfaces, decorate, unmanaged, inject } from 'inversify';
+import { RpcProxy, RpcProxyFactory } from '../../common/messaging/proxy-factory.js';
+import { RemoteConnectionProvider, ServiceConnectionProvider } from './service-connection-provider.js';
 
-decorate(injectable(), JsonRpcProxyFactory);
-decorate(unmanaged(), JsonRpcProxyFactory, 0);
+decorate(injectable(), RpcProxyFactory);
+decorate(unmanaged(), RpcProxyFactory, 0);
 
-export interface WebSocketOptions {
-    /**
-     * True by default.
-     */
-    reconnecting?: boolean;
-}
-
-export const HttpFallbackOptions = Symbol('HttpFallbackOptions');
-
-export interface HttpFallbackOptions {
-    /** Determines whether Theia is allowed to use the http fallback. True by default. */
-    allowed: boolean;
-    /** Number of failed websocket connection attempts before the fallback is triggered. 2 by default. */
-    maxAttempts: number;
-    /** The maximum duration (in ms) after which the http request should timeout. 5000 by default. */
-    pollingTimeout: number;
-    /** The timeout duration (in ms) after a request was answered with an error code. 5000 by default. */
-    errorTimeout: number;
-    /** The minimum timeout duration (in ms) between two http requests. 0 by default. */
-    requestTimeout: number;
-}
-
-export const DEFAULT_HTTP_FALLBACK_OPTIONS: HttpFallbackOptions = {
-    allowed: true,
-    maxAttempts: 2,
-    errorTimeout: 5000,
-    pollingTimeout: 5000,
-    requestTimeout: 0
-};
-
+/**
+ * @deprecated This class serves to keep API compatibility for a while.
+ * Use the {@linkcode RemoteConnectionProvider} as the injection symbol and {@linkcode ServiceConnectionProvider} as the type instead.
+ */
 @injectable()
-export class WebSocketConnectionProvider extends AbstractConnectionProvider<WebSocketOptions> {
+export class WebSocketConnectionProvider {
+    @inject(RemoteConnectionProvider)
+    private readonly remoteConnectionProvider: ServiceConnectionProvider;
 
-    protected readonly onSocketDidOpenEmitter: Emitter<void> = new Emitter();
-    readonly onSocketDidOpen: Event<void> = this.onSocketDidOpenEmitter.event;
-
-    protected readonly onSocketDidCloseEmitter: Emitter<void> = new Emitter();
-    readonly onSocketDidClose: Event<void> = this.onSocketDidCloseEmitter.event;
-
-    protected readonly onHttpFallbackDidActivateEmitter: Emitter<void> = new Emitter();
-    readonly onHttpFallbackDidActivate: Event<void> = this.onHttpFallbackDidActivateEmitter.event;
-
-    static createProxy<T extends object>(container: interfaces.Container, path: string, arg?: object): JsonRpcProxy<T> {
-        return container.get(WebSocketConnectionProvider).createProxy<T>(path, arg);
+    static createProxy<T extends object>(container: interfaces.Container, path: string, arg?: object): RpcProxy<T> {
+        return ServiceConnectionProvider.createProxy(container, path, arg);
     }
 
-    @inject(MessageServiceFactory)
-    protected readonly messageService: () => MessageService;
-
-    @inject(HttpFallbackOptions) @optional()
-    protected readonly httpFallbackOptions: HttpFallbackOptions | undefined;
-
-    protected readonly socket: ReconnectingWebSocket;
-    protected useHttpFallback = false;
-    protected websocketErrorCounter = 0;
-    protected httpFallbackId = uuid();
-    protected httpFallbackDisconnected = true;
-
-    constructor() {
-        super();
-        const url = this.createWebSocketUrl(WebSocketChannel.wsPath);
-        const socket = this.createWebSocket(url);
-        socket.onerror = event => this.handleSocketError(event);
-        socket.onopen = () => {
-            this.fireSocketDidOpen();
-        };
-        socket.onclose = ({ code, reason }) => {
-            for (const channel of [...this.channels.values()]) {
-                channel.close(code, reason);
-            }
-            this.fireSocketDidClose();
-        };
-        socket.onmessage = ({ data }) => {
-            this.websocketErrorCounter = 0;
-            this.handleIncomingRawMessage(data);
-        };
-        this.socket = socket;
-        window.addEventListener('offline', () => this.tryReconnect());
-        window.addEventListener('online', () => this.tryReconnect());
+    static createLocalProxy<T extends object>(container: interfaces.Container, path: string, arg?: object): RpcProxy<T> {
+        return ServiceConnectionProvider.createLocalProxy(container, path, arg);
     }
 
-    handleSocketError(event: unknown): void {
-        this.websocketErrorCounter += 1;
-        if (this.httpFallbackOptions?.allowed && this.websocketErrorCounter >= this.httpFallbackOptions?.maxAttempts) {
-            this.useHttpFallback = true;
-            this.socket.close();
-            const httpUrl = this.createHttpWebSocketUrl(WebSocketChannel.wsPath);
-            this.onHttpFallbackDidActivateEmitter.fire(undefined);
-            this.doLongPolling(httpUrl);
-            this.messageService().warn(
-                'Could not establish a websocket connection. The application will be using the HTTP fallback mode. This may affect performance and the behavior of some features.'
-            );
-        }
-        console.error(event);
+    static createHandler(container: interfaces.Container, path: string, arg?: object): void {
+        return ServiceConnectionProvider.createHandler(container, path, arg);
     }
 
-    async doLongPolling(url: string): Promise<void> {
-        let timeoutDuration = this.httpFallbackOptions?.requestTimeout || 0;
-        const controller = new AbortController();
-        const pollingId = window.setTimeout(() => controller.abort(), this.httpFallbackOptions?.pollingTimeout);
-        try {
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                signal: controller.signal,
-                keepalive: true,
-                body: JSON.stringify({ id: this.httpFallbackId, polling: true })
-            });
-            if (response.status === 200) {
-                window.clearTimeout(pollingId);
-                if (this.httpFallbackDisconnected) {
-                    this.fireSocketDidOpen();
-                }
-                const json: string[] = await response.json();
-                if (Array.isArray(json)) {
-                    for (const item of json) {
-                        this.handleIncomingRawMessage(item);
-                    }
-                } else {
-                    throw new Error('Received invalid long polling response.');
-                }
-            } else {
-                timeoutDuration = this.httpFallbackOptions?.errorTimeout || 0;
-                this.httpFallbackDisconnected = true;
-                this.fireSocketDidClose();
-                throw new Error('Response has error code: ' + response.status);
-            }
-        } catch (e) {
-            console.error('Error occurred during long polling', e);
-        }
-        setTimeout(() => this.doLongPolling(url), timeoutDuration);
+    createProxy<T extends object>(path: string, target?: object): RpcProxy<T>;
+    createProxy<T extends object>(path: string, factory: RpcProxyFactory<T>): RpcProxy<T> {
+        return this.remoteConnectionProvider.createProxy(path, factory);
     }
-
-    openChannel(path: string, handler: (channel: WebSocketChannel) => void, options?: WebSocketOptions): void {
-        if (this.useHttpFallback || this.socket.readyState === WebSocket.OPEN) {
-            super.openChannel(path, handler, options);
-        } else {
-            const openChannel = () => {
-                this.socket.removeEventListener('open', openChannel);
-                this.openChannel(path, handler, options);
-            };
-            this.socket.addEventListener('open', openChannel);
-            this.onHttpFallbackDidActivate(openChannel);
-        }
-    }
-
-    protected createChannel(id: number): WebSocketChannel {
-        const httpUrl = this.createHttpWebSocketUrl(WebSocketChannel.wsPath);
-        return new WebSocketChannel(id, content => {
-            if (this.useHttpFallback) {
-                fetch(httpUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ id: this.httpFallbackId, content })
-                });
-            } else if (this.socket.readyState < WebSocket.CLOSING) {
-                this.socket.send(content);
-            }
-        });
-    }
-
-    /**
-     * Creates a websocket URL to the current location
-     */
-    protected createWebSocketUrl(path: string): string {
-        const endpoint = new Endpoint({ path });
-        return endpoint.getWebSocketUrl().toString();
-    }
-
-    protected createHttpWebSocketUrl(path: string): string {
-        const endpoint = new Endpoint({ path });
-        return endpoint.getRestUrl().toString();
-    }
-
-    /**
-     * Creates a web socket for the given url
-     */
-    protected createWebSocket(url: string): ReconnectingWebSocket {
-        return new ReconnectingWebSocket(url, undefined, {
-            maxReconnectionDelay: 10000,
-            minReconnectionDelay: 1000,
-            reconnectionDelayGrowFactor: 1.3,
-            connectionTimeout: 10000,
-            maxRetries: Infinity,
-            debug: false
-        });
-    }
-
-    protected fireSocketDidOpen(): void {
-        this.onSocketDidOpenEmitter.fire(undefined);
-    }
-
-    protected fireSocketDidClose(): void {
-        this.onSocketDidCloseEmitter.fire(undefined);
-    }
-
-    protected tryReconnect(): void {
-        if (!this.useHttpFallback && this.socket.readyState !== WebSocket.CONNECTING) {
-            this.socket.reconnect();
-        }
-    }
-
 }

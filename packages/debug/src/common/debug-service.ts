@@ -1,29 +1,37 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
-import { Disposable } from '@theia/core';
+import { Channel, Disposable, Emitter, Event } from '@theia/core';
 import { ApplicationError } from '@theia/core/lib/common/application-error';
 import { IJSONSchema, IJSONSchemaSnippet } from '@theia/core/lib/common/json-schema';
-import { DebugConfiguration } from './debug-configuration';
+import { CommandIdVariables } from '@theia/variable-resolver/lib/common/variable-types';
+import { DebugConfiguration } from './debug-configuration.js';
 
 export interface DebuggerDescription {
     type: string
     label: string
+}
+
+/**
+ * Describes a dynamic debug configuration provider with its label and associated types.
+ * Multiple debug types can share the same label (e.g., "Node.js" for "node", "pwa-node", etc.)
+ */
+export interface DynamicDebugConfigurationProvider {
+    label: string;
+    types: string[];
 }
 
 /**
@@ -46,6 +54,8 @@ export const DebugService = Symbol('DebugService');
  * #resolveDebugConfiguration method is invoked. After that the debug adapter session will be started.
  */
 export interface DebugService extends Disposable {
+    onDidChangeDebuggers?: Event<void>;
+
     /**
      * Finds and returns an array of registered debug types.
      * @returns An array of registered debug types
@@ -53,6 +63,12 @@ export interface DebugService extends Disposable {
     debugTypes(): Promise<string[]>;
 
     getDebuggersForLanguage(language: string): Promise<DebuggerDescription[]>;
+
+    /**
+     * Provide debugger contributed variables
+     * see "variables" at https://code.visualstudio.com/api/references/contribution-points#contributes.debuggers
+     */
+    provideDebuggerVariables(debugType: string): Promise<CommandIdVariables>;
 
     /**
      * Provides the schema attributes.
@@ -71,38 +87,79 @@ export interface DebugService extends Disposable {
     provideDebugConfigurations(debugType: string, workspaceFolderUri: string | undefined): Promise<DebugConfiguration[]>;
 
     /**
-     * Provides dynamic debug configurations by a provider debug type
-     * @returns An Array of objects containing the debug type and corresponding dynamic debug configurations array
+     * Returns dynamic debug configuration providers grouped by label.
+     * Each entry contains a label and all the types that share that label.
+     * This allows the UI to show human-readable labels and group related types.
      */
-    provideDynamicDebugConfigurations?(): Promise<{ type: string, configurations: DebugConfiguration[] }[]>;
+    getDynamicDebugConfigurationProviders?(): DynamicDebugConfigurationProvider[];
+
+    /**
+     * Returns the types of registered dynamic debug configuration providers
+     * without invoking them. This is a lightweight alternative to
+     * provideDynamicDebugConfigurations when you only need to know what
+     * provider types are available.
+     * @deprecated Use getDynamicDebugConfigurationProviders() instead for proper label support.
+     */
+    getDynamicDebugConfigurationProviderTypes?(): string[];
+
+    /**
+     * @returns A Record of debug configuration provider types and a corresponding dynamic debug configurations array
+     */
+    provideDynamicDebugConfigurations?(folder?: string): Promise<Record<string, DebugConfiguration[]>>;
+
+    /**
+     * Provides dynamic debug configurations for a specific provider type only.
+     * @param type The debug configuration provider type
+     * @param folder The workspace folder URI
+     * @returns An array of debug configurations for the specified type
+     */
+    provideDynamicDebugConfigurationsByType?(type: string, folder?: string): Promise<DebugConfiguration[]>;
+
+    /**
+     * Provides a dynamic debug configuration matching the name and the provider debug type
+     */
+    fetchDynamicDebugConfiguration(name: string, type: string, folder?: string): Promise<DebugConfiguration | undefined>;
 
     /**
      * Resolves a [debug configuration](#DebugConfiguration) by filling in missing values
      * or by adding/changing/removing attributes before variable substitution.
      * @param debugConfiguration The [debug configuration](#DebugConfiguration) to resolve.
-     * @returns The resolved debug configuration.
+     * @returns The resolved debug configuration, undefined or null.
      */
-    resolveDebugConfiguration(config: DebugConfiguration, workspaceFolderUri: string | undefined): Promise<DebugConfiguration>;
+    resolveDebugConfiguration(
+        config: DebugConfiguration,
+        workspaceFolderUri: string | undefined
+    ): Promise<DebugConfiguration | undefined | null>;
 
     /**
      * Resolves a [debug configuration](#DebugConfiguration) by filling in missing values
      * or by adding/changing/removing attributes with substituted variables.
      * @param debugConfiguration The [debug configuration](#DebugConfiguration) to resolve.
-     * @returns The resolved debug configuration.
+     * @returns The resolved debug configuration, undefined or null.
      */
-    resolveDebugConfigurationWithSubstitutedVariables(config: DebugConfiguration, workspaceFolderUri: string | undefined): Promise<DebugConfiguration>;
+    resolveDebugConfigurationWithSubstitutedVariables(
+        config: DebugConfiguration,
+        workspaceFolderUri: string | undefined
+    ): Promise<DebugConfiguration | undefined | null>;
 
     /**
      * Creates a new [debug adapter session](#DebugAdapterSession).
      * @param config The resolved [debug configuration](#DebugConfiguration).
+     * @param workspaceFolderUri The workspace folder for this sessions or undefined when folderless
      * @returns The identifier of the created [debug adapter session](#DebugAdapterSession).
      */
-    createDebugSession(config: DebugConfiguration): Promise<string>;
+    createDebugSession(config: DebugConfiguration, workspaceFolderUri: string | undefined): Promise<string>;
 
     /**
      * Stop a running session for the given session id.
      */
     terminateDebugSession(sessionId: string): Promise<void>;
+
+    /**
+     * Event handle to indicate when one or more dynamic debug configuration providers
+     * have been registered or unregistered.
+     */
+    onDidChangeDebugConfigurationProviders: Event<void>;
 }
 
 /**
@@ -115,4 +172,46 @@ export namespace DebugError {
         message: `'${type}' debugger type is not supported.`,
         data: { type }
     }));
+}
+
+/**
+ * A closeable channel to send debug protocol messages over with error/close handling
+ */
+export interface DebugChannel {
+    send(content: string): void;
+    onMessage(cb: (message: string) => void): void;
+    onError(cb: (reason: unknown) => void): void;
+    onClose(cb: (code: number, reason: string) => void): void;
+    close(): void;
+}
+
+/**
+ * A {@link DebugChannel} wrapper implementation that sends and receives messages to/from an underlying {@link Channel}.
+ */
+export class ForwardingDebugChannel implements DebugChannel {
+    private onMessageEmitter = new Emitter<string>();
+
+    constructor(private readonly underlyingChannel: Channel) {
+        this.underlyingChannel.onMessage(msg => this.onMessageEmitter.fire(msg().readString()));
+    }
+
+    send(content: string): void {
+        this.underlyingChannel.getWriteBuffer().writeString(content).commit();
+    }
+
+    onMessage(cb: (message: string) => void): void {
+        this.onMessageEmitter.event(cb);
+    }
+    onError(cb: (reason: unknown) => void): void {
+        this.underlyingChannel.onError(cb);
+    }
+    onClose(cb: (code: number, reason: string) => void): void {
+        this.underlyingChannel.onClose(event => cb(event.code ?? -1, event.reason));
+    }
+
+    close(): void {
+        this.underlyingChannel.close();
+        this.onMessageEmitter.dispose();
+    }
+
 }

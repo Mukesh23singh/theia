@@ -1,24 +1,23 @@
-/********************************************************************************
- * Copyright (C) 2019 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
-import { Plugin, TimelineCommandArg, TimelineExt, TimelineMain } from '../common';
-import { RPCProtocol } from '../common/rpc-protocol';
-import { Disposable, URI } from './types-impl';
-import { PLUGIN_RPC_CONTEXT } from '../common';
+// *****************************************************************************
+// Copyright (C) 2019 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+import { Plugin, PLUGIN_RPC_CONTEXT, TimelineCommandArg, TimelineExt, TimelineMain } from '../common/index.js';
+import { RPCProtocol } from '../common/rpc-protocol.js';
+import { Disposable, ThemeIcon, URI } from './types-impl.js';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
-import { CommandRegistryImpl } from './command-registry';
+import { CommandRegistryImpl } from './command-registry.js';
 import type {
     InternalTimelineOptions,
     Timeline,
@@ -28,7 +27,9 @@ import type {
 } from '@theia/timeline/lib/common/timeline-model';
 import * as theia from '@theia/plugin';
 import { CancellationToken } from '@theia/core/lib/common/cancellation';
-import { UriComponents } from '../common/uri-components';
+import { UriComponents } from '../common/uri-components.js';
+import { convertIconPath } from './type-converters.js';
+import { PluginIconPath } from './plugin-icon-path.js';
 
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
@@ -66,7 +67,7 @@ export class TimelineExtImpl implements TimelineExt {
     registerTimelineProvider(plugin: Plugin, scheme: string | string[], provider: theia.TimelineProvider): Disposable {
         const timelineDisposables = new DisposableCollection();
 
-        const convertTimelineItem = this.convertTimelineItem(provider.id, timelineDisposables).bind(this);
+        const convertTimelineItem = this.convertTimelineItem(plugin, provider.id, timelineDisposables).bind(this);
 
         let disposable: Disposable | undefined;
         if (provider.onDidChange) {
@@ -116,7 +117,8 @@ export class TimelineExtImpl implements TimelineExt {
         });
     }
 
-    private convertTimelineItem(source: string, disposables: DisposableCollection): (uri: URI, options?: InternalTimelineOptions) => (item: theia.TimelineItem) => TimelineItem {
+    private convertTimelineItem(plugin: Plugin, source: string, disposables: DisposableCollection):
+        (uri: URI, options?: InternalTimelineOptions) => (item: theia.TimelineItem) => TimelineItem {
         return (uri: URI, options?: InternalTimelineOptions) => {
             let items: Map<string, theia.TimelineItem> | undefined;
             if (options?.cacheResults) {
@@ -149,6 +151,7 @@ export class TimelineExtImpl implements TimelineExt {
                     handle: handle,
                     source: source,
                     command: item.command ? this.commands.converter.toSafeCommand(item.command, disposables) : undefined,
+                    icon: ThemeIcon.get(iconPath) ?? PluginIconPath.toUrl(convertIconPath(iconPath), plugin)
                 };
             };
         };

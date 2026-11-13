@@ -1,63 +1,103 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
-import { UUID } from '@theia/core/shared/@phosphor/coreutils';
-import { Terminal, TerminalOptions, PseudoTerminalOptions } from '@theia/plugin';
-import { TerminalServiceExt, TerminalServiceMain, PLUGIN_RPC_CONTEXT } from '../common/plugin-api-rpc';
-import { RPCProtocol } from '../common/rpc-protocol';
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+
+import { UUID } from '@theia/core/shared/@lumino/coreutils';
+import { inject, injectable } from '@theia/core/shared/inversify';
+import { TerminalServiceExt, TerminalServiceMain, PLUGIN_RPC_CONTEXT, Plugin, TerminalOptions } from '../common/plugin-api-rpc.js';
+import { RPCProtocol } from '../common/rpc-protocol.js';
 import { Event, Emitter } from '@theia/core/lib/common/event';
+import { MultiKeyMap } from '@theia/core/lib/common/collections';
 import { Deferred } from '@theia/core/lib/common/promise-util';
 import * as theia from '@theia/plugin';
-import { EnvironmentVariableMutatorType } from './types-impl';
-import { SerializableEnvironmentVariableCollection } from '@theia/terminal/lib/common/base-terminal-protocol';
+import * as Converter from './type-converters.js';
+import { Disposable, EnvironmentVariableMutatorType, TerminalExitReason, ThemeIcon } from './types-impl.js';
+import { NO_ROOT_URI, SerializableEnvironmentVariableCollection } from '@theia/terminal/lib/common/shell-terminal-protocol';
+import { ProvidedTerminalLink } from '../common/plugin-api-rpc-model.js';
+import { PluginIconPath } from './plugin-icon-path.js';
 
 /**
  * Provides high level terminal plugin api to use in the Theia plugins.
  * This service allow(with help proxy) create and use terminal emulator.
  */
+@injectable()
 export class TerminalServiceExtImpl implements TerminalServiceExt {
-
     private readonly proxy: TerminalServiceMain;
 
     private readonly _terminals = new Map<string, TerminalExtImpl>();
 
+    /**
+     * Stores the API objects (Proxies) returned to plugins for each terminal.
+     * This ensures that events fire with the same object instance that plugins received,
+     * allowing strict equality checks (===) to work correctly.
+     */
+    private readonly _terminalApiObjects = new Map<string, theia.Terminal>();
+
     private readonly _pseudoTerminals = new Map<string, PseudoTerminal>();
 
-    private readonly onDidCloseTerminalEmitter = new Emitter<Terminal>();
-    readonly onDidCloseTerminal: theia.Event<Terminal> = this.onDidCloseTerminalEmitter.event;
+    private static nextProviderId = 0;
+    private readonly terminalLinkProviders = new Map<string, theia.TerminalLinkProvider>();
+    private readonly terminalObservers = new Map<string, theia.TerminalObserver>();
+    private readonly terminalProfileProviders = new Map<string, theia.TerminalProfileProvider>();
+    private readonly onDidCloseTerminalEmitter = new Emitter<theia.Terminal>();
+    readonly onDidCloseTerminal: theia.Event<theia.Terminal> = this.onDidCloseTerminalEmitter.event;
 
-    private readonly onDidOpenTerminalEmitter = new Emitter<Terminal>();
-    readonly onDidOpenTerminal: theia.Event<Terminal> = this.onDidOpenTerminalEmitter.event;
+    private readonly onDidOpenTerminalEmitter = new Emitter<theia.Terminal>();
+    readonly onDidOpenTerminal: theia.Event<theia.Terminal> = this.onDidOpenTerminalEmitter.event;
 
-    private readonly onDidChangeActiveTerminalEmitter = new Emitter<Terminal | undefined>();
-    readonly onDidChangeActiveTerminal: theia.Event<Terminal | undefined> = this.onDidChangeActiveTerminalEmitter.event;
+    private readonly onDidChangeActiveTerminalEmitter = new Emitter<theia.Terminal | undefined>();
+    readonly onDidChangeActiveTerminal: theia.Event<theia.Terminal | undefined> = this.onDidChangeActiveTerminalEmitter.event;
 
-    protected environmentVariableCollections: Map<string, EnvironmentVariableCollection> = new Map();
+    private readonly onDidChangeTerminalStateEmitter = new Emitter<theia.Terminal>();
+    readonly onDidChangeTerminalState: theia.Event<theia.Terminal> = this.onDidChangeTerminalStateEmitter.event;
 
-    constructor(rpc: RPCProtocol) {
+    protected environmentVariableCollections: MultiKeyMap<string, EnvironmentVariableCollectionImpl> = new MultiKeyMap(2);
+
+    private shell: string;
+    private readonly onDidChangeShellEmitter = new Emitter<string>();
+    readonly onDidChangeShell: theia.Event<string> = this.onDidChangeShellEmitter.event;
+
+    constructor(@inject(RPCProtocol) rpc: RPCProtocol) {
         this.proxy = rpc.getProxy(PLUGIN_RPC_CONTEXT.TERMINAL_MAIN);
     }
 
-    get terminals(): TerminalExtImpl[] {
-        return [...this._terminals.values()];
+    get terminals(): theia.Terminal[] {
+        return [...this._terminals.keys()].map(id => this.getApiObject(id)).filter((t): t is theia.Terminal => t !== undefined);
     }
 
-    createTerminal(nameOrOptions: TerminalOptions | PseudoTerminalOptions | (string | undefined), shellPath?: string, shellArgs?: string[]): Terminal {
+    get defaultShell(): string {
+        return this.shell || '';
+    }
+
+    async $setShell(shell: string): Promise<void> {
+        if (this.shell !== shell) {
+            this.shell = shell;
+            this.onDidChangeShellEmitter.fire(shell);
+        }
+    }
+
+    createTerminal(
+        plugin: Plugin,
+        nameOrOptions: theia.TerminalOptions | theia.PseudoTerminalOptions | theia.ExtensionTerminalOptions | string | undefined,
+        shellPath?: string,
+        shellArgs?: string[] | string,
+        apiObjectWrapper?: (terminal: TerminalExtImpl) => theia.Terminal
+    ): theia.Terminal {
+        const id = `plugin-terminal-${UUID.uuid4()}`;
         let options: TerminalOptions;
         let pseudoTerminal: theia.Pseudoterminal | undefined = undefined;
-        const id = `plugin-terminal-${UUID.uuid4()}`;
         if (typeof nameOrOptions === 'object') {
             if ('pty' in nameOrOptions) {
                 pseudoTerminal = nameOrOptions.pty;
@@ -75,22 +115,75 @@ export class TerminalServiceExtImpl implements TerminalServiceExt {
                 shellArgs: shellArgs
             };
         }
-        this.proxy.$createTerminal(id, options, !!pseudoTerminal);
-        return this.obtainTerminal(id, options.name || 'Terminal');
+
+        let parentId;
+        if (options.location && typeof options.location === 'object' && 'parentTerminal' in options.location) {
+            const parentTerminal = options.location.parentTerminal;
+            // Check both the API proxy objects and the raw terminals, since
+            // plugins receive the proxy but _terminals stores the raw object.
+            for (const [k, v] of this._terminalApiObjects) {
+                if (v === parentTerminal) {
+                    parentId = k;
+                    break;
+                }
+            }
+            if (!parentId) {
+                for (const [k, v] of this._terminals) {
+                    if (v === parentTerminal) {
+                        parentId = k;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (typeof nameOrOptions === 'object' && 'iconPath' in nameOrOptions) {
+            const iconPath = nameOrOptions.iconPath;
+            options.iconUrl = PluginIconPath.toUrl(iconPath, plugin) ?? ThemeIcon.get(iconPath);
+        }
+
+        if (typeof nameOrOptions === 'object' && 'color' in nameOrOptions) {
+            options.color = nameOrOptions.color;
+        }
+
+        this.proxy.$createTerminal(id, options, parentId, !!pseudoTerminal);
+
+        let creationOptions: theia.TerminalOptions | theia.ExtensionTerminalOptions = options;
+        // make sure to pass ExtensionTerminalOptions as creation options
+        if (typeof nameOrOptions === 'object' && 'pty' in nameOrOptions) {
+            creationOptions = nameOrOptions;
+        }
+        const terminal = this.obtainTerminal(id, options.name || 'Terminal', creationOptions);
+
+        // If a wrapper function is provided, wrap the terminal and register the API object
+        // This ensures events fire with the same object instance that plugins received
+        if (apiObjectWrapper) {
+            const apiObject = apiObjectWrapper(terminal);
+            this._terminalApiObjects.set(id, apiObject);
+            return apiObject;
+        }
+        return terminal;
     }
 
     attachPtyToTerminal(terminalId: number, pty: theia.Pseudoterminal): void {
         this._pseudoTerminals.set(terminalId.toString(), new PseudoTerminal(terminalId, this.proxy, pty, true));
     }
 
-    protected obtainTerminal(id: string, name: string): TerminalExtImpl {
+    protected obtainTerminal(id: string, name: string, options?: theia.TerminalOptions | theia.ExtensionTerminalOptions): TerminalExtImpl {
         let terminal = this._terminals.get(id);
         if (!terminal) {
-            terminal = new TerminalExtImpl(this.proxy);
+            terminal = new TerminalExtImpl(this.proxy, options ?? {});
             this._terminals.set(id, terminal);
         }
         terminal.name = name;
         return terminal;
+    }
+
+    /**
+     * Gets the API object for a terminal by ID, falling back to the raw terminal if not set.
+     */
+    protected getApiObject(id: string): theia.Terminal | undefined {
+        return this._terminalApiObjects.get(id) ?? this._terminals.get(id);
     }
 
     $terminalOnInput(id: string, data: string): void {
@@ -99,6 +192,34 @@ export class TerminalServiceExtImpl implements TerminalServiceExt {
             return;
         }
         terminal.emitOnInput(data);
+    }
+
+    $terminalOnInteraction(id: string): void {
+        const terminal = this._terminals.get(id);
+        if (!terminal) {
+            return;
+        }
+        if (!terminal.state.isInteractedWith) {
+            terminal.state = { ...terminal.state, isInteractedWith: true };
+            const apiObject = this.getApiObject(id);
+            if (apiObject) {
+                this.onDidChangeTerminalStateEmitter.fire(apiObject);
+            }
+        }
+    }
+
+    $terminalShellTypeChanged(id: string, shellType: string): void {
+        const terminal = this._terminals.get(id);
+        if (!terminal) {
+            return;
+        }
+        if (terminal.state.shell !== shellType) {
+            terminal.state = { ...terminal.state, shell: shellType };
+            const apiObject = this.getApiObject(id);
+            if (apiObject) {
+                this.onDidChangeTerminalStateEmitter.fire(apiObject);
+            }
+        }
     }
 
     $terminalSizeChanged(id: string, clos: number, rows: number): void {
@@ -112,7 +233,10 @@ export class TerminalServiceExtImpl implements TerminalServiceExt {
     $terminalCreated(id: string, name: string): void {
         const terminal = this.obtainTerminal(id, name);
         terminal.id.resolve(id);
-        this.onDidOpenTerminalEmitter.fire(terminal);
+        const apiObject = this.getApiObject(id);
+        if (apiObject) {
+            this.onDidOpenTerminalEmitter.fire(apiObject);
+        }
     }
 
     $terminalNameChanged(id: string, name: string): void {
@@ -131,17 +255,33 @@ export class TerminalServiceExtImpl implements TerminalServiceExt {
             terminal.deferredProcessId = new Deferred<number>();
             terminal.deferredProcessId.resolve(processId);
         }
-        const pseudoTerminal = this._pseudoTerminals.get(terminalId.toString());
+
+        // Switch the pseudoterminal keyed by terminalId to be keyed by terminal ID
+        const tId = terminalId.toString();
+        if (this._pseudoTerminals.has(tId)) {
+            const pseudo = this._pseudoTerminals.get(tId);
+            if (pseudo) {
+                this._pseudoTerminals.set(id, pseudo);
+            }
+            this._pseudoTerminals.delete(tId);
+        }
+
+        const pseudoTerminal = this._pseudoTerminals.get(id);
         if (pseudoTerminal) {
             pseudoTerminal.emitOnOpen(cols, rows);
         }
     }
 
-    $terminalClosed(id: string): void {
+    $terminalClosed(id: string, exitStatus: theia.TerminalExitStatus | undefined): void {
         const terminal = this._terminals.get(id);
         if (terminal) {
-            this.onDidCloseTerminalEmitter.fire(terminal);
+            terminal.exitStatus = exitStatus ?? { code: undefined, reason: TerminalExitReason.Unknown };
+            const apiObject = this.getApiObject(id);
+            if (apiObject) {
+                this.onDidCloseTerminalEmitter.fire(apiObject);
+            }
             this._terminals.delete(id);
+            this._terminalApiObjects.delete(id);
         }
         const pseudoTerminal = this._pseudoTerminals.get(id);
         if (pseudoTerminal) {
@@ -151,12 +291,98 @@ export class TerminalServiceExtImpl implements TerminalServiceExt {
     }
 
     private activeTerminalId: string | undefined;
-    get activeTerminal(): TerminalExtImpl | undefined {
-        return this.activeTerminalId && this._terminals.get(this.activeTerminalId) || undefined;
+    get activeTerminal(): theia.Terminal | undefined {
+        return this.activeTerminalId && this.getApiObject(this.activeTerminalId) || undefined;
     }
     $currentTerminalChanged(id: string | undefined): void {
         this.activeTerminalId = id;
         this.onDidChangeActiveTerminalEmitter.fire(this.activeTerminal);
+    }
+
+    registerTerminalLinkProvider(provider: theia.TerminalLinkProvider): theia.Disposable {
+        const providerId = (TerminalServiceExtImpl.nextProviderId++).toString();
+        this.terminalLinkProviders.set(providerId, provider);
+        this.proxy.$registerTerminalLinkProvider(providerId);
+        return Disposable.create(() => {
+            this.proxy.$unregisterTerminalLinkProvider(providerId);
+            this.terminalLinkProviders.delete(providerId);
+        });
+    }
+
+    registerTerminalProfileProvider(id: string, provider: theia.TerminalProfileProvider): theia.Disposable {
+        this.terminalProfileProviders.set(id, provider);
+        return Disposable.create(() => {
+            this.terminalProfileProviders.delete(id);
+        });
+    }
+
+    /** @stubbed */
+    registerTerminalQuickFixProvider(id: string, provider: theia.TerminalQuickFixProvider): theia.Disposable {
+        return Disposable.NULL;
+    }
+
+    registerTerminalObserver(observer: theia.TerminalObserver): theia.Disposable {
+        const id = (TerminalServiceExtImpl.nextProviderId++).toString();
+        this.terminalObservers.set(id, observer);
+        this.proxy.$registerTerminalObserver(id, observer.nrOfLinesToMatch, observer.outputMatcherRegex);
+        return Disposable.create(() => {
+            this.proxy.$unregisterTerminalObserver(id);
+            this.terminalObservers.delete(id);
+        });
+    }
+
+    $reportOutputMatch(observerId: string, groups: string[]): void {
+        const observer = this.terminalObservers.get(observerId);
+        if (observer) {
+            observer.matchOccurred(groups);
+        } else {
+            throw new Error(`reporting matches for unregistered observer: ${observerId} `);
+        }
+    }
+
+    protected isExtensionTerminalOptions(options: theia.TerminalOptions | theia.ExtensionTerminalOptions): options is theia.ExtensionTerminalOptions {
+        return 'pty' in options;
+    }
+
+    async $startProfile(profileId: string, cancellationToken: theia.CancellationToken): Promise<string> {
+        const provider = this.terminalProfileProviders.get(profileId);
+        if (!provider) {
+            throw new Error(`No terminal profile provider with id '${profileId}'`);
+        }
+        const profile = await provider.provideTerminalProfile(cancellationToken);
+        if (!profile) {
+            throw new Error(`Profile with id ${profileId} could not be created`);
+        }
+        const id = `plugin-terminal-${UUID.uuid4()}`;
+        const options = profile.options;
+        if (this.isExtensionTerminalOptions(options)) {
+            this._pseudoTerminals.set(id, new PseudoTerminal(id, this.proxy, options.pty));
+            return this.proxy.$createTerminal(id, { name: options.name }, undefined, true);
+        } else {
+            return this.proxy.$createTerminal(id, profile.options);
+        }
+    }
+
+    async $provideTerminalLinks(line: string, terminalId: string, token: theia.CancellationToken): Promise<ProvidedTerminalLink[]> {
+        const links: ProvidedTerminalLink[] = [];
+        const terminal = this.getApiObject(terminalId);
+        if (terminal) {
+            for (const [providerId, provider] of this.terminalLinkProviders) {
+                const providedLinks = await provider.provideTerminalLinks({ line, terminal }, token);
+                if (providedLinks) {
+                    links.push(...providedLinks.map(link => ({ ...link, providerId })));
+                }
+            }
+        }
+        return links;
+    }
+
+    async $handleTerminalLink(link: ProvidedTerminalLink): Promise<void> {
+        const provider = this.terminalLinkProviders.get(link.providerId);
+        if (!provider) {
+            throw Error('Terminal link provider not found');
+        }
+        await provider.handleTerminalLink(link);
     }
 
     /*---------------------------------------------------------------------------------------------
@@ -165,44 +391,62 @@ export class TerminalServiceExtImpl implements TerminalServiceExt {
      *--------------------------------------------------------------------------------------------*/
     // some code copied and modified from https://github.com/microsoft/vscode/blob/1.49.0/src/vs/workbench/api/common/extHostTerminalService.ts
 
-    getEnvironmentVariableCollection(extensionIdentifier: string): theia.EnvironmentVariableCollection {
-        let collection = this.environmentVariableCollections.get(extensionIdentifier);
+    getEnvironmentVariableCollection(extensionIdentifier: string, rootUri: string = NO_ROOT_URI): theia.GlobalEnvironmentVariableCollection {
+        const that = this;
+        let collection = this.environmentVariableCollections.get([extensionIdentifier, rootUri]);
         if (!collection) {
-            collection = new EnvironmentVariableCollection();
-            this.setEnvironmentVariableCollection(extensionIdentifier, collection);
+            collection = new class extends EnvironmentVariableCollectionImpl {
+                override getScoped(scope: theia.EnvironmentVariableScope): theia.EnvironmentVariableCollection {
+                    return that.getEnvironmentVariableCollection(extensionIdentifier, scope.workspaceFolder?.uri.toString());
+                }
+            }(true);
+            this.setEnvironmentVariableCollection(extensionIdentifier, rootUri, collection);
         }
         return collection;
     }
 
-    private syncEnvironmentVariableCollection(extensionIdentifier: string, collection: EnvironmentVariableCollection): void {
+    private syncEnvironmentVariableCollection(extensionIdentifier: string, rootUri: string, collection: EnvironmentVariableCollectionImpl): void {
         const serialized = [...collection.map.entries()];
-        this.proxy.$setEnvironmentVariableCollection(extensionIdentifier, collection.persistent, serialized.length === 0 ? undefined : serialized);
+        this.proxy.$setEnvironmentVariableCollection(collection.persistent, extensionIdentifier,
+            rootUri,
+            {
+                mutators: serialized,
+                description: Converter.fromMarkdownOrString(collection.description)
+            });
     }
 
-    private setEnvironmentVariableCollection(extensionIdentifier: string, collection: EnvironmentVariableCollection): void {
-        this.environmentVariableCollections.set(extensionIdentifier, collection);
+    private setEnvironmentVariableCollection(pluginIdentifier: string, rootUri: string, collection: EnvironmentVariableCollectionImpl): void {
+        this.environmentVariableCollections.set([pluginIdentifier, rootUri], collection);
         collection.onDidChangeCollection(() => {
             // When any collection value changes send this immediately, this is done to ensure
             // following calls to createTerminal will be created with the new environment. It will
             // result in more noise by sending multiple updates when called but collections are
             // expected to be small.
-            this.syncEnvironmentVariableCollection(extensionIdentifier, collection);
+            this.syncEnvironmentVariableCollection(pluginIdentifier, rootUri, collection);
         });
     }
 
-    $initEnvironmentVariableCollections(collections: [string, SerializableEnvironmentVariableCollection][]): void {
+    $initEnvironmentVariableCollections(collections: [string, string, boolean, SerializableEnvironmentVariableCollection][]): void {
         collections.forEach(entry => {
             const extensionIdentifier = entry[0];
-            const collection = new EnvironmentVariableCollection(entry[1]);
-            this.setEnvironmentVariableCollection(extensionIdentifier, collection);
+            const rootUri = entry[1];
+            const collection = new EnvironmentVariableCollectionImpl(entry[2], entry[3]);
+            this.setEnvironmentVariableCollection(extensionIdentifier, rootUri, collection);
         });
     }
 
 }
 
-export class EnvironmentVariableCollection implements theia.EnvironmentVariableCollection {
+export class EnvironmentVariableCollectionImpl implements theia.GlobalEnvironmentVariableCollection {
     readonly map: Map<string, theia.EnvironmentVariableMutator> = new Map();
+    private _description?: string | theia.MarkdownString;
     private _persistent: boolean = true;
+
+    public get description(): string | theia.MarkdownString | undefined { return this._description; }
+    public set description(value: string | theia.MarkdownString | undefined) {
+        this._description = value;
+        this.onDidChangeCollectionEmitter.fire();
+    }
 
     public get persistent(): boolean { return this._persistent; }
     public set persistent(value: boolean) {
@@ -214,25 +458,31 @@ export class EnvironmentVariableCollection implements theia.EnvironmentVariableC
     onDidChangeCollection: Event<void> = this.onDidChangeCollectionEmitter.event;
 
     constructor(
+        persistent: boolean,
         serialized?: SerializableEnvironmentVariableCollection
     ) {
-        this.map = new Map(serialized);
+        this._persistent = persistent;
+        this.map = new Map(serialized?.mutators);
+    }
+
+    getScoped(scope: theia.EnvironmentVariableScope): theia.EnvironmentVariableCollection {
+        throw new Error('Cannot get scoped from a regular env var collection');
     }
 
     get size(): number {
         return this.map.size;
     }
 
-    replace(variable: string, value: string): void {
-        this._setIfDiffers(variable, { value, type: EnvironmentVariableMutatorType.Replace });
+    replace(variable: string, value: string, options?: theia.EnvironmentVariableMutatorOptions): void {
+        this._setIfDiffers(variable, { value, type: EnvironmentVariableMutatorType.Replace, options: options ?? { applyAtProcessCreation: true } });
     }
 
-    append(variable: string, value: string): void {
-        this._setIfDiffers(variable, { value, type: EnvironmentVariableMutatorType.Append });
+    append(variable: string, value: string, options?: theia.EnvironmentVariableMutatorOptions): void {
+        this._setIfDiffers(variable, { value, type: EnvironmentVariableMutatorType.Append, options: options ?? { applyAtProcessCreation: true } });
     }
 
-    prepend(variable: string, value: string): void {
-        this._setIfDiffers(variable, { value, type: EnvironmentVariableMutatorType.Prepend });
+    prepend(variable: string, value: string, options?: theia.EnvironmentVariableMutatorOptions): void {
+        this._setIfDiffers(variable, { value, type: EnvironmentVariableMutatorType.Prepend, options: options ?? { applyAtProcessCreation: true } });
     }
 
     private _setIfDiffers(variable: string, mutator: theia.EnvironmentVariableMutator): void {
@@ -263,21 +513,33 @@ export class EnvironmentVariableCollection implements theia.EnvironmentVariableC
     }
 }
 
-export class TerminalExtImpl implements Terminal {
+export class TerminalExtImpl implements theia.Terminal {
 
     name: string;
 
     readonly id = new Deferred<string>();
 
+    exitStatus: theia.TerminalExitStatus | undefined;
+
     deferredProcessId = new Deferred<number>();
+
     get processId(): Thenable<number> {
         return this.deferredProcessId.promise;
     }
 
-    constructor(private readonly proxy: TerminalServiceMain) { }
+    readonly creationOptions: Readonly<theia.TerminalOptions | theia.ExtensionTerminalOptions>;
 
-    sendText(text: string, addNewLine: boolean = true): void {
-        this.id.promise.then(id => this.proxy.$sendText(id, text, addNewLine));
+    state: theia.TerminalState = { isInteractedWith: false, shell: undefined };
+
+    constructor(private readonly proxy: TerminalServiceMain, private readonly options: theia.TerminalOptions | theia.ExtensionTerminalOptions) {
+        this.creationOptions = this.options;
+    }
+
+    /** @stubbed Terminal Shell Ingration */
+    shellIntegration: theia.TerminalShellIntegration | undefined = undefined;
+
+    sendText(text: string, shouldExecute: boolean = true): void {
+        this.id.promise.then(id => this.proxy.$sendText(id, text, shouldExecute));
     }
 
     show(preserveFocus?: boolean): void {
@@ -291,7 +553,6 @@ export class TerminalExtImpl implements Terminal {
     dispose(): void {
         this.id.promise.then(id => this.proxy.$dispose(id));
     }
-
 }
 
 export class PseudoTerminal {
@@ -326,6 +587,15 @@ export class PseudoTerminal {
                     } else {
                         this.proxy.$resizeByTerminalId(id, e.columns, e.rows);
                     }
+                }
+            });
+        }
+        if (pseudoTerminal.onDidChangeName) {
+            pseudoTerminal.onDidChangeName(name => {
+                if (typeof id === 'string') {
+                    this.proxy.$setName(id, name);
+                } else {
+                    this.proxy.$setNameByTerminalId(id, name);
                 }
             });
         }

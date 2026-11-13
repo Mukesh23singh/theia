@@ -1,31 +1,38 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { inject, injectable } from '@theia/core/shared/inversify';
+import { inject, injectable, named } from '@theia/core/shared/inversify';
 import { ILogger } from '@theia/core/lib/common/logger';
 import { OpenerService, OpenerOptions, open } from '@theia/core/lib/browser/opener-service';
-import { EditorOpenerOptions } from '../editor-manager';
-import { NavigationLocationUpdater } from './navigation-location-updater';
-import { NavigationLocationSimilarity } from './navigation-location-similarity';
-import { NavigationLocation, Range, ContentChangeLocation, RecentlyClosedEditor } from './navigation-location';
+import { EditorOpenerOptions } from '../editor-manager.js';
+import { NavigationLocationUpdater } from './navigation-location-updater.js';
+import { NavigationLocationSimilarity } from './navigation-location-similarity.js';
+import { NavigationLocation, Range, ContentChangeLocation, RecentlyClosedEditor } from './navigation-location.js';
 import URI from '@theia/core/lib/common/uri';
 
 /**
  * The navigation location service.
  * It also stores and manages navigation locations and recently closed editors.
+ *
+ * Since we update the navigation locations as a side effect of UI events (seting the selection, etc.) We sometimes
+ * record intermediate locations which are not considered the "final" location we're navigating to.
+ * In order to remedy, clients should always invoke "startNavigation" before registering locations and
+ * invoke "endNavigation" when done. Only when no more nested navigations are active ist the last registered
+ * location transfered to the navigation "stack".
+ *
  */
 @injectable()
 export class NavigationLocationService {
@@ -33,7 +40,7 @@ export class NavigationLocationService {
     private static MAX_STACK_ITEMS = 30;
     private static readonly MAX_RECENTLY_CLOSED_EDITORS = 20;
 
-    @inject(ILogger)
+    @inject(ILogger) @named('editor:NavigationLocationService')
     protected readonly logger: ILogger;
 
     @inject(OpenerService)
@@ -52,55 +59,109 @@ export class NavigationLocationService {
 
     protected recentlyClosedEditors: RecentlyClosedEditor[] = [];
 
+    protected activeNavigations: { count: number, lastLocation: NavigationLocation[] | undefined } = { count: 0, lastLocation: undefined };
+
+    /**
+     * Start a logical navigation operation. Invoke this before invoking `registerLocations`
+     */
+    startNavigation(): void {
+        if (this.canRegister) {
+            this.activeNavigations.count++;
+            this.logger.debug(`start navigation ${this.activeNavigations.count}`);
+            this.logger.trace(new Error('start'));
+        }
+    }
+
+    /**
+     * End a logical navigation operation. Invoke this before after `registerLocations`
+     */
+    endNavigation(): void {
+        if (this.canRegister) {
+            this.activeNavigations.count--;
+            this.logger.debug(`end navigation ${this.activeNavigations.count}`);
+            this.logger.trace(new Error('end'));
+
+            if (this.activeNavigations.count === 0 && this.activeNavigations.lastLocation !== undefined) {
+                this.logger.debug(`ending navigation with location ${JSON.stringify(NavigationLocation.toObject(this.activeNavigations.lastLocation[0]))}`);
+                const locations = this.activeNavigations.lastLocation;
+                this.activeNavigations.lastLocation = undefined;
+                this.doRegister(locations);
+            }
+        }
+    }
+
+    /**
+     * Convenience method for executing a navigation operation with proper start and end navigation
+     * @param navigation The operation changing the location
+     * @returns the result of the navigation function
+     */
+    navigate<T>(navigation: (navigationServier: NavigationLocationService) => T): T {
+        this.startNavigation();
+        try {
+            return navigation(this);
+        } finally {
+            this.endNavigation();
+        }
+    }
+
     /**
      * Registers the give locations into the service.
      */
     register(...locations: NavigationLocation[]): void {
         if (this.canRegister) {
-            const max = this.maxStackItems();
-            [...locations].forEach(location => {
-                if (ContentChangeLocation.is(location)) {
-                    this._lastEditLocation = location;
-                }
-                const current = this.currentLocation();
-                this.debug(`Registering new location: ${NavigationLocation.toString(location)}.`);
-                if (!this.isSimilar(current, location)) {
-                    this.debug('Before location registration.');
-                    this.debug(this.stackDump);
-                    // Just like in VSCode; if we are not at the end of stack, we remove anything after.
-                    if (this.stack.length > this.pointer + 1) {
-                        this.debug(`Discarding all locations after ${this.pointer}.`);
-                        this.stack = this.stack.slice(0, this.pointer + 1);
-                    }
-                    this.stack.push(location);
-                    this.pointer = this.stack.length - 1;
-                    if (this.stack.length > max) {
-                        this.debug('Trimming exceeding locations.');
-                        this.stack.shift();
-                        this.pointer--;
-                    }
-                    this.debug('Updating preceding navigation locations.');
-                    for (let i = this.stack.length - 1; i >= 0; i--) {
-                        const candidate = this.stack[i];
-                        const update = this.updater.affects(candidate, location);
-                        if (update === undefined) {
-                            this.debug(`Erasing obsolete location: ${NavigationLocation.toString(candidate)}.`);
-                            this.stack.splice(i, 1);
-                            this.pointer--;
-                        } else if (typeof update !== 'boolean') {
-                            this.debug(`Updating location at index: ${i} => ${NavigationLocation.toString(candidate)}.`);
-                            this.stack[i] = update;
-                        }
-                    }
-                    this.debug('After location registration.');
-                    this.debug(this.stackDump);
-                } else {
-                    if (current) {
-                        this.debug(`The new location ${NavigationLocation.toString(location)} is similar to the current one: ${NavigationLocation.toString(current)}. Aborting.`);
-                    }
-                }
-            });
+            if (this.activeNavigations.count > 0) {
+                this.activeNavigations.lastLocation = locations;
+            } else {
+                this.logger.warn('no activative navigation', new Error('No active navigation'));
+                this.doRegister(locations);
+            }
         }
+    }
+
+    protected doRegister(locations: NavigationLocation[]): void {
+        const max = this.maxStackItems();
+        [...locations].forEach(location => {
+            if (ContentChangeLocation.is(location)) {
+                this._lastEditLocation = location;
+            }
+            const current = this.currentLocation();
+            this.debug(`Registering new location: ${NavigationLocation.toString(location)}.`);
+            if (!this.isSimilar(current, location)) {
+                this.debug('Before location registration.');
+                this.debug(this.stackDump);
+                // Just like in VSCode; if we are not at the end of stack, we remove anything after.
+                if (this.stack.length > this.pointer + 1) {
+                    this.debug(`Discarding all locations after ${this.pointer}.`);
+                    this.stack = this.stack.slice(0, this.pointer + 1);
+                }
+                this.stack.push(location);
+                this.pointer = this.stack.length - 1;
+                if (this.stack.length > max) {
+                    this.debug('Trimming exceeding locations.');
+                    this.stack.shift();
+                    this.pointer--;
+                }
+                this.debug('Updating preceding navigation locations.');
+                for (let i = this.stack.length - 1; i >= 0; i--) {
+                    const candidate = this.stack[i];
+                    const update = this.updater.affects(candidate, location);
+                    if (update === undefined) {
+                        this.debug(`Erasing obsolete location: ${NavigationLocation.toString(candidate)}.`);
+                        this.stack.splice(i, 1);
+                        this.pointer--;
+                    } else if (typeof update !== 'boolean') {
+                        this.debug(`Updating location at index: ${i} => ${NavigationLocation.toString(candidate)}.`);
+                        this.stack[i] = update;
+                    }
+                }
+                this.debug('After location registration.');
+                this.debug(this.stackDump);
+            } else {
+                if (current) {
+                    this.debug(`The new location ${NavigationLocation.toString(location)} is similar to the current one: ${NavigationLocation.toString(current)}. Aborting.`);
+                }
+            }
+        });
     }
 
     /**
@@ -281,4 +342,27 @@ ${this.stack.map((location, i) => `${i}: ${JSON.stringify(NavigationLocation.toO
         this.recentlyClosedEditors = this.recentlyClosedEditors.filter(e => !uri.isEqual(e.uri));
     }
 
+    storeState(): object {
+        const result = {
+            locations: this.stack.map(NavigationLocation.toObject)
+        };
+
+        return result;
+    }
+
+    restoreState(rawState: object): void {
+        const state = rawState as {
+            locations: object[]
+        };
+        this.stack = [];
+        for (let i = 0; i < state.locations.length; i++) {
+            const location = NavigationLocation.fromObject(state.locations[i]);
+            if (location) {
+                this.stack.push(location);
+            } else {
+                this.logger.warn(`Could not restore the state of the editor navigation history for ${JSON.stringify(state.locations[i])}`);
+            }
+        }
+        this.pointer = this.stack.length - 1;
+    }
 }

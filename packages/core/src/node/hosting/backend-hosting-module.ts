@@ -1,26 +1,39 @@
-/********************************************************************************
- * Copyright (C) 2020 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { ContainerModule } from 'inversify';
-import { WsRequestValidatorContribution } from '../ws-request-validators';
-import { BackendApplicationHosts } from './backend-application-hosts';
-import { WsOriginValidator } from './ws-origin-validator';
+import { BackendApplicationContribution } from '../backend-application.js';
+import { WsRequestValidatorContribution } from '../ws-request-validators.js';
+import { BackendApplicationHosts } from './backend-application-hosts.js';
+import {
+    BrowserConnectionToken, BrowserConnectionTokenBackendContribution, HttpConnectionValidator, createBrowserConnectionToken
+} from './browser-connection-token.js';
+import { WsOriginValidator } from './ws-origin-validator.js';
 
 export default new ContainerModule(bind => {
     bind(BackendApplicationHosts).toSelf().inSingletonScope();
     bind(WsOriginValidator).toSelf().inSingletonScope();
     bind(WsRequestValidatorContribution).toService(WsOriginValidator);
+
+    // Cookie-based connection token. It is validated on WebSocket upgrades and bootstrapped
+    // (set as a cookie) on every HTTP request; HTTP enforcement is opt-in per route via
+    // `HttpConnectionValidator`.
+    bind(BrowserConnectionToken).toConstantValue(createBrowserConnectionToken());
+    bind(BrowserConnectionTokenBackendContribution).toSelf().inSingletonScope();
+    bind(BackendApplicationContribution).toService(BrowserConnectionTokenBackendContribution);
+    bind(WsRequestValidatorContribution).toService(BrowserConnectionTokenBackendContribution);
+    bind(HttpConnectionValidator).toService(BrowserConnectionTokenBackendContribution);
 });

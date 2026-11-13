@@ -12,10 +12,91 @@
       "path": "../../dev-packages/cli"
     },
     {
+      "path": "../../packages/ai-anthropic"
+    },
+    {
+      "path": "../../packages/ai-chat"
+    },
+    {
+      "path": "../../packages/ai-chat-ui"
+    },
+    {
+      "path": "../../packages/ai-chatgpt"
+    },
+    {
+      "path": "../../packages/ai-claude-code"
+    },
+    {
+      "path": "../../packages/ai-code-completion"
+    },
+    {
+      "path": "../../packages/ai-codex"
+    },
+    {
+      "path": "../../packages/ai-copilot"
+    },
+    {
+      "path": "../../packages/ai-core"
+    },
+    {
+      "path": "../../packages/ai-core-ui"
+    },
+    {
+      "path": "../../packages/ai-editor"
+    },
+    {
+      "path": "../../packages/ai-external-api"
+    },
+    {
+      "path": "../../packages/ai-google"
+    },
+    {
+      "path": "../../packages/ai-history"
+    },
+    {
+      "path": "../../packages/ai-hugging-face"
+    },
+    {
+      "path": "../../packages/ai-ide"
+    },
+    {
+      "path": "../../packages/ai-llamafile"
+    },
+    {
+      "path": "../../packages/ai-mcp"
+    },
+    {
+      "path": "../../packages/ai-mcp-server"
+    },
+    {
+      "path": "../../packages/ai-mcp-ui"
+    },
+    {
+      "path": "../../packages/ai-ollama"
+    },
+    {
+      "path": "../../packages/ai-openai"
+    },
+    {
+      "path": "../../packages/ai-registry"
+    },
+    {
+      "path": "../../packages/ai-scanoss"
+    },
+    {
+      "path": "../../packages/ai-terminal"
+    },
+    {
+      "path": "../../packages/ai-tool-sketchpad"
+    },
+    {
       "path": "../../packages/bulk-edit"
     },
     {
       "path": "../../packages/callhierarchy"
+    },
+    {
+      "path": "../../packages/collaboration"
     },
     {
       "path": "../../packages/console"
@@ -27,10 +108,16 @@
       "path": "../../packages/debug"
     },
     {
+      "path": "../../packages/dev-container"
+    },
+    {
       "path": "../../packages/editor"
     },
     {
       "path": "../../packages/editor-preview"
+    },
+    {
+      "path": "../../packages/external-api"
     },
     {
       "path": "../../packages/external-terminal"
@@ -45,13 +132,13 @@
       "path": "../../packages/getting-started"
     },
     {
-      "path": "../../packages/git"
-    },
-    {
       "path": "../../packages/keymaps"
     },
     {
       "path": "../../packages/markers"
+    },
+    {
+      "path": "../../packages/memory-inspector"
     },
     {
       "path": "../../packages/messages"
@@ -81,13 +168,13 @@
       "path": "../../packages/plugin-ext"
     },
     {
+      "path": "../../packages/plugin-ext-headless"
+    },
+    {
       "path": "../../packages/plugin-ext-vscode"
     },
     {
       "path": "../../packages/preferences"
-    },
-    {
-      "path": "../../packages/preview"
     },
     {
       "path": "../../packages/process"
@@ -96,22 +183,40 @@
       "path": "../../packages/property-view"
     },
     {
-      "path": "../../packages/scm"
+      "path": "../../packages/remote"
     },
     {
-      "path": "../../packages/scm-extra"
+      "path": "../../packages/remote-wsl"
+    },
+    {
+      "path": "../../packages/scanoss"
+    },
+    {
+      "path": "../../packages/scm"
     },
     {
       "path": "../../packages/search-in-workspace"
     },
     {
+      "path": "../../packages/secondary-window"
+    },
+    {
       "path": "../../packages/task"
+    },
+    {
+      "path": "../../packages/telemetry"
     },
     {
       "path": "../../packages/terminal"
     },
     {
+      "path": "../../packages/terminal-manager"
+    },
+    {
       "path": "../../packages/timeline"
+    },
+    {
+      "path": "../../packages/toolbar"
     },
     {
       "path": "../../packages/typehierarchy"
@@ -127,6 +232,9 @@
     },
     {
       "path": "../../packages/workspace"
+    },
+    {
+      "path": "../api-provider-sample"
     },
     {
       "path": "../api-samples"

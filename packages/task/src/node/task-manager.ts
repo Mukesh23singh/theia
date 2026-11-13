@@ -1,22 +1,23 @@
-/********************************************************************************
- * Copyright (C) 2017 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 import { inject, injectable, named } from '@theia/core/shared/inversify';
 import { Emitter, Event, ILogger } from '@theia/core/lib/common';
 import { BackendApplicationContribution } from '@theia/core/lib/node';
-import { Task } from './task';
+import { Task } from './task.js';
+import { ManagedTaskManager } from '../common/index.js';
 
 // inspired by process-manager.ts
 
@@ -24,7 +25,7 @@ import { Task } from './task';
  * The {@link TaskManager} is the common component responsible for managing running tasks.
  */
 @injectable()
-export class TaskManager implements BackendApplicationContribution {
+export class TaskManager implements BackendApplicationContribution, ManagedTaskManager<Task> {
 
     /** contains all running tasks */
     protected readonly tasks: Map<number, Task> = new Map();
@@ -38,7 +39,8 @@ export class TaskManager implements BackendApplicationContribution {
     protected readonly deleteEmitter = new Emitter<number>();
 
     constructor(
-        @inject(ILogger) @named('task') protected readonly logger: ILogger
+        @inject(ILogger) @named('task:TaskManager')
+        protected readonly logger: ILogger
     ) { }
 
     /**
@@ -104,7 +106,9 @@ export class TaskManager implements BackendApplicationContribution {
             const tasksForWS = this.tasksPerCtx.get(ctx);
             if (tasksForWS !== undefined) {
                 const idx = tasksForWS.indexOf(task);
-                tasksForWS.splice(idx, 1);
+                if (idx !== -1) {
+                    tasksForWS.splice(idx, 1);
+                }
             }
         }
         this.deleteEmitter.fire(task.id);

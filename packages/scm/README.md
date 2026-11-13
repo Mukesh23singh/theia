@@ -16,7 +16,7 @@ The `@theia/scm` extension adds support for handling multiple source control man
 
 ## Additional Information
 
-- [API documentation for `@theia/scm`](https://eclipse-theia.github.io/theia/docs/next/modules/scm.html)
+- [API documentation for `@theia/scm`](https://eclipse-theia.github.io/theia/docs/next/modules/_theia_scm.html)
 - [Theia - GitHub](https://github.com/eclipse-theia/theia)
 - [Theia - Website](https://theia-ide.org/)
 - [VS Code SCM Documentation](https://code.visualstudio.com/docs/editor/versioncontrol)
@@ -27,5 +27,6 @@ The `@theia/scm` extension adds support for handling multiple source control man
 - [一 (Secondary) GNU General Public License, version 2 with the GNU Classpath Exception](https://projects.eclipse.org/license/secondary-gpl-2.0-cp)
 
 ## Trademark
+
 "Theia" is a trademark of the Eclipse Foundation
-https://www.eclipse.org/theia
+<https://www.eclipse.org/theia>

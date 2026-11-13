@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2020 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
 import {
@@ -21,20 +21,21 @@ import {
     CompositeTreeNode,
     TopDownTreeIterator,
     TreeNode,
-    PreferenceSchemaProvider,
-    PreferenceDataProperty,
     NodeProps,
     ExpandableTreeNode,
     SelectableTreeNode,
-    PreferenceService,
 } from '@theia/core/lib/browser';
-import { Emitter } from '@theia/core';
-import { PreferencesSearchbarWidget } from './views/preference-searchbar-widget';
-import { PreferenceTreeGenerator, COMMONLY_USED_SECTION_PREFIX } from './util/preference-tree-generator';
+import { Emitter, PreferenceDataProperty, PreferenceSchemaService, PreferenceService } from '@theia/core';
+import { PreferencesSearchbarWidget } from './views/preference-searchbar-widget.js';
+import { PreferenceTreeGenerator } from './util/preference-tree-generator.js';
 import * as fuzzy from '@theia/core/shared/fuzzy';
-import { PreferencesScopeTabBar } from './views/preference-scope-tabbar-widget';
-import { Preference } from './util/preference-types';
+import { PreferencesScopeTabBar } from './views/preference-scope-tabbar-widget.js';
+import { Preference } from './util/preference-types.js';
 import { Event } from '@theia/core/lib/common';
+import { COMMONLY_USED_SECTION_PREFIX } from './util/preference-layout.js';
+
+/** Node id of the 'Commonly Used' group, see `PreferenceTreeGenerator`. */
+const COMMONLY_USED_NODE_ID = `${COMMONLY_USED_SECTION_PREFIX}@${COMMONLY_USED_SECTION_PREFIX}`;
 
 export interface PreferenceTreeNodeProps extends NodeProps {
     visibleChildren: number;
@@ -48,6 +49,7 @@ export enum PreferenceFilterChangeSource {
     Schema,
     Search,
     Scope,
+    Category,
 }
 export interface PreferenceFilterChangeEvent {
     source: PreferenceFilterChangeSource
@@ -56,7 +58,7 @@ export interface PreferenceFilterChangeEvent {
 @injectable()
 export class PreferenceTreeModel extends TreeModelImpl {
 
-    @inject(PreferenceSchemaProvider) protected readonly schemaProvider: PreferenceSchemaProvider;
+    @inject(PreferenceSchemaService) protected readonly schemaProvider: PreferenceSchemaService;
     @inject(PreferencesSearchbarWidget) protected readonly filterInput: PreferencesSearchbarWidget;
     @inject(PreferenceTreeGenerator) protected readonly treeGenerator: PreferenceTreeGenerator;
     @inject(PreferencesScopeTabBar) protected readonly scopeTracker: PreferencesScopeTabBar;
@@ -67,10 +69,20 @@ export class PreferenceTreeModel extends TreeModelImpl {
 
     protected lastSearchedFuzzy: string = '';
     protected lastSearchedLiteral: string = '';
+    protected lastSearchedTags: string[] = [];
     protected _currentScope: number = Number(Preference.DEFAULT_SCOPE.scope);
     protected _isFiltered: boolean = false;
     protected _currentRows: Map<string, PreferenceTreeNodeRow> = new Map();
     protected _totalVisibleLeaves = 0;
+    private _suppressSelection = false;
+    private preservingCategoryFilter = false;
+    protected _categoryFilterId: string | undefined;
+    protected _initialSelectionApplied = false;
+    protected lastSelectionId: string | undefined;
+
+    get categoryFilterId(): string | undefined {
+        return this._categoryFilterId;
+    }
 
     get currentRows(): Readonly<Map<string, PreferenceTreeNodeRow>> {
         return this._currentRows;
@@ -84,8 +96,8 @@ export class PreferenceTreeModel extends TreeModelImpl {
         return this._isFiltered;
     }
 
-    get propertyList(): { [key: string]: PreferenceDataProperty; } {
-        return this.schemaProvider.getCombinedSchema().properties;
+    get propertyList(): ReadonlyMap<string, PreferenceDataProperty> {
+        return this.schemaProvider.getSchemaProperties();
     }
 
     get currentScope(): Preference.SelectedScopeDetails {
@@ -97,22 +109,51 @@ export class PreferenceTreeModel extends TreeModelImpl {
     }
 
     @postConstruct()
-    protected async init(): Promise<void> {
+    protected override init(): void {
+        this.doInit();
+    }
+
+    protected async doInit(): Promise<void> {
         super.init();
         this.toDispose.pushAll([
+            this.onSelectionChanged(selectionEvent => {
+                this.lastSelectionId = selectionEvent[0]?.id;
+                if (this.preservingCategoryFilter) {
+                    return;
+                }
+                const node = selectionEvent[0];
+                const newId = node ? this.categoryIdForSelection(node) : undefined;
+                if (newId !== this._categoryFilterId) {
+                    this._categoryFilterId = newId;
+                    this.updateFilteredRows(PreferenceFilterChangeSource.Category);
+                }
+            }),
             this.treeGenerator.onSchemaChanged(newTree => this.handleNewSchema(newTree)),
             this.scopeTracker.onScopeChanged(scopeDetails => {
                 this._currentScope = scopeDetails.scope;
                 this.updateFilteredRows(PreferenceFilterChangeSource.Scope);
+                this.ensureSelectedCategoryHasVisibleSettings();
             }),
             this.filterInput.onFilterChanged(newSearchTerm => {
-                this.lastSearchedLiteral = newSearchTerm;
-                this.lastSearchedFuzzy = newSearchTerm.replace(/\s/g, '');
+                this.lastSearchedTags = Array.from(newSearchTerm.matchAll(/@tag:([^\s]+)/g)).map(match => match[0].slice(5));
+                const newSearchTermWithoutTags = newSearchTerm.replace(/@tag:[^\s]+/g, '');
+                this.lastSearchedLiteral = newSearchTermWithoutTags;
+                this.lastSearchedFuzzy = newSearchTermWithoutTags.replace(/\s/g, '');
+                const wasFiltered = this._isFiltered;
                 this._isFiltered = newSearchTerm.length > 2;
-                if (this.isFiltered) {
+                if (this._isFiltered) {
+                    // Search results span all categories: drop the category filter and the
+                    // now-stale selection so the tree matches the shown results.
+                    this._categoryFilterId = undefined;
+                    this.clearSelection();
                     this.expandAll();
                 } else if (CompositeTreeNode.is(this.root)) {
-                    this.collapseAll(this.root);
+                    const root = this.root;
+                    // Avoid intermediate selection events while collapsing.
+                    this.withSuppressedSelection(() => this.collapseAll(root));
+                    if (wasFiltered) {
+                        this.selectDefaultCategory();
+                    }
                 }
                 this.updateFilteredRows(PreferenceFilterChangeSource.Search);
             }),
@@ -127,10 +168,91 @@ export class PreferenceTreeModel extends TreeModelImpl {
 
     private handleNewSchema(newRoot: CompositeTreeNode): void {
         this.root = newRoot;
+        if (this._categoryFilterId && !this.getNode(this._categoryFilterId)) {
+            this._categoryFilterId = undefined;
+        }
         if (this.isFiltered) {
             this.expandAll();
         }
         this.updateFilteredRows(PreferenceFilterChangeSource.Schema);
+        this.restoreSelectionInNewTree();
+        this.ensureSelectedCategoryHasVisibleSettings();
+        this.applyInitialSelection();
+    }
+
+    /**
+     * Re-applies the selection after the tree has been rebuilt with new node instances,
+     * e.g. when plugins contribute preferences after startup. The selection state resolves
+     * nodes by id, but the rebuilt node lacks the `selected` flag that drives the tree
+     * highlight. If the selected node is gone from the new schema, falls back to the
+     * default category.
+     */
+    protected restoreSelectionInNewTree(): void {
+        if (!this.lastSelectionId) {
+            return;
+        }
+        const node = this.getNode(this.lastSelectionId);
+        if (node && SelectableTreeNode.is(node)) {
+            if (!node.selected) {
+                this.selectPreservingCategoryFilter(node);
+            }
+        } else {
+            this.clearSelection();
+            this._initialSelectionApplied = false;
+        }
+    }
+
+    protected applyInitialSelection(): void {
+        if (this._initialSelectionApplied) {
+            return;
+        }
+        if (this.selectedNodes.length > 0) {
+            // Something is already selected, e.g. by the user before the schema change.
+            this._initialSelectionApplied = true;
+            return;
+        }
+        if (this._isFiltered) {
+            // A search (e.g. restored on startup) is active; the default selection is
+            // applied when it is cleared instead.
+            return;
+        }
+        if (this.selectDefaultCategory()) {
+            this._initialSelectionApplied = true;
+        }
+    }
+
+    /**
+     * Selects the 'Commonly Used' category, the default detail page of the settings editor.
+     * @returns `true` if the category was found and selected.
+     */
+    protected selectDefaultCategory(): boolean {
+        const commonlyUsed = this.getNode(COMMONLY_USED_NODE_ID);
+        if (commonlyUsed && SelectableTreeNode.is(commonlyUsed)) {
+            this.selectNode(commonlyUsed);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Falls back to the default category when the selected category has no settings left to
+     * show, e.g. after switching to a scope in which none of its settings are valid. Otherwise
+     * the editor would show an empty page for a category the tree no longer lists. Clears the
+     * selection instead if the default category has no settings to show either.
+     */
+    protected ensureSelectedCategoryHasVisibleSettings(): void {
+        if (!this._categoryFilterId || this.hasVisibleSettings(this._categoryFilterId)) {
+            return;
+        }
+        if (this.hasVisibleSettings(COMMONLY_USED_NODE_ID)) {
+            this.selectDefaultCategory();
+        } else {
+            this.clearSelection();
+        }
+    }
+
+    protected hasVisibleSettings(categoryId: string): boolean {
+        return !!this._currentRows.get(categoryId)?.visibleChildren;
     }
 
     protected updateRows(): void {
@@ -170,6 +292,10 @@ export class PreferenceTreeModel extends TreeModelImpl {
         if (!this.schemaProvider.isValidInScope(prefID, this._currentScope)) {
             return false;
         }
+        // Hidden preferences (e.g. AI preferences moved to the AI Configuration view) must not surface in search.
+        if (node.preference.data.hidden) {
+            return false;
+        }
         if (!this._isFiltered) {
             return true;
         }
@@ -179,12 +305,15 @@ export class PreferenceTreeModel extends TreeModelImpl {
         if (node.id.startsWith(COMMONLY_USED_SECTION_PREFIX)) {
             return false;
         }
+        if (!this.lastSearchedTags.every(tag => node.preference.data.tags?.includes(tag))) {
+            return false;
+        }
         return fuzzy.test(this.lastSearchedFuzzy, prefID) // search matches preference name.
             // search matches description. Fuzzy isn't ideal here because the score depends on the order of discovery.
             || (node.preference.data.description ?? '').includes(this.lastSearchedLiteral);
     }
 
-    protected isVisibleSelectableNode(node: TreeNode): node is SelectableTreeNode {
+    protected override isVisibleSelectableNode(node: TreeNode): node is SelectableTreeNode {
         return CompositeTreeNode.is(node) && !!this._currentRows.get(node.id)?.visibleChildren;
     }
 
@@ -205,12 +334,15 @@ export class PreferenceTreeModel extends TreeModelImpl {
     }
 
     collapseAllExcept(openNode: TreeNode | undefined): void {
-        if (ExpandableTreeNode.is(openNode)) {
+        const openNodes: TreeNode[] = [];
+        while (ExpandableTreeNode.is(openNode)) {
+            openNodes.push(openNode);
             this.expandNode(openNode);
+            openNode = openNode.parent;
         }
         if (CompositeTreeNode.is(this.root)) {
             this.root.children.forEach(child => {
-                if (child !== openNode && ExpandableTreeNode.is(child)) {
+                if (!openNodes.includes(child) && ExpandableTreeNode.is(child)) {
                     this.collapseNode(child);
                 }
             });
@@ -227,15 +359,63 @@ export class PreferenceTreeModel extends TreeModelImpl {
         }
     }
 
+    override selectNode(node: Readonly<SelectableTreeNode>): void {
+        if (!this._suppressSelection) {
+            super.selectNode(node);
+        }
+    }
+
+    protected withSuppressedSelection(fn: () => void): void {
+        this._suppressSelection = true;
+        try {
+            fn();
+        } finally {
+            this._suppressSelection = false;
+        }
+    }
+
+    getNodeFromPreferenceId(id: string): Preference.TreeNode | undefined {
+        const node = this.getNode(this.treeGenerator.getNodeId(id));
+        return node && Preference.TreeNode.is(node) ? node : undefined;
+    }
+
     /**
+     * Returns the id of the nearest composite (category) ancestor of `node`,
+     * inclusive of `node` itself. Returns `undefined` if no category ancestor is found.
+     */
+    protected categoryIdForSelection(node: TreeNode): string | undefined {
+        let current: TreeNode | undefined = node;
+        while (current) {
+            if (Preference.TreeNode.is(current) && Preference.CompositeTreeNode.is(current)) {
+                return current.id;
+            }
+            current = current.parent;
+        }
+        return undefined;
+    }
+
+    /**
+     * Selects `node` to mirror the editor's scroll position in the tree. Unlike an explicit
+     * selection, this does not change the category filter: scrolling must never narrow the
+     * settings editor, only an explicit selection may.
      * @returns true if selection changed, false otherwise
      */
     selectIfNotSelected(node: SelectableTreeNode): boolean {
         const currentlySelected = this.selectedNodes[0];
-        if (node !== currentlySelected) {
-            this.selectNode(node);
+        if (!node.selected || node !== currentlySelected) {
+            this.selectPreservingCategoryFilter(node);
             return true;
         }
         return false;
+    }
+
+    protected selectPreservingCategoryFilter(node: SelectableTreeNode): void {
+        this.preservingCategoryFilter = true;
+        try {
+            node.selected = true;
+            this.selectNode(node);
+        } finally {
+            this.preservingCategoryFilter = false;
+        }
     }
 }

@@ -1,24 +1,24 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 /**
- * **IMPORTANT** this code is running in the plugin host process and should be closed as possible to VS Code counterpart:
+ * **IMPORTANT** this code is running in the plugin host process and should be close as possible to VS Code counterpart:
  * https://github.com/microsoft/vscode/blob/04c36be045a94fee58e5f8992d3e3fd980294a84/src/vs/workbench/api/common/extHostFileSystemEventService.ts
  * One should be able to diff them to see differences.
  */
@@ -26,30 +26,30 @@
 /* eslint-disable max-len */
 /* eslint-disable @typescript-eslint/no-shadow */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @typescript-eslint/tslint/config */
+/* eslint-disable @theia/explicit-return-type */
 
-import { Emitter, WaitUntilEvent, AsyncEmitter } from '@theia/core/lib/common/event';
-import { IRelativePattern, parse } from '@theia/callhierarchy/lib/common/glob';
-import { UriComponents } from '@theia/core/shared/vscode-uri';
-import { URI } from './types-impl';
-import { EditorsAndDocumentsExtImpl as ExtHostDocumentsAndEditors } from './editors-and-documents';
+import { Emitter, Event as EventNamespace, WaitUntilEvent, AsyncEmitter, WaitUntilData } from '@theia/core/lib/common/event';
+import { GLOB_SPLIT, GLOBSTAR, parse } from '@theia/core/lib/common/glob';
+import { UriComponents } from '../common/uri-components.js';
+import { Disposable, RelativePattern, URI, WorkspaceEdit } from './types-impl.js';
+import { EditorsAndDocumentsExtImpl as ExtHostDocumentsAndEditors } from './editors-and-documents.js';
+import { WorkspaceExtImpl as ExtHostWorkspace } from './workspace.js';
 import type * as vscode from '@theia/plugin';
-import * as typeConverter from './type-converters';
-import { Disposable, WorkspaceEdit } from './types-impl';
+import * as typeConverter from './type-converters.js';
 import { FileOperation } from '@theia/filesystem/lib/common/files';
-import { flatten } from '../common/arrays';
+import { flatten } from '../common/arrays.js';
 import { CancellationToken } from '@theia/core/lib/common/cancellation';
 import {
     Plugin, TextEditorsMain as MainThreadTextEditorsShape, PLUGIN_RPC_CONTEXT, FileSystemEvents, ExtHostFileSystemEventServiceShape,
     WorkspaceFileEditDto, WorkspaceTextEditDto
-} from '../common/plugin-api-rpc';
-import { RPCProtocol } from '../common/rpc-protocol';
+} from '../common/plugin-api-rpc.js';
+import { RPCProtocol } from '../common/rpc-protocol.js';
 
 type Event<T> = vscode.Event<T>;
 type IExtensionDescription = Plugin;
 type IWaitUntil = WaitUntilEvent;
 
-class FileSystemWatcher implements vscode.FileSystemWatcher {
+export class FileSystemWatcher implements vscode.FileSystemWatcher {
 
     private readonly _onDidCreate = new Emitter<vscode.Uri>();
     private readonly _onDidChange = new Emitter<vscode.Uri>();
@@ -69,7 +69,9 @@ class FileSystemWatcher implements vscode.FileSystemWatcher {
         return Boolean(this._config & 0b100);
     }
 
-    constructor(dispatcher: Event<FileSystemEvents>, globPattern: string | IRelativePattern, ignoreCreateEvents?: boolean, ignoreChangeEvents?: boolean, ignoreDeleteEvents?: boolean) {
+    constructor(dispatcher: Event<FileSystemEvents>, globPattern: string | RelativePattern,
+        ignoreCreateEvents?: boolean, ignoreChangeEvents?: boolean, ignoreDeleteEvents?: boolean, excludes?: string[],
+        filter: (uri: URI) => boolean = () => true, disposable: { dispose(): unknown } = Disposable.from()) {
 
         this._config = 0;
         if (ignoreCreateEvents) {
@@ -83,12 +85,13 @@ class FileSystemWatcher implements vscode.FileSystemWatcher {
         }
 
         const parsedPattern = parse(globPattern);
+        const excludePatterns = excludes?.map(exclude => parse(exclude)) || [];
 
         const subscription = dispatcher(events => {
             if (!ignoreCreateEvents) {
                 for (const created of events.created) {
                     const uri = URI.revive(created);
-                    if (parsedPattern(uri.fsPath)) {
+                    if (parsedPattern(uri.fsPath) && !excludePatterns.some(p => p(uri.fsPath)) && filter(uri)) {
                         this._onDidCreate.fire(uri);
                     }
                 }
@@ -96,7 +99,7 @@ class FileSystemWatcher implements vscode.FileSystemWatcher {
             if (!ignoreChangeEvents) {
                 for (const changed of events.changed) {
                     const uri = URI.revive(changed);
-                    if (parsedPattern(uri.fsPath)) {
+                    if (parsedPattern(uri.fsPath) && !excludePatterns.some(p => p(uri.fsPath)) && filter(uri)) {
                         this._onDidChange.fire(uri);
                     }
                 }
@@ -104,17 +107,17 @@ class FileSystemWatcher implements vscode.FileSystemWatcher {
             if (!ignoreDeleteEvents) {
                 for (const deleted of events.deleted) {
                     const uri = URI.revive(deleted);
-                    if (parsedPattern(uri.fsPath)) {
+                    if (parsedPattern(uri.fsPath) && !excludePatterns.some(p => p(uri.fsPath)) && filter(uri)) {
                         this._onDidDelete.fire(uri);
                     }
                 }
             }
         });
 
-        this._disposable = Disposable.from(this._onDidCreate, this._onDidChange, this._onDidDelete, subscription);
+        this._disposable = Disposable.from(disposable, this._onDidCreate, this._onDidChange, this._onDidDelete, subscription);
     }
 
-    dispose() {
+    dispose(): void {
         this._disposable.dispose();
     }
 
@@ -154,15 +157,40 @@ export class ExtHostFileSystemEventService implements ExtHostFileSystemEventServ
     constructor(
         rpc: RPCProtocol,
         private readonly _extHostDocumentsAndEditors: ExtHostDocumentsAndEditors,
-        private readonly _mainThreadTextEditors: MainThreadTextEditorsShape = rpc.getProxy(PLUGIN_RPC_CONTEXT.TEXT_EDITORS_MAIN)
+        private readonly _extHostWorkspace: ExtHostWorkspace,
+        private readonly _mainThreadTextEditors: MainThreadTextEditorsShape = rpc.getProxy(PLUGIN_RPC_CONTEXT.TEXT_EDITORS_MAIN),
+        private readonly _mainThreadFileSystemEventService = rpc.getProxy(PLUGIN_RPC_CONTEXT.FILE_SYSTEM_EVENT_SERVICE_MAIN)
     ) {
-        //
+        // Language services often watch every component of source trees (including dependencies),
+        // which can result in hundreds of watchers in large projects.
+        // Disable the leak warning (maxListeners 0 = unbounded) to avoid false positives.
+        EventNamespace.setMaxListeners(this._onFileSystemEvent.event, 0);
     }
 
     // --- file events
 
-    createFileSystemWatcher(globPattern: string | IRelativePattern, ignoreCreateEvents?: boolean, ignoreChangeEvents?: boolean, ignoreDeleteEvents?: boolean): vscode.FileSystemWatcher {
-        return new FileSystemWatcher(this._onFileSystemEvent.event, globPattern, ignoreCreateEvents, ignoreChangeEvents, ignoreDeleteEvents);
+    createFileSystemWatcher(globPattern: string | RelativePattern, ignoreCreateEvents?: boolean,
+        ignoreChangeEvents?: boolean, ignoreDeleteEvents?: boolean): vscode.FileSystemWatcher {
+        const filter = typeof globPattern === 'string' ? // ignore events outside the workspace when only a string pattern is provided
+            (uri: URI) => !!this._extHostWorkspace.getWorkspaceFolder(uri) : undefined;
+        return new FileSystemWatcher(this._onFileSystemEvent.event, globPattern, ignoreCreateEvents, ignoreChangeEvents, ignoreDeleteEvents,
+            undefined, filter, this.ensureWatching(globPattern, ignoreCreateEvents, ignoreChangeEvents, ignoreDeleteEvents));
+    }
+
+    private ensureWatching(globPattern: string | RelativePattern,
+        ignoreCreateEvents?: boolean, ignoreChangeEvents?: boolean, ignoreDeleteEvents?: boolean): Disposable | undefined {
+        if (typeof globPattern === 'string' || this._extHostWorkspace.getWorkspaceFolder(globPattern.baseUri)) {
+            return; // workspace is already watched by default, no need to watch again
+        }
+
+        if (ignoreChangeEvents && ignoreCreateEvents && ignoreDeleteEvents) {
+            return; // no need to watch if we ignore all events
+        }
+
+        const session = Math.random();
+        const recursive = globPattern.pattern.includes(GLOBSTAR) || globPattern.pattern.includes(GLOB_SPLIT); // only watch recursively if pattern indicates the need for it
+        this._mainThreadFileSystemEventService.$watch(session, globPattern.baseUri, { recursive, excludes: [] });
+        return Disposable.from({ dispose: () => this._mainThreadFileSystemEventService.$unwatch(session) });
     }
 
     $onFileEvent(events: FileSystemEvents) {
@@ -223,7 +251,7 @@ export class ExtHostFileSystemEventService implements ExtHostFileSystemEventServ
         }
     }
 
-    private async _fireWillEvent<E extends IWaitUntil>(emitter: AsyncEmitter<E>, data: Omit<E, 'waitUntil'>, timeout: number, token: CancellationToken): Promise<any> {
+    private async _fireWillEvent<E extends IWaitUntil>(emitter: AsyncEmitter<E>, data: WaitUntilData<E>, timeout: number, token: CancellationToken): Promise<any> {
 
         const edits: WorkspaceEdit[] = [];
         await emitter.fire(data, token, async (thenable, listener) => {

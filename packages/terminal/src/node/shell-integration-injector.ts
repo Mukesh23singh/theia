@@ -1,0 +1,135 @@
+// *****************************************************************************
+// Copyright (C) 2025 EclipseSource GmbH and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+
+import * as path from 'path';
+import * as fs from 'fs';
+import { GeneralShellType, guessShellTypeFromExecutable } from '../common/shell-type.js';
+import { ShellProcess, ShellProcessOptions } from './shell-process.js';
+import { injectable, inject, named } from '@theia/core/shared/inversify';
+import { ILogger, MaybePromise } from '@theia/core';
+import { BackendApplicationContribution, BundledResourceProvider } from '@theia/core/lib/node';
+
+@injectable()
+export class ShellIntegrationInjector implements BackendApplicationContribution {
+
+    @inject(ILogger) @named('terminal:ShellIntegrationInjector')
+    protected readonly logger: ILogger;
+
+    @inject(BundledResourceProvider)
+    protected readonly bundledResourceProvider: BundledResourceProvider;
+
+    protected readonly INTEGRATION_ROOT_DIR = 'shell-integrations';
+
+    protected readonly BASH_RCFILE_FLAG = '--rcfile';
+    protected readonly BASH_INTEGRATION_SCRIPT_PATH = 'bash/bash-integration.bash';
+
+    protected readonly ZSH_INTEGRATION_ENV_VAR = 'THEIA_ZSH_DIR';
+    protected readonly ZSH_INTEGRATION_DIR = 'zsh';
+    protected readonly ZDOTDIR_ENV_VAR = 'ZDOTDIR';
+    protected readonly ZDOTDIR_RELATIVE_DIR = '/zsh/zdotdir/';
+    protected readonly ZDOTDIR_ORIGINAL_ENV_VAR = 'THEIA_ORIGINAL_ZDOTDIR';
+
+    /** The location of the shell integration scripts, as seen by the spawned shells. */
+    protected integrationRootPath: string | undefined;
+    protected resolvingIntegrationRoot: Promise<void> | undefined;
+
+    initialize(): MaybePromise<void> {
+        // Resolve the scripts up-front, because the shells are spawned synchronously.
+        return this.resolveIntegrationRoot();
+    }
+
+    injectShellIntegration(options: ShellProcessOptions): ShellProcessOptions {
+        const shellExecutable = options.shell ?? ShellProcess.getShellExecutablePath();
+        const shellType = guessShellTypeFromExecutable(shellExecutable);
+        if (shellType === GeneralShellType.Bash) {
+            const scriptPath = this.getShellIntegrationPath(this.BASH_INTEGRATION_SCRIPT_PATH);
+            if (!scriptPath) {
+                return options;
+            }
+            // strips the login flag if present to avoid conflicts with --rcfile
+            const filteredArgs = this.stripLoginFlag(options.args);
+            return {
+                ...options,
+                args: [
+                    this.BASH_RCFILE_FLAG, scriptPath,
+                    ...(filteredArgs ?? []),
+                ],
+            };
+        } else if (shellType === GeneralShellType.Zsh) {
+            const zdotdirPath = this.getShellIntegrationPath(this.ZDOTDIR_RELATIVE_DIR);
+            const zshDirPath = this.getShellIntegrationPath(this.ZSH_INTEGRATION_DIR);
+            if (!zdotdirPath || !zshDirPath) {
+                return options;
+            }
+            return {
+                ...options,
+                env: {
+                    ...options.env,
+                    [this.ZDOTDIR_ENV_VAR]: zdotdirPath,
+                    [this.ZSH_INTEGRATION_ENV_VAR]: zshDirPath,
+                    [this.ZDOTDIR_ORIGINAL_ENV_VAR]: options.env?.ZDOTDIR ?? process.env.ZDOTDIR ?? ''
+                },
+            };
+        } else {
+            return options;
+        }
+    }
+
+    /**
+     * Make the bundled shell integration scripts available to the shells that we spawn. In a packaged Electron
+     * application, the scripts are stored in an archive that only the application itself can read, so they have
+     * to be resolved to a location outside of that archive.
+     */
+    protected resolveIntegrationRoot(): Promise<void> {
+        return this.resolvingIntegrationRoot ??= (async () => {
+            const bundledPath = path.join(import.meta.dirname, this.INTEGRATION_ROOT_DIR);
+            try {
+                this.integrationRootPath = await this.bundledResourceProvider.resolveExternalPath(bundledPath);
+            } catch (error) {
+                this.logger.warn(`Shell integration scripts not available (application may not be bundled correctly): ${bundledPath}`, error);
+                // allow a later attempt to recover, e.g. when the configuration directory was not writable yet
+                this.resolvingIntegrationRoot = undefined;
+            }
+        })();
+    }
+
+    protected getShellIntegrationPath(relativePath: string): string | undefined {
+        if (this.integrationRootPath === undefined) {
+            // The scripts are resolved on start-up, so this is only reached if that has failed or has not run.
+            this.resolveIntegrationRoot();
+            this.logger.warn('Shell integration scripts are not available yet.');
+            return undefined;
+        }
+        const fullPath = path.join(this.integrationRootPath, relativePath);
+        if (!fs.existsSync(fullPath)) {
+            this.logger.warn(`Shell integration file not found (application may not be bundled correctly): ${fullPath}`);
+            return undefined;
+        }
+        return fullPath;
+    }
+
+    protected stripLoginFlag(args: string | string[] | undefined): string[] | undefined {
+        if (args === undefined) {
+            return args;
+        }
+        if (typeof args === 'string') {
+            // split string on any amount of whitespace into an array
+            return args.trim().split(/\s+/).filter(arg => arg !== '-l' && arg !== '--login');
+        }
+        return args.filter(arg => arg !== '-l' && arg !== '--login');
+    }
+
+}

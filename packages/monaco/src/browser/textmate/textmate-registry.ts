@@ -1,23 +1,24 @@
-/********************************************************************************
- * Copyright (C) 2018 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable } from '@theia/core/shared/inversify';
+import { injectable, inject, named } from '@theia/core/shared/inversify';
 import { IGrammarConfiguration } from 'vscode-textmate';
-import { TokenizerOption } from './textmate-tokenizer';
+import { TokenizerOption } from './textmate-tokenizer.js';
 import { Disposable } from '@theia/core/lib/common/disposable';
+import { ILogger } from '@theia/core';
 
 export interface TextmateGrammarConfiguration extends IGrammarConfiguration {
 
@@ -42,6 +43,9 @@ export interface GrammarDefinition {
 @injectable()
 export class TextmateRegistry {
 
+    @inject(ILogger) @named('monaco:TextmateRegistry')
+    protected readonly logger: ILogger;
+
     protected readonly scopeToProvider = new Map<string, GrammarDefinitionProvider[]>();
     protected readonly languageToConfig = new Map<string, TextmateGrammarConfiguration[]>();
     protected readonly languageIdToScope = new Map<string, string[]>();
@@ -56,7 +60,7 @@ export class TextmateRegistry {
         if (existingProvider) {
             Promise.all([existingProvider.getGrammarDefinition(), provider.getGrammarDefinition()]).then(([a, b]) => {
                 if (a.location !== b.location || !a.location && !b.location) {
-                    console.warn(`a registered grammar provider for '${scope}' scope is overridden`);
+                    this.logger.warn(`a registered grammar provider for '${scope}' scope is overridden`);
                 }
             });
         }
@@ -79,7 +83,7 @@ export class TextmateRegistry {
         const scopes = this.languageIdToScope.get(languageId) || [];
         const existingScope = scopes[0];
         if (typeof existingScope === 'string') {
-            console.warn(`'${languageId}' language is remapped from '${existingScope}' to '${scope}' scope`);
+            this.logger.warn(`'${languageId}' language is remapped from '${existingScope}' to '${scope}' scope`);
         }
         scopes.unshift(scope);
         this.languageIdToScope.set(languageId, scopes);
@@ -109,7 +113,7 @@ export class TextmateRegistry {
         const configs = this.languageToConfig.get(languageId) || [];
         const existingConfig = configs[0];
         if (existingConfig) {
-            console.warn(`a registered grammar configuration for '${languageId}' language is overridden`);
+            this.logger.warn(`a registered grammar configuration for '${languageId}' language is overridden`);
         }
         configs.unshift(config);
         this.languageToConfig.set(languageId, configs);

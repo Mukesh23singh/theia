@@ -14,6 +14,7 @@
 
 The `@theia/core` extension is the main extension for all Theia-based applications, and provides the main framework for all dependent extensions.
 The extension provides the base APIs for all Theia-based applications, including:
+
 - Application APIs
 - Shell APIs
 - Base Widgets
@@ -38,6 +39,7 @@ A Theia extension is a node package declaring `theiaExtensions` property in `pac
 ```
 
 Each extension can consist of the following modules:
+
 - `frontend` is used in the browser env and as well in the electron if `frontendElectron` is not provided
 - `frontendElectron` is used in the electron env
 - `backend` is used in the node env and as well in the electron env if `backendElectron` is not provided
@@ -49,11 +51,11 @@ An extension module should have a default export of `ContainerModule | Promise<C
 
 A Theia application is a node package listing [Theia extensions](#theia-extension) as dependencies and managed with [Theia CLI](../../dev-packages/cli/README.md).
 
-## Re-exports
+## Re-Exports Mechanism
 
-In order to make application builds more stable `@theia/core` re-exports some common dependencies for Theia extensions to re-use.
+In order to make application builds more stable `@theia/core` re-exports some common dependencies for Theia extensions to re-use. This is especially useful when having to re-use the same dependencies as `@theia/core` does: Since those dependencies will be pulled by Theia, instead of trying to match the same version in your own packages, you can use re-exports to consume it from the framework directly.
 
-### Usage example
+### Usage Example
 
 Let's take inversify as an example since you will most likely use this package, you can import it by prefixing with `@theia/core/shared/`:
 
@@ -66,38 +68,51 @@ export class SomeClass {
 }
 ```
 
-### List of re-exported packages
+## Re-Exports
 
- - [`@phosphor/algorithm@1`](https://www.npmjs.com/package/@phosphor/algorithm)
- - [`@phosphor/commands@1`](https://www.npmjs.com/package/@phosphor/commands)
- - [`@phosphor/coreutils@1`](https://www.npmjs.com/package/@phosphor/coreutils)
- - [`@phosphor/domutils@1`](https://www.npmjs.com/package/@phosphor/domutils)
- - [`@phosphor/dragdrop@1`](https://www.npmjs.com/package/@phosphor/dragdrop)
- - [`@phosphor/messaging@1`](https://www.npmjs.com/package/@phosphor/messaging)
- - [`@phosphor/properties@1`](https://www.npmjs.com/package/@phosphor/properties)
- - [`@phosphor/signaling@1`](https://www.npmjs.com/package/@phosphor/signaling)
- - [`@phosphor/virtualdom@1`](https://www.npmjs.com/package/@phosphor/virtualdom)
- - [`@phosphor/widgets@1`](https://www.npmjs.com/package/@phosphor/widgets)
- - [`@theia/application-package@1.18.0`](https://www.npmjs.com/package/@theia/application-package)
- - [`@theia/application-package/lib/environment@1.18.0`](https://www.npmjs.com/package/@theia/application-package)
- - [`dompurify@^2.2.9`](https://www.npmjs.com/package/dompurify)
- - [`electron@^9.0.2`](https://www.npmjs.com/package/electron)
- - [`express@^4.16.3`](https://www.npmjs.com/package/express)
- - [`fs-extra@^4.0.2`](https://www.npmjs.com/package/fs-extra)
- - [`fuzzy@^0.1.3`](https://www.npmjs.com/package/fuzzy)
- - [`inversify@^5.1.1`](https://www.npmjs.com/package/inversify)
- - [`lodash.debounce@^4.0.8`](https://www.npmjs.com/package/lodash.debounce)
- - [`lodash.throttle@^4.1.1`](https://www.npmjs.com/package/lodash.throttle)
- - [`nsfw@^2.1.2`](https://www.npmjs.com/package/nsfw)
- - [`react@^16.8.0`](https://www.npmjs.com/package/react)
- - [`react-dom@^16.8.0`](https://www.npmjs.com/package/react-dom)
- - [`react-virtualized@^9.20.0`](https://www.npmjs.com/package/react-virtualized)
- - [`vscode-languageserver-protocol@~3.15.3`](https://www.npmjs.com/package/vscode-languageserver-protocol)
- - [`vscode-languageserver-types@^3.15.1`](https://www.npmjs.com/package/vscode-languageserver-types)
- - [`vscode-uri@^2.1.1`](https://www.npmjs.com/package/vscode-uri)
- - [`vscode-ws-jsonrpc@^0.2.0`](https://www.npmjs.com/package/vscode-ws-jsonrpc)
- - [`ws@^7.1.2`](https://www.npmjs.com/package/ws)
- - [`yargs@^15.3.1`](https://www.npmjs.com/package/yargs)
+- `@theia/core/electron-shared/...`
+  - `native-keymap` (from [`native-keymap@^2.5.0`](https://www.npmjs.com/package/native-keymap))
+  - `electron` (from [`electron@44.9.1`](https://www.npmjs.com/package/electron/v/44.9.1))
+  - `electron-store` (from [`electron-store@^8.2.0`](https://www.npmjs.com/package/electron-store))
+- `@theia/core/shared/...`
+  - `@lumino/algorithm` (from [`@lumino/algorithm@^2.0.5`](https://www.npmjs.com/package/@lumino/algorithm))
+  - `@lumino/commands` (from [`@lumino/commands@^2.3.4`](https://www.npmjs.com/package/@lumino/commands))
+  - `@lumino/coreutils` (from [`@lumino/coreutils@^2.2.3`](https://www.npmjs.com/package/@lumino/coreutils))
+  - `@lumino/domutils` (from [`@lumino/domutils@^2.0.5`](https://www.npmjs.com/package/@lumino/domutils))
+  - `@lumino/dragdrop` (from [`@lumino/dragdrop@^2.1.9`](https://www.npmjs.com/package/@lumino/dragdrop))
+  - `@lumino/messaging` (from [`@lumino/messaging@^2.0.5`](https://www.npmjs.com/package/@lumino/messaging))
+  - `@lumino/properties` (from [`@lumino/properties@^2.0.5`](https://www.npmjs.com/package/@lumino/properties))
+  - `@lumino/signaling` (from [`@lumino/signaling@^2.1.6`](https://www.npmjs.com/package/@lumino/signaling))
+  - `@lumino/virtualdom` (from [`@lumino/virtualdom@^2.0.5`](https://www.npmjs.com/package/@lumino/virtualdom))
+  - `@lumino/widgets` (from [`@lumino/widgets@2.7.5`](https://www.npmjs.com/package/@lumino/widgets/v/2.7.5))
+  - `@theia/application-package` (from [`@theia/application-package@1.77.0`](https://www.npmjs.com/package/@theia/application-package/v/1.77.0))
+  - `@theia/application-package/lib/api` (from [`@theia/application-package@1.77.0`](https://www.npmjs.com/package/@theia/application-package/v/1.77.0))
+  - `@theia/application-package/lib/environment` (from [`@theia/application-package@1.77.0`](https://www.npmjs.com/package/@theia/application-package/v/1.77.0))
+  - `@theia/request` (from [`@theia/request@1.77.0`](https://www.npmjs.com/package/@theia/request/v/1.77.0))
+  - `@theia/request/lib/proxy` (from [`@theia/request@1.77.0`](https://www.npmjs.com/package/@theia/request/v/1.77.0))
+  - `@theia/request/lib/node-request-service` (from [`@theia/request@1.77.0`](https://www.npmjs.com/package/@theia/request/v/1.77.0))
+  - `fs-extra` (from [`fs-extra@^4.0.3`](https://www.npmjs.com/package/fs-extra))
+  - `fuzzy` (from [`fuzzy@^0.1.3`](https://www.npmjs.com/package/fuzzy))
+  - `inversify` (from [`inversify@^6.2.2`](https://www.npmjs.com/package/inversify))
+  - `react-dom` (from [`react-dom@^19.0.0`](https://www.npmjs.com/package/react-dom))
+  - `react-dom/client` (from [`react-dom@^19.0.0`](https://www.npmjs.com/package/react-dom))
+  - `react-dom/server` (from [`react-dom@^19.0.0`](https://www.npmjs.com/package/react-dom))
+  - `react-virtuoso` (from [`react-virtuoso@^2.19.1`](https://www.npmjs.com/package/react-virtuoso))
+  - `react/jsx-dev-runtime` (from [`react@^19.0.0`](https://www.npmjs.com/package/react))
+  - `react/jsx-runtime` (from [`react@^19.0.0`](https://www.npmjs.com/package/react))
+  - `react` (from [`react@^19.0.0`](https://www.npmjs.com/package/react))
+  - `vscode-languageserver-protocol` (from [`vscode-languageserver-protocol@3.17.5`](https://www.npmjs.com/package/vscode-languageserver-protocol/v/3.17.5))
+  - `vscode-uri` (from [`vscode-uri@3.0.8`](https://www.npmjs.com/package/vscode-uri/v/3.0.8))
+  - `@parcel/watcher` (from [`@parcel/watcher@^2.6.0`](https://www.npmjs.com/package/@parcel/watcher))
+  - `dompurify` (from [`dompurify@^3.4.16`](https://www.npmjs.com/package/dompurify))
+  - `express` (from [`express@^4.22.3`](https://www.npmjs.com/package/express))
+  - `lodash.debounce` (from [`lodash.debounce@^4.0.8`](https://www.npmjs.com/package/lodash.debounce))
+  - `lodash.throttle` (from [`lodash.throttle@^4.1.1`](https://www.npmjs.com/package/lodash.throttle))
+  - `markdown-it` (from [`markdown-it@^14.3.2`](https://www.npmjs.com/package/markdown-it))
+  - `markdown-it-anchor` (from [`markdown-it-anchor@^9.2.1`](https://www.npmjs.com/package/markdown-it-anchor))
+  - `markdown-it-emoji` (from [`markdown-it-emoji@^3.1.0`](https://www.npmjs.com/package/markdown-it-emoji))
+  - `ws` (from [`ws@^8.22.0`](https://www.npmjs.com/package/ws))
+  - `yargs` (from [`yargs@^17.7.3`](https://www.npmjs.com/package/yargs))
 
 ## Logging Configuration
 
@@ -112,8 +127,11 @@ the log level of particular loggers, create a config file such as
 {
   "defaultLevel": "info",
   "levels": {
-    "terminal": "debug",
-    "task": "error"
+    "terminal*": "debug",
+    "task*": "error",
+    "ai-core*": "error",
+    "ai-core:DefaultPromptFragmentCustomizationService": "debug",
+    "*Token*": "warn"
   }
 }
 ```
@@ -124,14 +142,22 @@ can then be specified using the `--log-config` option.  Theia will watch that
 file for changes, so it's possible to change log levels at runtime by
 modifying this file.
 
+**Wildcard Support and Precedence**
+
+In addition to exact logger names, you can configure log levels using wildcards (`*`) to target multiple loggers with a single rule (e.g., `ai-core*` or `*Token*`). When resolving the log level for a specific logger, the following precedence rules apply:
+
+- **Exact Match Priority:** An exact match to a logger name will always take the highest priority over any wildcard rules.
+- **Last One Wins:** If an exact match is not found, the system evaluates the wildcard rules. If multiple wildcard rules match a given logger, the *last* matching rule defined in the configuration file takes precedence.
+
 It's unfortunately currently not possible to query Theia for the list of
 existing loggers.  However, each log message specifies from which logger it
 comes from, which can give an idea, without having to read the code:
 
 ```
-root INFO [nsfw-watcher: 10734] Started watching: /Users/captain.future/git/theia/CONTRIBUTING.md
-^^^^ ^^^^  ^^^^^^^^^^^^^^^^^^^
+root INFO [parcel-watcher: 10734] Started watching: /Users/captain.future/git/theia/CONTRIBUTING.md
+^^^^ ^^^^  ^^^^^^^^^^^^^^^^^^^^^
 ```
+
 Where `root` is the name of the logger and `INFO` is the log level. These are optionally followed by the name of a child process and the process ID.
 
 ## Environment Variables
@@ -141,12 +167,16 @@ Where `root` is the name of the logger and `INFO` is the log level. These are op
     - e.g: `theia.app.com,some.other.domain:3000`
   - The port number is important if your application is not hosted on either `80` or `443`.
   - If possible, you should set this environment variable:
-    - When not set, Theia will allow any origin to access the WebSocket services.
+    - When not set, Theia will enforce same-origin access to the WebSocket services.
     - When set, Theia will only allow the origins defined in this environment variable.
+- `FRONTEND_CONNECTION_TIMEOUT`
+  - The duration in milliseconds during which the backend keeps the connection contexts for the frontend to reconnect.
+  - This duration defaults to '0' if not set.
+  - If set to negative number, the backend will never close the connection.
 
 ## Additional Information
 
-- [API documentation for `@theia/core`](https://eclipse-theia.github.io/theia/docs/next/modules/core.html)
+- [API documentation for `@theia/core`](https://eclipse-theia.github.io/theia/docs/next/modules/_theia_core.html)
 - [Theia - GitHub](https://github.com/eclipse-theia/theia)
 - [Theia - Website](https://theia-ide.org/)
 
@@ -156,5 +186,6 @@ Where `root` is the name of the logger and `INFO` is the log level. These are op
 - [一 (Secondary) GNU General Public License, version 2 with the GNU Classpath Exception](https://projects.eclipse.org/license/secondary-gpl-2.0-cp)
 
 ## Trademark
+
 "Theia" is a trademark of the Eclipse Foundation
-https://www.eclipse.org/theia
+<https://www.eclipse.org/theia>

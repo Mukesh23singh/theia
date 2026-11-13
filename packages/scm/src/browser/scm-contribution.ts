@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2019 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
 import { Emitter } from '@theia/core/lib/common/event';
 import {
@@ -24,65 +24,115 @@ import {
     KeybindingRegistry,
     ViewContainerTitleOptions,
     codicon,
+    StylingParticipant,
+    ColorTheme,
+    CssStyleCollector
 } from '@theia/core/lib/browser';
-import { TabBarToolbarContribution, TabBarToolbarRegistry, TabBarToolbarItem } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
-import { CommandRegistry, Command, Disposable, DisposableCollection, CommandService } from '@theia/core/lib/common';
+import { TabBarToolbarContribution, TabBarToolbarRegistry, TabBarToolbarAction } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
+import { CommandRegistry, Command, Disposable, DisposableCollection, CommandService, MenuModelRegistry } from '@theia/core/lib/common';
 import { ContextKeyService, ContextKey } from '@theia/core/lib/browser/context-key-service';
-import { ScmService } from './scm-service';
-import { ScmWidget } from '../browser/scm-widget';
+import { ScmService } from './scm-service.js';
+import { ScmContextKeyService } from './scm-context-key-service.js';
+import { ScmWidget } from '../browser/scm-widget.js';
 import URI from '@theia/core/lib/common/uri';
-import { ScmQuickOpenService } from './scm-quick-open-service';
+import { ScmQuickOpenService } from './scm-quick-open-service.js';
 import { ColorContribution } from '@theia/core/lib/browser/color-application-contribution';
-import { ColorRegistry, Color } from '@theia/core/lib/browser/color-registry';
-import { ScmCommand } from './scm-provider';
-import { ScmDecorationsService } from '../browser/decorations/scm-decorations-service';
+import { ColorRegistry } from '@theia/core/lib/browser/color-registry';
+import { Color } from '@theia/core/lib/common/color';
+import { ScmColors } from './scm-colors.js';
+import { ScmCommand } from './scm-provider.js';
+import { ScmDecorationsService } from '../browser/decorations/scm-decorations-service.js';
+import { nls } from '@theia/core/lib/common/nls';
+import { isHighContrast } from '@theia/core/lib/common/theme';
+import { EditorMainMenu, EditorWidget } from '@theia/editor/lib/browser';
+import { DirtyDiffNavigator } from './dirty-diff/dirty-diff-navigator.js';
+import { MonacoDiffEditor } from '@theia/monaco/lib/browser/monaco-diff-editor';
 
 export const SCM_WIDGET_FACTORY_ID = ScmWidget.ID;
 export const SCM_VIEW_CONTAINER_ID = 'scm-view-container';
 export const SCM_VIEW_CONTAINER_TITLE_OPTIONS: ViewContainerTitleOptions = {
-    label: 'Source Control',
+    label: nls.localizeByDefault('Source Control'),
     iconClass: codicon('source-control'),
     closeable: true
 };
 
+export namespace ScmMenus {
+    export const CHANGES_GROUP = [...EditorMainMenu.GO, '6_changes_group'];
+}
+
 export namespace SCM_COMMANDS {
     export const CHANGE_REPOSITORY = {
         id: 'scm.change.repository',
-        category: 'SCM',
-        label: 'Change Repository...'
+        category: nls.localizeByDefault('Source Control'),
+        originalCategory: 'Source Control',
+        label: nls.localize('theia/scm/changeRepository', 'Change Repository...'),
+        originalLabel: 'Change Repository...'
     };
     export const ACCEPT_INPUT = {
         id: 'scm.acceptInput'
     };
     export const TREE_VIEW_MODE = {
         id: 'scm.viewmode.tree',
-        tooltip: 'Toggle to Tree View',
+        tooltip: nls.localizeByDefault('View as Tree'),
         iconClass: codicon('list-tree'),
-        label: 'Toggle to Tree View',
+        originalLabel: 'View as Tree',
+        label: nls.localizeByDefault('View as Tree')
     };
     export const LIST_VIEW_MODE = {
         id: 'scm.viewmode.list',
-        tooltip: 'Toggle to List View',
+        tooltip: nls.localizeByDefault('View as List'),
         iconClass: codicon('list-flat'),
-        label: 'Toggle to List View',
+        originalLabel: 'View as List',
+        label: nls.localizeByDefault('View as List')
     };
     export const COLLAPSE_ALL = {
         id: 'scm.collapseAll',
-        category: 'SCM',
-        tooltip: 'Collapse All',
+        category: nls.localizeByDefault('Source Control'),
+        originalCategory: 'Source Control',
+        tooltip: nls.localizeByDefault('Collapse All'),
         iconClass: codicon('collapse-all'),
-        label: 'Collapse All',
+        label: nls.localizeByDefault('Collapse All'),
+        originalLabel: 'Collapse All'
+    };
+    export const GOTO_NEXT_CHANGE = Command.toDefaultLocalizedCommand({
+        id: 'workbench.action.editor.nextChange',
+        category: 'Source Control',
+        label: 'Go to Next Change',
+        iconClass: codicon('arrow-down')
+    });
+    export const GOTO_PREVIOUS_CHANGE = Command.toDefaultLocalizedCommand({
+        id: 'workbench.action.editor.previousChange',
+        category: 'Source Control',
+        label: 'Go to Previous Change',
+        iconClass: codicon('arrow-up')
+    });
+    export const SHOW_NEXT_CHANGE = Command.toDefaultLocalizedCommand({
+        id: 'editor.action.dirtydiff.next',
+        category: 'Source Control',
+        label: 'Show Next Change'
+    });
+    export const SHOW_PREVIOUS_CHANGE = Command.toDefaultLocalizedCommand({
+        id: 'editor.action.dirtydiff.previous',
+        category: 'Source Control',
+        label: 'Show Previous Change'
+    });
+    export const CLOSE_CHANGE_PEEK_VIEW = {
+        id: 'editor.action.dirtydiff.close',
+        category: nls.localizeByDefault('Source Control'),
+        originalCategory: 'Source Control',
+        label: nls.localize('theia/scm/dirtyDiff/close', 'Close Change Peek View'),
+        originalLabel: 'Close Change Peek View'
     };
 }
 
-export namespace ScmColors {
-    export const editorGutterModifiedBackground = 'editorGutter.modifiedBackground';
-    export const editorGutterAddedBackground = 'editorGutter.addedBackground';
-    export const editorGutterDeletedBackground = 'editorGutter.deletedBackground';
-}
+export { ScmColors };
 
 @injectable()
-export class ScmContribution extends AbstractViewContribution<ScmWidget> implements FrontendApplicationContribution, TabBarToolbarContribution, ColorContribution {
+export class ScmContribution extends AbstractViewContribution<ScmWidget> implements
+    FrontendApplicationContribution,
+    TabBarToolbarContribution,
+    ColorContribution,
+    StylingParticipant {
 
     @inject(StatusBar) protected readonly statusBar: StatusBar;
     @inject(ScmService) protected readonly scmService: ScmService;
@@ -92,6 +142,8 @@ export class ScmContribution extends AbstractViewContribution<ScmWidget> impleme
     @inject(CommandRegistry) protected readonly commandRegistry: CommandRegistry;
     @inject(ContextKeyService) protected readonly contextKeys: ContextKeyService;
     @inject(ScmDecorationsService) protected readonly scmDecorationsService: ScmDecorationsService;
+    @inject(DirtyDiffNavigator) protected readonly dirtyDiffNavigator: DirtyDiffNavigator;
+    @inject(ScmContextKeyService) protected readonly scmContextKeys: ScmContextKeyService;
 
     protected scmFocus: ContextKey<boolean>;
 
@@ -99,7 +151,7 @@ export class ScmContribution extends AbstractViewContribution<ScmWidget> impleme
         super({
             viewContainerId: SCM_VIEW_CONTAINER_ID,
             widgetId: SCM_WIDGET_FACTORY_ID,
-            widgetName: 'Source Control',
+            widgetName: SCM_VIEW_CONTAINER_TITLE_OPTIONS.label,
             defaultWidgetOptions: {
                 area: 'left',
                 rank: 300
@@ -120,21 +172,28 @@ export class ScmContribution extends AbstractViewContribution<ScmWidget> impleme
 
     onStart(): void {
         this.updateStatusBar();
-        this.scmService.onDidAddRepository(() => this.updateStatusBar());
-        this.scmService.onDidRemoveRepository(() => this.updateStatusBar());
+        this.updateScmProviderCount();
+        this.scmService.onDidAddRepository(() => { this.updateStatusBar(); this.updateScmProviderCount(); });
+        this.scmService.onDidRemoveRepository(() => { this.updateStatusBar(); this.updateScmProviderCount(); });
         this.scmService.onDidChangeSelectedRepository(() => this.updateStatusBar());
         this.scmService.onDidChangeStatusBarCommands(() => this.updateStatusBar());
         this.labelProvider.onDidChange(() => this.updateStatusBar());
 
         this.updateContextKeys();
-        this.shell.currentChanged.connect(() => this.updateContextKeys());
+        this.shell.onDidChangeCurrentWidget(() => this.updateContextKeys());
+
+        this.scmDecorationsService.onDirtyDiffUpdate(update => this.dirtyDiffNavigator.handleDirtyDiffUpdate(update));
     }
 
     protected updateContextKeys(): void {
         this.scmFocus.set(this.shell.currentWidget instanceof ScmWidget);
     }
 
-    registerCommands(commandRegistry: CommandRegistry): void {
+    protected updateScmProviderCount(): void {
+        this.scmContextKeys.scmProviderCount.set(this.scmService.repositories.length);
+    }
+
+    override registerCommands(commandRegistry: CommandRegistry): void {
         super.registerCommands(commandRegistry);
         commandRegistry.registerCommand(SCM_COMMANDS.CHANGE_REPOSITORY, {
             execute: () => this.scmQuickOpenService.changeRepository(),
@@ -144,13 +203,72 @@ export class ScmContribution extends AbstractViewContribution<ScmWidget> impleme
             execute: () => this.acceptInput(),
             isEnabled: () => !!this.scmFocus.get() && !!this.acceptInputCommand()
         });
+
+        // Note that commands for dirty diff navigation need to be always available.
+        // This is consistent with behavior in VS Code, and also with other similar commands (such as `Next Problem/Previous Problem`) in Theia.
+        // See https://github.com/eclipse-theia/theia/pull/13104#discussion_r1497316614 for a detailed discussion.
+        commandRegistry.registerCommand(SCM_COMMANDS.GOTO_NEXT_CHANGE, {
+            execute: widget => {
+                if (widget instanceof EditorWidget && widget.editor instanceof MonacoDiffEditor) {
+                    widget.editor.diffNavigator.next();
+                    widget.activate();
+                } else {
+                    this.dirtyDiffNavigator.gotoNextChange();
+                }
+            },
+            isEnabled: widget => {
+                if (widget instanceof EditorWidget && widget.editor instanceof MonacoDiffEditor) {
+                    return widget.editor.diffNavigator.hasNext();
+                }
+                return true;
+            }
+        });
+        commandRegistry.registerCommand(SCM_COMMANDS.GOTO_PREVIOUS_CHANGE, {
+            execute: widget => {
+                if (widget instanceof EditorWidget && widget.editor instanceof MonacoDiffEditor) {
+                    widget.editor.diffNavigator.previous();
+                    widget.activate();
+                } else {
+                    this.dirtyDiffNavigator.gotoPreviousChange();
+                }
+            },
+            isEnabled: widget => {
+                if (widget instanceof EditorWidget && widget.editor instanceof MonacoDiffEditor) {
+                    return widget.editor.diffNavigator.hasPrevious();
+                }
+                return true;
+            }
+        });
+        commandRegistry.registerCommand(SCM_COMMANDS.SHOW_NEXT_CHANGE, {
+            execute: () => this.dirtyDiffNavigator.showNextChange()
+        });
+        commandRegistry.registerCommand(SCM_COMMANDS.SHOW_PREVIOUS_CHANGE, {
+            execute: () => this.dirtyDiffNavigator.showPreviousChange()
+        });
+        commandRegistry.registerCommand(SCM_COMMANDS.CLOSE_CHANGE_PEEK_VIEW, {
+            execute: () => this.dirtyDiffNavigator.closeChangePeekView()
+        });
+    }
+
+    override registerMenus(menus: MenuModelRegistry): void {
+        super.registerMenus(menus);
+        menus.registerMenuAction(ScmMenus.CHANGES_GROUP, {
+            commandId: SCM_COMMANDS.SHOW_NEXT_CHANGE.id,
+            label: nls.localizeByDefault('Next Change'),
+            order: '1'
+        });
+        menus.registerMenuAction(ScmMenus.CHANGES_GROUP, {
+            commandId: SCM_COMMANDS.SHOW_PREVIOUS_CHANGE.id,
+            label: nls.localizeByDefault('Previous Change'),
+            order: '2'
+        });
     }
 
     registerToolbarItems(registry: TabBarToolbarRegistry): void {
         const viewModeEmitter = new Emitter<void>();
         const registerToggleViewItem = (command: Command, mode: 'tree' | 'list') => {
             const id = command.id;
-            const item: TabBarToolbarItem = {
+            const item: TabBarToolbarAction = {
                 id,
                 command: id,
                 tooltip: command.label,
@@ -191,17 +309,54 @@ export class ScmContribution extends AbstractViewContribution<ScmWidget> impleme
         });
 
         registry.registerItem({
+            id: SCM_COMMANDS.GOTO_PREVIOUS_CHANGE.id,
+            command: SCM_COMMANDS.GOTO_PREVIOUS_CHANGE.id,
+            isVisible: widget => widget instanceof EditorWidget && widget.editor instanceof MonacoDiffEditor,
+        });
+
+        registry.registerItem({
+            id: SCM_COMMANDS.GOTO_NEXT_CHANGE.id,
+            command: SCM_COMMANDS.GOTO_NEXT_CHANGE.id,
+            isVisible: widget => widget instanceof EditorWidget && widget.editor instanceof MonacoDiffEditor,
+        });
+
+        registry.registerItem({
             ...SCM_COMMANDS.COLLAPSE_ALL,
             command: SCM_COMMANDS.COLLAPSE_ALL.id
         });
     }
 
-    registerKeybindings(keybindings: KeybindingRegistry): void {
+    override registerKeybindings(keybindings: KeybindingRegistry): void {
         super.registerKeybindings(keybindings);
         keybindings.registerKeybinding({
             command: SCM_COMMANDS.ACCEPT_INPUT.id,
             keybinding: 'ctrlcmd+enter',
             when: 'scmFocus'
+        });
+        keybindings.registerKeybinding({
+            command: SCM_COMMANDS.GOTO_NEXT_CHANGE.id,
+            keybinding: 'alt+f5',
+            when: 'editorTextFocus'
+        });
+        keybindings.registerKeybinding({
+            command: SCM_COMMANDS.GOTO_PREVIOUS_CHANGE.id,
+            keybinding: 'shift+alt+f5',
+            when: 'editorTextFocus'
+        });
+        keybindings.registerKeybinding({
+            command: SCM_COMMANDS.SHOW_NEXT_CHANGE.id,
+            keybinding: 'alt+f3',
+            when: 'editorTextFocus'
+        });
+        keybindings.registerKeybinding({
+            command: SCM_COMMANDS.SHOW_PREVIOUS_CHANGE.id,
+            keybinding: 'shift+alt+f3',
+            when: 'editorTextFocus'
+        });
+        keybindings.registerKeybinding({
+            command: SCM_COMMANDS.CLOSE_CHANGE_PEEK_VIEW.id,
+            keybinding: 'esc',
+            when: 'dirtyDiffVisible'
         });
     }
 
@@ -256,71 +411,247 @@ export class ScmContribution extends AbstractViewContribution<ScmWidget> impleme
      */
     registerColors(colors: ColorRegistry): void {
         colors.register(
+            // SCM Graph lane colors (matching VS Code's scm.graph.* color IDs)
+            {
+                id: 'scmGraph.historyItemHoverDefaultLabelForeground',
+                defaults: {
+                    dark: '#0078d4',
+                    light: '#0078d4',
+                    hcDark: '#0078d4',
+                    hcLight: '#0078d4'
+                },
+                description: 'Default foreground color for history item labels in the SCM history graph on hover.'
+            },
+            {
+                id: 'scmGraph.historyItemHoverAdditionsForeground',
+                defaults: {
+                    dark: '#81b88b',
+                    light: '#388a34',
+                    hcDark: '#81b88b',
+                    hcLight: '#388a34'
+                },
+                description: 'Foreground color for additions in the SCM history graph on hover.'
+            },
+            {
+                id: 'scmGraph.historyItemHoverDeletionsForeground',
+                defaults: {
+                    dark: '#c74e39',
+                    light: '#a1260d',
+                    hcDark: '#c74e39',
+                    hcLight: '#a1260d'
+                },
+                description: 'Foreground color for deletions in the SCM history graph on hover.'
+            },
+            {
+                id: 'scmGraph.historyItemHoverLabelForeground',
+                defaults: {
+                    dark: '#e2e2e2',
+                    light: '#3b3b3b',
+                    hcDark: '#ffffff',
+                    hcLight: '#000000'
+                },
+                description: 'Foreground color for labels in the SCM history graph on hover.'
+            },
+            {
+                id: 'scmGraph.historyItemRefForeground',
+                defaults: {
+                    dark: '#ffffff',
+                    light: '#ffffff',
+                    hcDark: '#ffffff',
+                    hcLight: '#ffffff'
+                },
+                description: 'Foreground color for ref badge labels in the SCM history graph.'
+            },
+            {
+                id: 'scmGraph.historyItemRefColor',
+                defaults: {
+                    dark: '#0078d4',
+                    light: '#0078d4',
+                    hcDark: '#0078d4',
+                    hcLight: '#0078d4'
+                },
+                description: 'Color for ref labels in the SCM history graph.'
+            },
+            {
+                id: 'scmGraph.historyItemRemoteRefColor',
+                defaults: {
+                    dark: '#b267e6',
+                    light: '#8b009b',
+                    hcDark: '#b267e6',
+                    hcLight: '#8b009b'
+                },
+                description: 'Color for remote ref labels in the SCM history graph.'
+            },
+            {
+                id: 'scmGraph.historyItemTagRefColor',
+                defaults: {
+                    dark: '#d7ba7d',
+                    light: '#8d6914',
+                    hcDark: '#d7ba7d',
+                    hcLight: '#8d6914'
+                },
+                description: 'Color for tag ref labels in the SCM history graph.'
+            },
+            {
+                id: 'scmGraph.historyItemBaseRefColor',
+                defaults: {
+                    dark: '#a1260d',
+                    light: '#a1260d',
+                    hcDark: '#a1260d',
+                    hcLight: '#a1260d'
+                },
+                description: 'Color for base ref labels in the SCM history graph.'
+            },
+            {
+                id: 'scmGraph.foreground1',
+                defaults: {
+                    dark: '#ffb000',
+                    light: '#ffb000',
+                    hcDark: '#ffb000',
+                    hcLight: '#ffb000'
+                },
+                description: 'Foreground color 1 for additional lanes in the SCM history graph.'
+            },
+            {
+                id: 'scmGraph.foreground2',
+                defaults: {
+                    dark: '#dc267f',
+                    light: '#dc267f',
+                    hcDark: '#dc267f',
+                    hcLight: '#dc267f'
+                },
+                description: 'Foreground color 2 for additional lanes in the SCM history graph.'
+            },
+            {
+                id: 'scmGraph.foreground3',
+                defaults: {
+                    dark: '#994f00',
+                    light: '#994f00',
+                    hcDark: '#994f00',
+                    hcLight: '#994f00'
+                },
+                description: 'Foreground color 3 for additional lanes in the SCM history graph.'
+            },
+            {
+                id: 'scmGraph.foreground4',
+                defaults: {
+                    dark: '#40b0a6',
+                    light: '#40b0a6',
+                    hcDark: '#40b0a6',
+                    hcLight: '#40b0a6'
+                },
+                description: 'Foreground color 4 for additional lanes in the SCM history graph.'
+            },
+            {
+                id: 'scmGraph.foreground5',
+                defaults: {
+                    dark: '#b66dff',
+                    light: '#b66dff',
+                    hcDark: '#b66dff',
+                    hcLight: '#b66dff'
+                },
+                description: 'Foreground color 5 for additional lanes in the SCM history graph.'
+            },
             {
                 id: ScmColors.editorGutterModifiedBackground, defaults: {
-                    dark: Color.rgba(12, 125, 157),
-                    light: Color.rgba(102, 175, 224),
-                    hc: Color.rgba(0, 155, 249)
+                    dark: '#1B81A8',
+                    light: '#2090D3',
+                    hcDark: '#1B81A8',
+                    hcLight: '#2090D3'
                 }, description: 'Editor gutter background color for lines that are modified.'
             },
             {
                 id: ScmColors.editorGutterAddedBackground, defaults: {
-                    dark: Color.rgba(88, 124, 12),
-                    light: Color.rgba(129, 184, 139),
-                    hc: Color.rgba(51, 171, 78)
+                    dark: '#487E02',
+                    light: '#48985D',
+                    hcDark: '#487E02',
+                    hcLight: '#48985D'
                 }, description: 'Editor gutter background color for lines that are added.'
             },
             {
                 id: ScmColors.editorGutterDeletedBackground, defaults: {
-                    dark: Color.rgba(148, 21, 27),
-                    light: Color.rgba(202, 75, 81),
-                    hc: Color.rgba(252, 93, 109)
+                    dark: 'editorError.foreground',
+                    light: 'editorError.foreground',
+                    hcDark: 'editorError.foreground',
+                    hcLight: 'editorError.foreground'
                 }, description: 'Editor gutter background color for lines that are deleted.'
             },
             {
                 id: 'minimapGutter.modifiedBackground', defaults: {
-                    dark: Color.rgba(12, 125, 157),
-                    light: Color.rgba(102, 175, 224),
-                    hc: Color.rgba(0, 155, 249)
+                    dark: 'editorGutter.modifiedBackground',
+                    light: 'editorGutter.modifiedBackground',
+                    hcDark: 'editorGutter.modifiedBackground',
+                    hcLight: 'editorGutter.modifiedBackground'
                 }, description: 'Minimap gutter background color for lines that are modified.'
             },
             {
-                id: 'minimapGutter.addedBackground',
-                defaults: {
-                    dark: Color.rgba(88, 124, 12),
-                    light: Color.rgba(129, 184, 139),
-                    hc: Color.rgba(51, 171, 78)
+                id: 'minimapGutter.addedBackground', defaults: {
+                    dark: 'editorGutter.addedBackground',
+                    light: 'editorGutter.addedBackground',
+                    hcDark: 'editorGutter.modifiedBackground',
+                    hcLight: 'editorGutter.modifiedBackground'
                 }, description: 'Minimap gutter background color for lines that are added.'
             },
             {
                 id: 'minimapGutter.deletedBackground', defaults: {
-                    dark: Color.rgba(148, 21, 27),
-                    light: Color.rgba(202, 75, 81),
-                    hc: Color.rgba(252, 93, 109)
+                    dark: 'editorGutter.deletedBackground',
+                    light: 'editorGutter.deletedBackground',
+                    hcDark: 'editorGutter.deletedBackground',
+                    hcLight: 'editorGutter.deletedBackground'
                 }, description: 'Minimap gutter background color for lines that are deleted.'
             },
             {
                 id: 'editorOverviewRuler.modifiedForeground', defaults: {
                     dark: Color.transparent(ScmColors.editorGutterModifiedBackground, 0.6),
                     light: Color.transparent(ScmColors.editorGutterModifiedBackground, 0.6),
-                    hc: Color.transparent(ScmColors.editorGutterModifiedBackground, 0.6)
+                    hcDark: Color.transparent(ScmColors.editorGutterModifiedBackground, 0.6),
+                    hcLight: Color.transparent(ScmColors.editorGutterModifiedBackground, 0.6)
                 }, description: 'Overview ruler marker color for modified content.'
             },
             {
                 id: 'editorOverviewRuler.addedForeground', defaults: {
                     dark: Color.transparent(ScmColors.editorGutterAddedBackground, 0.6),
                     light: Color.transparent(ScmColors.editorGutterAddedBackground, 0.6),
-                    hc: Color.transparent(ScmColors.editorGutterAddedBackground, 0.6)
+                    hcDark: Color.transparent(ScmColors.editorGutterAddedBackground, 0.6),
+                    hcLight: Color.transparent(ScmColors.editorGutterAddedBackground, 0.6)
                 }, description: 'Overview ruler marker color for added content.'
             },
             {
                 id: 'editorOverviewRuler.deletedForeground', defaults: {
                     dark: Color.transparent(ScmColors.editorGutterDeletedBackground, 0.6),
                     light: Color.transparent(ScmColors.editorGutterDeletedBackground, 0.6),
-                    hc: Color.transparent(ScmColors.editorGutterDeletedBackground, 0.6)
+                    hcDark: Color.transparent(ScmColors.editorGutterDeletedBackground, 0.6),
+                    hcLight: Color.transparent(ScmColors.editorGutterDeletedBackground, 0.6)
                 }, description: 'Overview ruler marker color for deleted content.'
+            },
+            {
+                id: 'scmGraph.historyItemHoverAdditionsForeground', defaults: {
+                    dark: '#81B88B',
+                    light: '#587C0C',
+                    hcDark: '#A1E3AD',
+                    hcLight: '#374E06'
+                }, description: 'History item hover additions foreground color.'
+            },
+            {
+                id: 'scmGraph.historyItemHoverDeletionsForeground', defaults: {
+                    dark: '#C74E39',
+                    light: '#AD0707',
+                    hcDark: '#C74E39',
+                    hcLight: '#AD0707'
+                }, description: 'History item hover deletions foreground color.'
             }
         );
     }
 
+    registerThemeStyle(theme: ColorTheme, collector: CssStyleCollector): void {
+        const contrastBorder = theme.getColor('contrastBorder');
+        if (contrastBorder && isHighContrast(theme.type)) {
+            collector.addRule(`
+                .theia-scm-input-message-container textarea {
+                    outline: var(--theia-border-width) solid ${contrastBorder};
+                    outline-offset: -1px;
+                }
+            `);
+        }
+    }
 }

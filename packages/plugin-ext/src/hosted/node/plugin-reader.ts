@@ -1,33 +1,35 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as path from 'path';
 import * as express from '@theia/core/shared/express';
-import * as escape_html from 'escape-html';
+import escape_html from 'escape-html';
+import { realpath, stat } from 'fs/promises';
 import { ILogger } from '@theia/core';
-import { inject, injectable, optional, multiInject } from '@theia/core/shared/inversify';
+import { inject, injectable, optional, multiInject, named } from '@theia/core/shared/inversify';
 import { BackendApplicationContribution } from '@theia/core/lib/node/backend-application';
-import { PluginMetadata, getPluginId, MetadataProcessor, PluginPackage, PluginContribution } from '../../common/plugin-protocol';
-import { MetadataScanner } from './metadata-scanner';
-import { loadManifest } from './plugin-manifest-loader';
+import { PluginMetadata, getPluginId, MetadataProcessor, PluginPackage, PluginContribution } from '../../common/plugin-protocol.js';
+import { MetadataScanner } from './metadata-scanner.js';
+import { loadManifest } from '@theia/plugin-utils/lib/node/plugin-manifest';
+import { PLUGINS_BASE_PATH } from '@theia/plugin-utils/lib/common/constants';
 
 @injectable()
 export class HostedPluginReader implements BackendApplicationContribution {
 
-    @inject(ILogger)
+    @inject(ILogger) @named('plugin-ext:HostedPluginReader')
     protected readonly logger: ILogger;
 
     @inject(MetadataScanner)
@@ -42,23 +44,29 @@ export class HostedPluginReader implements BackendApplicationContribution {
     protected pluginsIdsFiles: Map<string, string> = new Map();
 
     configure(app: express.Application): void {
-        app.get('/hostedPlugin/:pluginId/:path(*)', async (req, res) => {
+        app.get(`/${PLUGINS_BASE_PATH}/:pluginId/:path(*)`, async (req, res) => {
             const pluginId = req.params.pluginId;
             const filePath = req.params.path;
 
             const localPath = this.pluginsIdsFiles.get(pluginId);
             if (localPath) {
-                res.sendFile(filePath, { root: localPath }, e => {
+                const resolvedFile = await this.resolveFile(localPath, filePath);
+                if (!resolvedFile) {
+                    res.status(404).send(`No such file found in '${escape_html(pluginId)}' plugin.`);
+                    return;
+                }
+                res.sendFile(resolvedFile, e => {
                     if (!e) {
                         // the file was found and successfully transferred
                         return;
                     }
-                    console.error(`Could not transfer '${filePath}' file from '${pluginId}'`, e);
+                    this.logger.error(`Could not transfer '${filePath}' file from '${pluginId}'`, e);
                     if (res.headersSent) {
                         // the request was already closed
                         return;
                     }
-                    if ('code' in e && e['code'] === 'ENOENT') {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    if ((e as any)['code'] === 'ENOENT') {
                         res.status(404).send(`No such file found in '${escape_html(pluginId)}' plugin.`);
                     } else {
                         res.status(500).send(`Failed to transfer a file from '${escape_html(pluginId)}' plugin.`);
@@ -68,6 +76,47 @@ export class HostedPluginReader implements BackendApplicationContribution {
                 await this.handleMissingResource(req, res);
             }
         });
+    }
+
+    /**
+     * Resolves `filePath` under `localPath`, with fallback to `.js`, `.cjs` and `.mjs`
+     * extensions. Returns `undefined` if the resolved path is not under `localPath`
+     * or if no candidate exists on disk.
+     *
+     * The extension fallback handles cases where plugins reference modules without
+     * extensions, which is common in Node.js/CommonJS environments.
+     */
+    protected async resolveFile(localPath: string, filePath: string): Promise<string | undefined> {
+        const absolutePath = path.resolve(localPath, filePath);
+
+        // `path.relative` yields a path starting with '..' (or an absolute path on
+        // Windows when the drive differs) when `absolutePath` is not under `localPath`.
+        const relativePath = path.relative(localPath, absolutePath);
+        if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+            return undefined;
+        }
+
+        const candidates = [absolutePath];
+        const pathExtension = path.extname(absolutePath).toLowerCase();
+
+        if (!pathExtension) {
+            candidates.push(absolutePath + '.js');
+            candidates.push(absolutePath + '.cjs');
+            candidates.push(absolutePath + '.mjs');
+        }
+
+        for (const candidate of candidates) {
+            try {
+                const stats = await stat(candidate);
+                if (stats.isFile()) {
+                    return candidate;
+                }
+            } catch {
+                // File doesn't exist or is inaccessible - try next candidate
+                // Actual 404 errors are handled by the caller
+            }
+        }
+        return undefined;
     }
 
     protected async handleMissingResource(req: express.Request, res: express.Response): Promise<void> {
@@ -92,18 +141,22 @@ export class HostedPluginReader implements BackendApplicationContribution {
         if (!pluginPath) {
             return undefined;
         }
-        const manifest = await loadManifest(pluginPath);
+        const resolvedPluginPath = await realpath(pluginPath);
+        const manifest = await loadManifest<PluginPackage>(resolvedPluginPath);
         if (!manifest) {
             return undefined;
         }
-        manifest.packagePath = pluginPath;
+        manifest.packagePath = resolvedPluginPath;
         return manifest;
     }
 
-    readMetadata(plugin: PluginPackage): PluginMetadata {
-        const pluginMetadata = this.scanner.getPluginMetadata(plugin);
+    async readMetadata(plugin: PluginPackage): Promise<PluginMetadata> {
+        const pluginMetadata = await this.scanner.getPluginMetadata(plugin);
         if (pluginMetadata.model.entryPoint.backend) {
             pluginMetadata.model.entryPoint.backend = path.resolve(plugin.packagePath, pluginMetadata.model.entryPoint.backend);
+        }
+        if (pluginMetadata.model.entryPoint.headless) {
+            pluginMetadata.model.entryPoint.headless = path.resolve(plugin.packagePath, pluginMetadata.model.entryPoint.headless);
         }
         if (pluginMetadata) {
             // Add post processor
@@ -117,7 +170,7 @@ export class HostedPluginReader implements BackendApplicationContribution {
         return pluginMetadata;
     }
 
-    readContribution(plugin: PluginPackage): PluginContribution | undefined {
+    async readContribution(plugin: PluginPackage): Promise<PluginContribution | undefined> {
         const scanner = this.scanner.getScanner(plugin);
         return scanner.getContribution(plugin);
     }

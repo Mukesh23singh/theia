@@ -1,24 +1,24 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
-import { Event, Emitter } from '@theia/core';
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+import { Event, Emitter, ListenerList, Listener, ILogger } from '@theia/core';
 import { MonacoEditorModel, WillSaveMonacoModelEvent } from '@theia/monaco/lib/browser/monaco-editor-model';
-import { injectable, inject } from '@theia/core/shared/inversify';
+import { injectable, inject, named } from '@theia/core/shared/inversify';
 import { MonacoTextModelService } from '@theia/monaco/lib/browser/monaco-text-model-service';
 import { MonacoWorkspace } from '@theia/monaco/lib/browser/monaco-workspace';
-import { Schemes } from '../../common/uri-components';
+import { Schemes } from '../../common/uri-components.js';
 import URI from '@theia/core/lib/common/uri';
 import { Reference } from '@theia/core/lib/common/reference';
 
@@ -29,14 +29,19 @@ export class EditorModelService {
     private modelModeChangedEmitter = new Emitter<{ model: MonacoEditorModel, oldModeId: string }>();
     private onModelRemovedEmitter = new Emitter<MonacoEditorModel>();
     private modelDirtyEmitter = new Emitter<MonacoEditorModel>();
+    private modelEncodingEmitter = new Emitter<{ model: MonacoEditorModel, encoding: string }>();
     private modelSavedEmitter = new Emitter<MonacoEditorModel>();
-    private onModelWillSavedEmitter = new Emitter<WillSaveMonacoModelEvent>();
+    private onModelWillSaveListeners: ListenerList<WillSaveMonacoModelEvent, Promise<void>> = new ListenerList();
 
     readonly onModelDirtyChanged = this.modelDirtyEmitter.event;
+    readonly onModelEncodingChanged = this.modelEncodingEmitter.event;
+    readonly onModelWillSave = this.onModelWillSaveListeners.registration;
     readonly onModelSaved = this.modelSavedEmitter.event;
     readonly onModelModeChanged = this.modelModeChangedEmitter.event;
     readonly onModelRemoved = this.onModelRemovedEmitter.event;
-    readonly onModelWillSave = this.onModelWillSavedEmitter.event;
+
+    @inject(ILogger) @named('plugin-ext:EditorModelService')
+    protected readonly logger: ILogger;
 
     constructor(@inject(MonacoTextModelService) monacoModelService: MonacoTextModelService,
         @inject(MonacoWorkspace) monacoWorkspace: MonacoWorkspace) {
@@ -44,11 +49,7 @@ export class EditorModelService {
         this.monacoModelService = monacoModelService;
         monacoModelService.models.forEach(model => this.modelCreated(model));
         monacoModelService.onDidCreate(this.modelCreated, this);
-        monacoWorkspace.onDidCloseTextDocument(model => {
-            setTimeout(() => {
-                this.onModelRemovedEmitter.fire(model);
-            }, 1);
-        });
+        monacoWorkspace.onDidCloseTextDocument(model => this.onModelRemovedEmitter.fire(model));
     }
 
     private modelCreated(model: MonacoEditorModel): void {
@@ -60,11 +61,16 @@ export class EditorModelService {
             this.modelSavedEmitter.fire(model);
         });
 
+        model.onModelWillSaveModel(async (e: WillSaveMonacoModelEvent) => {
+            await Listener.awaitAll(e, this.onModelWillSaveListeners);
+        });
+
         model.onDirtyChanged(_ => {
             this.modelDirtyEmitter.fire(model);
         });
-        model.onWillSaveModel(willSaveModelEvent => {
-            this.onModelWillSavedEmitter.fire(willSaveModelEvent);
+
+        model.onDidChangeEncoding(encoding => {
+            this.modelEncodingEmitter.fire({ model, encoding });
         });
     }
 
@@ -74,6 +80,15 @@ export class EditorModelService {
 
     getModels(): MonacoEditorModel[] {
         return this.monacoModelService.models;
+    }
+
+    async save(uri: URI): Promise<boolean> {
+        const model = this.monacoModelService.get(uri.toString());
+        if (model) {
+            await model.save();
+            return true;
+        }
+        return false;
     }
 
     async saveAll(includeUntitled?: boolean): Promise<boolean> {
@@ -86,7 +101,7 @@ export class EditorModelService {
                         await model.save();
                         return true;
                     } catch (e) {
-                        console.error('Failed to save ', uri.toString(), e);
+                        this.logger.error('Failed to save ', uri.toString(), e);
                         return false;
                     }
                 })());

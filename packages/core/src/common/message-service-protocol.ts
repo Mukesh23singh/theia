@@ -1,21 +1,23 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable } from 'inversify';
-import { CancellationToken } from './cancellation';
+import { injectable, inject, named } from 'inversify';
+import { CancellationToken } from './cancellation.js';
+import { nls } from './nls.js';
+import { ILogger } from './logger.js';
 
 export const messageServicePath = '/services/messageService';
 
@@ -52,7 +54,7 @@ export interface ProgressMessage extends Message {
     readonly options?: ProgressMessageOptions;
 }
 export namespace ProgressMessage {
-    export const Cancel = 'Cancel';
+    export const Cancel = nls.localizeByDefault('Cancel');
     export function isCancelable(message: ProgressMessage): boolean {
         return !!message.options?.cancelable;
     }
@@ -114,6 +116,9 @@ export interface ProgressUpdate {
 @injectable()
 export class MessageClient {
 
+    @inject(ILogger) @named('core:MessageClient')
+    protected readonly logger: ILogger;
+
     /**
      * Show a message of the given type and possible actions to the user.
      * Resolve to a chosen action.
@@ -122,7 +127,7 @@ export class MessageClient {
      * To be implemented by an extension, e.g. by the messages extension.
      */
     showMessage(message: Message): Promise<string | undefined> {
-        console.info(message.text);
+        this.logger.info(message.text);
         return Promise.resolve(undefined);
     }
 
@@ -132,7 +137,7 @@ export class MessageClient {
      * To be implemented by an extension, e.g. by the messages extension.
      */
     showProgress(progressId: string, message: ProgressMessage, cancellationToken: CancellationToken): Promise<string | undefined> {
-        console.info(message.text);
+        this.logger.info(message.text);
         return Promise.resolve(undefined);
     }
 

@@ -1,34 +1,40 @@
-/********************************************************************************
- * Copyright (C) 2017-2018 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017-2018 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import '../../src/browser/styles/index.css';
 
 import { ContainerModule, interfaces } from '@theia/core/shared/inversify';
-import { SearchInWorkspaceService, SearchInWorkspaceClientImpl } from './search-in-workspace-service';
-import { SearchInWorkspaceServer, SIW_WS_PATH } from '../common/search-in-workspace-interface';
+import { SearchInWorkspaceService, SearchInWorkspaceClientImpl } from './search-in-workspace-service.js';
+import { SearchInWorkspaceServer, SIW_WS_PATH } from '../common/search-in-workspace-interface.js';
 import {
-    WebSocketConnectionProvider, WidgetFactory, createTreeContainer, TreeWidget, bindViewContribution, FrontendApplicationContribution, LabelProviderContribution
+    WidgetFactory, createTreeContainer, bindViewContribution, FrontendApplicationContribution, LabelProviderContribution,
+    ApplicationShellLayoutMigration,
+    StylingParticipant, RemoteConnectionProvider, ServiceConnectionProvider
 } from '@theia/core/lib/browser';
-import { SearchInWorkspaceWidget } from './search-in-workspace-widget';
-import { SearchInWorkspaceResultTreeWidget } from './search-in-workspace-result-tree-widget';
-import { SearchInWorkspaceFrontendContribution } from './search-in-workspace-frontend-contribution';
-import { SearchInWorkspaceContextKeyService } from './search-in-workspace-context-key-service';
+import { SearchInWorkspaceWidget } from './search-in-workspace-widget.js';
+import { SearchInWorkspaceResultTreeWidget } from './search-in-workspace-result-tree-widget.js';
+import { SearchInWorkspaceFrontendContribution } from './search-in-workspace-frontend-contribution.js';
+import { SearchInWorkspaceContextKeyService } from './search-in-workspace-context-key-service.js';
 import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
-import { bindSearchInWorkspacePreferences } from './search-in-workspace-preferences';
-import { SearchInWorkspaceLabelProvider } from './search-in-workspace-label-provider';
+import { bindSearchInWorkspacePreferences } from '../common/search-in-workspace-preferences.js';
+import { SearchInWorkspaceLabelProvider } from './search-in-workspace-label-provider.js';
+import { SearchInWorkspaceFactory } from './search-in-workspace-factory.js';
+import { SearchLayoutVersion3Migration } from './search-layout-migrations.js';
+import { WorkspaceSearchFilterProvider } from '@theia/workspace/lib/browser';
+import { SearchExcludeFilterProvider } from './search-exclude-filter-provider.js';
 
 export default new ContainerModule(bind => {
     bind(SearchInWorkspaceContextKeyService).toSelf().inSingletonScope();
@@ -39,10 +45,14 @@ export default new ContainerModule(bind => {
         createWidget: () => ctx.container.get(SearchInWorkspaceWidget)
     }));
     bind(SearchInWorkspaceResultTreeWidget).toDynamicValue(ctx => createSearchTreeWidget(ctx.container));
+    bind(SearchInWorkspaceFactory).toSelf().inSingletonScope();
+    bind(WidgetFactory).toService(SearchInWorkspaceFactory);
+    bind(ApplicationShellLayoutMigration).to(SearchLayoutVersion3Migration).inSingletonScope();
 
     bindViewContribution(bind, SearchInWorkspaceFrontendContribution);
     bind(FrontendApplicationContribution).toService(SearchInWorkspaceFrontendContribution);
     bind(TabBarToolbarContribution).toService(SearchInWorkspaceFrontendContribution);
+    bind(StylingParticipant).toService(SearchInWorkspaceFrontendContribution);
 
     // The object that gets notified of search results.
     bind(SearchInWorkspaceClientImpl).toSelf().inSingletonScope();
@@ -52,20 +62,28 @@ export default new ContainerModule(bind => {
     // The object to call methods on the backend.
     bind(SearchInWorkspaceServer).toDynamicValue(ctx => {
         const client = ctx.container.get(SearchInWorkspaceClientImpl);
-        return WebSocketConnectionProvider.createProxy(ctx.container, SIW_WS_PATH, client);
+        const provider = ctx.container.get<ServiceConnectionProvider>(RemoteConnectionProvider);
+        return provider.createProxy<SearchInWorkspaceServer>(SIW_WS_PATH, client);
     }).inSingletonScope();
 
     bindSearchInWorkspacePreferences(bind);
 
     bind(SearchInWorkspaceLabelProvider).toSelf().inSingletonScope();
     bind(LabelProviderContribution).toService(SearchInWorkspaceLabelProvider);
+
+    bind(SearchExcludeFilterProvider).toSelf().inSingletonScope();
+    bind(WorkspaceSearchFilterProvider).toService(SearchExcludeFilterProvider);
 });
 
 export function createSearchTreeWidget(parent: interfaces.Container): SearchInWorkspaceResultTreeWidget {
-    const child = createTreeContainer(parent);
-
-    child.unbind(TreeWidget);
-    child.bind(SearchInWorkspaceResultTreeWidget).toSelf();
+    const child = createTreeContainer(parent, {
+        widget: SearchInWorkspaceResultTreeWidget,
+        props: {
+            contextMenuPath: SearchInWorkspaceResultTreeWidget.Menus.BASE,
+            multiSelect: true,
+            globalSelection: true
+        }
+    });
 
     return child.get(SearchInWorkspaceResultTreeWidget);
 }

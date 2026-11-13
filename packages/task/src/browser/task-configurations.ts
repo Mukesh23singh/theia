@@ -1,36 +1,38 @@
-/********************************************************************************
- * Copyright (C) 2017-2018 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017-2018 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
+import { inject, injectable, postConstruct, named } from '@theia/core/shared/inversify';
 import {
     TaskConfiguration,
     TaskCustomization,
     TaskDefinition,
     TaskOutputPresentation,
     TaskConfigurationScope,
-    TaskScope
-} from '../common';
-import { TaskDefinitionRegistry } from './task-definition-registry';
-import { ProvidedTaskConfigurations } from './provided-task-configurations';
-import { TaskConfigurationManager, TasksChange } from './task-configuration-manager';
-import { TaskSchemaUpdater } from './task-schema-updater';
-import { TaskSourceResolver } from './task-source-resolver';
+    TaskScope,
+    asVariableName
+} from '../common/index.js';
+import { TaskDefinitionRegistry } from './task-definition-registry.js';
+import { ProvidedTaskConfigurations } from './provided-task-configurations.js';
+import { TaskConfigurationManager, TasksChange } from './task-configuration-manager.js';
+import { TaskSchemaUpdater } from './task-schema-updater.js';
+import { TaskSourceResolver } from './task-source-resolver.js';
 import { Disposable, DisposableCollection } from '@theia/core/lib/common';
 import { FileChangeType } from '@theia/filesystem/lib/common/filesystem-watcher-protocol';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
+import { ILogger } from '@theia/core';
 
 export interface TaskConfigurationClient {
     /**
@@ -82,6 +84,9 @@ export class TaskConfigurations implements Disposable {
     @inject(TaskSourceResolver)
     protected readonly taskSourceResolver: TaskSourceResolver;
 
+    @inject(ILogger) @named('task:TaskConfigurations')
+    protected readonly logger: ILogger;
+
     constructor() {
         this.toDispose.push(Disposable.create(() => {
             this.tasksMap.clear();
@@ -101,7 +106,7 @@ export class TaskConfigurations implements Disposable {
                         this.client.taskConfigurationChanged(this.getTaskLabels());
                     }
                 } catch (err) {
-                    console.error(err);
+                    this.logger.error(err);
                 }
             })
         );
@@ -133,12 +138,12 @@ export class TaskConfigurations implements Disposable {
         const configuredTasks = Array.from(this.tasksMap.values()).reduce((acc, labelConfigMap) => acc.concat(Array.from(labelConfigMap.values())), [] as TaskConfiguration[]);
         const detectedTasksAsConfigured: TaskConfiguration[] = [];
         for (const [rootFolder, customizations] of Array.from(this.taskCustomizationMap.entries())) {
-            for (const cus of customizations) {
+            for (const customization of customizations) {
                 // TODO: getTasksToCustomize() will ask all task providers to contribute tasks. Doing this in a loop is bad.
-                const detected = await this.providedTaskConfigurations.getTaskToCustomize(token, cus, rootFolder);
+                const detected = await this.providedTaskConfigurations.getTaskToCustomize(token, customization, rootFolder);
                 if (detected) {
                     // there might be a provided task that has a different scope from the task we're inspecting
-                    detectedTasksAsConfigured.push({ ...detected, ...cus });
+                    detectedTasksAsConfigured.push({ ...detected, ...customization });
                 }
             }
         }
@@ -318,17 +323,17 @@ export class TaskConfigurations implements Disposable {
         try {
             await this.taskConfigurationManager.openConfiguration(scope);
         } catch (e) {
-            console.error(`Error occurred while opening 'tasks.json' in ${this.taskSourceResolver.resolve(task)}.`, e);
+            this.logger.error(`Error occurred while opening 'tasks.json' in ${this.taskSourceResolver.resolve(task)}.`, e);
         }
     }
 
     private getTaskCustomizationTemplate(task: TaskConfiguration): TaskCustomization | undefined {
         const definition = this.getTaskDefinition(task);
         if (!definition) {
-            console.error('Detected / Contributed tasks should have a task definition.');
+            this.logger.error('Detected / Contributed tasks should have a task definition.');
             return;
         }
-        const customization: TaskCustomization = { type: task.type };
+        const customization: TaskCustomization = { type: task.type, runOptions: task.runOptions };
         definition.properties.all.forEach(p => {
             if (task[p] !== undefined) {
                 customization[p] = task[p];
@@ -349,7 +354,7 @@ export class TaskConfigurations implements Disposable {
             } else if (task.problemMatcher) {
                 problemMatcher.push(task.problemMatcher.name!);
             }
-            customization.problemMatcher = problemMatcher.map(name => name.startsWith('$') ? name : `$${name}`);
+            customization.problemMatcher = problemMatcher.map(asVariableName);
         }
         if (task.group) {
             customization.group = task.group;

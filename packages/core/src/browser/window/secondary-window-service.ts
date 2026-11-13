@@ -1,0 +1,90 @@
+// *****************************************************************************
+// Copyright (C) 2022 STMicroelectronics, Ericsson, ARM, EclipseSource and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+
+import { Event } from '../../common/index.js';
+import { ApplicationShell } from '../shell/index.js';
+import { TheiaDockPanel } from '../shell/theia-dock-panel.js';
+import { ExtractableWidget, TabBar, Widget } from '../widgets/index.js';
+
+export abstract class SecondaryWindowRootWidget extends Widget {
+    secondaryWindow: Window | SecondaryWindow;
+    defaultRestoreArea?: ApplicationShell.Area;
+    abstract widgets: ReadonlyArray<Widget>;
+    abstract addWidget(widget: Widget, disposeCallback: () => void, options?: TheiaDockPanel.AddOptions): void;
+    getTabBar?(widget: Widget): TabBar<Widget> | undefined;
+}
+
+export interface SecondaryWindow extends Window {
+    rootWidget: SecondaryWindowRootWidget | undefined;
+}
+
+export function isSecondaryWindow(window: unknown): window is SecondaryWindow {
+    if (!window) {
+        return false;
+    }
+    return typeof window === 'object' && 'rootWidget' in window;
+}
+
+export interface SecondaryWindowOptions {
+    /**
+     * The screen position of the top left corner of the window. If omitted, the window is placed
+     * according to the `window.secondaryWindowPlacement` preference.
+     */
+    position?: { x: number, y: number };
+    /**
+     * The size of the window. If omitted, the size is derived from the widget and the `window.secondaryWindowPlacement` preference.
+     */
+    size?: { width: number, height: number };
+}
+
+export const SecondaryWindowService = Symbol('SecondaryWindowService');
+
+/**
+ * Service for opening new secondary windows to contain widgets extracted from the application shell.
+ *
+ * @experimental The functionality provided by this service and its implementation is still under development. Use with caution.
+ */
+export interface SecondaryWindowService {
+    /**
+     * Creates a new secondary window for a widget to be extracted from the application shell.
+     * The created window is closed automatically when the current theia instance is closed.
+     *
+     * @param onClose optional callback that is invoked when the secondary window is closed
+     * @param options optional options, e.g. the screen position at which to open the window
+     * @returns the created window or `undefined` if it could not be created
+     */
+    createSecondaryWindow(widget: ExtractableWidget, shell: ApplicationShell, options?: SecondaryWindowOptions): SecondaryWindow | Window | undefined;
+    readonly onWindowOpened: Event<Window>;
+    /**
+     * Emitted once a secondary window's final document has finished loading. Listeners can safely
+     * modify the window's document, unlike with {@link onWindowOpened}: at that point the window
+     * still shows the initial `about:blank` document, and anything added to it is discarded when
+     * the final document replaces it.
+     */
+    readonly onWindowLoaded: Event<Window>;
+    readonly onWindowClosed: Event<Window>;
+    readonly beforeWidgetRestore: Event<[Widget, Window]>;
+
+    /**
+     * Moves the given widget from the given secondary window back to the application shell.
+     * The secondary window is closed once it does not contain any widgets anymore.
+     */
+    restoreWidget(widget: Widget, secondaryWindow: Window, shell: ApplicationShell): Promise<void>;
+
+    /** Handles focussing the given secondary window in the browser and on Electron. */
+    focus(win: Window): void;
+    getWindows(): Window[];
+}

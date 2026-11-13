@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 // @ts-check
 describe('file-search', function () {
@@ -21,15 +21,19 @@ describe('file-search', function () {
 
     const Uri = require('@theia/core/lib/common/uri');
     const { QuickFileOpenService } = require('@theia/file-search/lib/browser/quick-file-open');
+    const { QuickFileSelectService } = require('@theia/file-search/lib/browser/quick-file-select-service');
     const { CancellationTokenSource } = require('@theia/core/lib/common/cancellation');
 
     /** @type {import('inversify').Container} */
     const container = window['theia'].container;
     const quickFileOpenService = container.get(QuickFileOpenService);
+    const quickFileSelectService = container.get(QuickFileSelectService);
 
     describe('quick-file-open', () => {
 
         describe('#compareItems', () => {
+
+            const sortByCompareItems = (a, b) => quickFileSelectService['compareItems'](a, b, quickFileOpenService['filterAndRange'].filter);
 
             it('should compare two quick-open-items by `label`', () => {
 
@@ -38,9 +42,9 @@ describe('file-search', function () {
                 /** @type import ('@theia/file-search/lib/browser/quick-file-open').FileQuickPickItem*/
                 const b = { label: 'b', uri: new Uri.default('a') };
 
-                assert.equal(quickFileOpenService['compareItems'](a, b), 1, 'a should be before b');
-                assert.equal(quickFileOpenService['compareItems'](b, a), -1, 'a should be before b');
-                assert.equal(quickFileOpenService['compareItems'](a, a), 0, 'items should be equal');
+                assert.deepEqual([a, b].sort(sortByCompareItems), [a, b], 'a should be before b');
+                assert.deepEqual([b, a].sort(sortByCompareItems), [a, b], 'a should be before b');
+                assert.equal(quickFileSelectService['compareItems'](a, a, quickFileOpenService['filterAndRange'].filter), 0, 'items should be equal');
             });
 
             it('should compare two quick-open-items by `uri`', () => {
@@ -49,10 +53,23 @@ describe('file-search', function () {
                 const a = { label: 'a', uri: new Uri.default('a') };
                 /** @type import ('@theia/file-search/lib/browser/quick-file-open').FileQuickPickItem*/
                 const b = { label: 'a', uri: new Uri.default('b') };
+                assert.deepEqual([a, b].sort(sortByCompareItems), [a, b], 'a should be before b');
+                assert.deepEqual([b, a].sort(sortByCompareItems), [a, b], 'a should be before b');
+                assert.equal(sortByCompareItems(a, a), 0, 'items should be equal');
+            });
 
-                assert.equal(quickFileOpenService['compareItems'](a, b), 1, 'a should be before b');
-                assert.equal(quickFileOpenService['compareItems'](b, a), -1, 'a should be before b');
-                assert.equal(quickFileOpenService['compareItems'](a, a), 0, 'items should be equal');
+            it('should not place very good matches above exact matches', () => {
+                const exactMatch = 'almost_absurdly_long_file_name_with_many_parts.file';
+                const veryGoodMatch = 'almost_absurdly_long_file_name_with_many_parts_plus_one.file';
+                quickFileOpenService['filterAndRange'] = { filter: exactMatch };
+                /** @type import ('@theia/file-search/lib/browser/quick-file-open').FileQuickPickItem*/
+                const a = { label: exactMatch, uri: new Uri.default(exactMatch) };
+                /** @type import ('@theia/file-search/lib/browser/quick-file-open').FileQuickPickItem*/
+                const b = { label: veryGoodMatch, uri: new Uri.default(veryGoodMatch) };
+                assert.deepEqual([a, b].sort(sortByCompareItems), [a, b], 'a should be before b');
+                assert.deepEqual([b, a].sort(sortByCompareItems), [a, b], 'a should be before b');
+                assert.equal(sortByCompareItems(a, a), 0, 'items should be equal');
+                quickFileOpenService['filterAndRange'] = quickFileOpenService['filterAndRangeDefault'];
             });
 
         });

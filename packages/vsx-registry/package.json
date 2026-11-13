@@ -1,25 +1,22 @@
 {
   "name": "@theia/vsx-registry",
-  "version": "1.18.0",
+  "version": "1.77.0",
   "description": "Theia - VSX Registry",
+  "type": "module",
   "dependencies": {
-    "@theia/core": "1.18.0",
-    "@theia/filesystem": "1.18.0",
-    "@theia/ovsx-client": "1.18.0",
-    "@theia/plugin-ext": "1.18.0",
-    "@theia/plugin-ext-vscode": "1.18.0",
-    "@theia/preferences": "1.18.0",
-    "@theia/workspace": "1.18.0",
-    "@types/bent": "^7.0.1",
-    "@types/sanitize-html": "^2.3.1",
-    "@types/showdown": "^1.7.1",
-    "bent": "^7.1.0",
+    "@theia/core": "1.77.0",
+    "@theia/filesystem": "1.77.0",
+    "@theia/navigator": "1.77.0",
+    "@theia/ovsx-client": "1.77.0",
+    "@theia/plugin-ext": "1.77.0",
+    "@theia/plugin-ext-vscode": "1.77.0",
+    "@theia/preferences": "1.77.0",
+    "@theia/workspace": "1.77.0",
+    "limiter": "^2.1.0",
+    "luxon": "^2.5.2",
     "p-debounce": "^2.1.0",
-    "requestretry": "^3.1.0",
-    "sanitize-html": "^2.3.2",
-    "semver": "^5.4.1",
-    "showdown": "^1.9.1",
-    "uuid": "^8.0.0"
+    "semver": "^7.8.5",
+    "tslib": "^2.8.1"
   },
   "publishConfig": {
     "access": "public"
@@ -29,11 +26,18 @@
   ],
   "theiaExtensions": [
     {
+      "frontend": "lib/common/vsx-registry-common-module",
+      "backend": "lib/common/vsx-registry-common-module"
+    },
+    {
       "frontend": "lib/browser/vsx-registry-frontend-module",
       "backend": "lib/node/vsx-registry-backend-module"
+    },
+    {
+      "frontendOnly": "lib/browser-only/vsx-registry-frontend-only-module"
     }
   ],
-  "license": "EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0",
+  "license": "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/eclipse-theia/theia.git"
@@ -55,9 +59,19 @@
     "watch": "theiaext watch"
   },
   "devDependencies": {
-    "@theia/ext-scripts": "1.18.0"
+    "@theia/ext-scripts": "1.77.0",
+    "@types/luxon": "^2.4.0"
   },
   "nyc": {
     "extends": "../../configs/nyc.json"
+  },
+  "gitHead": "21358137e41342742707f660b8e222f940a27652",
+  "exports": {
+    "./package.json": "./package.json",
+    "./lib/common": "./lib/common/index.js",
+    "./lib/*.json": "./lib/*.json",
+    "./lib/*.js": "./lib/*.js",
+    "./lib/*": "./lib/*.js",
+    "./*": "./*"
   }
 }

@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import {
     PLUGIN_RPC_CONTEXT,
@@ -20,16 +20,17 @@ import {
     TasksMain,
     TaskDto,
     TaskExecutionDto
-} from '../../common/plugin-api-rpc';
+} from '../../common/plugin-api-rpc.js';
 import * as theia from '@theia/plugin';
-import * as converter from '../type-converters';
-import { CustomExecution, Disposable } from '../types-impl';
-import { RPCProtocol, ConnectionClosedError } from '../../common/rpc-protocol';
-import { TaskProviderAdapter } from './task-provider';
+import * as converter from '../type-converters.js';
+import { CustomExecution, Disposable } from '../types-impl.js';
+import { RPCProtocol } from '../../common/rpc-protocol.js';
+import { TaskProviderAdapter } from './task-provider.js';
 import { Emitter, Event } from '@theia/core/lib/common/event';
-import { TerminalServiceExtImpl } from '../terminal-ext';
-import { UUID } from '@theia/core/shared/@phosphor/coreutils';
+import { TerminalServiceExtImpl } from '../terminal-ext.js';
+import { UUID } from '@theia/core/shared/@lumino/coreutils';
 import { CancellationToken } from '@theia/core/lib/common/cancellation';
+import { WorkspaceExtImpl } from '../workspace.js';
 
 type ExecutionCallback = (resolvedDefinition: theia.TaskDefinition) => Thenable<theia.Pseudoterminal>;
 export class TasksExtImpl implements TasksExt {
@@ -43,21 +44,17 @@ export class TasksExtImpl implements TasksExt {
     protected customExecutionIds: Map<ExecutionCallback, string> = new Map();
     protected customExecutionFunctions: Map<string, ExecutionCallback> = new Map();
     protected lastStartedTask: number | undefined;
+    protected executeRequestId = 0;
+    /** The tasks passed to `executeTask`, by request id, until the request completes. */
+    protected pendingExecuteRequests = new Map<number, theia.Task>();
 
     private readonly onDidExecuteTask: Emitter<theia.TaskStartEvent> = new Emitter<theia.TaskStartEvent>();
     private readonly onDidTerminateTask: Emitter<theia.TaskEndEvent> = new Emitter<theia.TaskEndEvent>();
     private readonly onDidExecuteTaskProcess: Emitter<theia.TaskProcessStartEvent> = new Emitter<theia.TaskProcessStartEvent>();
     private readonly onDidTerminateTaskProcess: Emitter<theia.TaskProcessEndEvent> = new Emitter<theia.TaskProcessEndEvent>();
 
-    private disposed = false;
-
-    constructor(rpc: RPCProtocol, readonly terminalExt: TerminalServiceExtImpl) {
+    constructor(rpc: RPCProtocol, readonly terminalExt: TerminalServiceExtImpl, protected readonly workspaceExt: WorkspaceExtImpl) {
         this.proxy = rpc.getProxy(PLUGIN_RPC_CONTEXT.TASKS_MAIN);
-        this.fetchTaskExecutions();
-    }
-
-    dispose(): void {
-        this.disposed = true;
     }
 
     get taskExecutions(): ReadonlyArray<theia.TaskExecution> {
@@ -71,7 +68,7 @@ export class TasksExtImpl implements TasksExt {
     async $onDidStartTask(execution: TaskExecutionDto, terminalId: number): Promise<void> {
         const customExecution = this.customExecutionFunctions.get(execution.task.executionId || '');
         if (customExecution) {
-            const taskDefinition = converter.toTask(execution.task).definition;
+            const taskDefinition = converter.toTaskDefinition(execution.task);
             const pty = await customExecution(taskDefinition);
             this.terminalExt.attachPtyToTerminal(terminalId, pty);
             if (pty.onDidClose) {
@@ -84,9 +81,11 @@ export class TasksExtImpl implements TasksExt {
         }
         this.lastStartedTask = execution.id;
 
-        this.onDidExecuteTask.fire({
-            execution: this.getTaskExecution(execution)
-        });
+        const executedTask = execution.executeRequestId === undefined ? undefined : this.pendingExecuteRequests.get(execution.executeRequestId);
+        const taskExecution = this.getTaskExecution(execution, executedTask);
+        if (taskExecution) {
+            this.onDidExecuteTask.fire({ execution: taskExecution });
+        }
     }
 
     get onDidEndTask(): Event<theia.TaskEndEvent> {
@@ -96,7 +95,8 @@ export class TasksExtImpl implements TasksExt {
     $onDidEndTask(id: number): void {
         const taskExecution = this.executions.get(id);
         if (!taskExecution) {
-            throw new Error(`Task execution with id ${id} is not found`);
+            // No start event was fired for this execution, e.g. because its scope is not in a workspace folder.
+            return;
         }
 
         this.executions.delete(id);
@@ -111,10 +111,10 @@ export class TasksExtImpl implements TasksExt {
     }
 
     $onDidStartTaskProcess(processId: number, executionDto: TaskExecutionDto): void {
-        this.onDidExecuteTaskProcess.fire({
-            processId,
-            execution: this.getTaskExecution(executionDto)
-        });
+        const execution = this.getTaskExecution(executionDto);
+        if (execution) {
+            this.onDidExecuteTaskProcess.fire({ processId, execution });
+        }
     }
 
     get onDidEndTaskProcess(): Event<theia.TaskProcessEndEvent> {
@@ -124,7 +124,7 @@ export class TasksExtImpl implements TasksExt {
     $onDidEndTaskProcess(exitCode: number, taskId: number): void {
         const taskExecution = this.executions.get(taskId);
         if (!taskExecution) {
-            throw new Error(`Task execution with id ${taskId} is not found`);
+            return;
         }
 
         this.onDidTerminateTaskProcess.fire({
@@ -134,7 +134,7 @@ export class TasksExtImpl implements TasksExt {
     }
 
     registerTaskProvider(type: string, provider: theia.TaskProvider): theia.Disposable {
-        const callId = this.addNewAdapter(new TaskProviderAdapter(provider));
+        const callId = this.addNewAdapter(new TaskProviderAdapter(provider, this.getWorkspaceFolder));
         this.proxy.$registerTaskProvider(callId, type);
         return this.createDisposable(callId);
     }
@@ -143,7 +143,14 @@ export class TasksExtImpl implements TasksExt {
         const taskVersion = filter ? filter.version : undefined;
         const taskType = filter ? filter.type : undefined;
         const taskDtos = await this.proxy.$fetchTasks(taskVersion, taskType);
-        return taskDtos.map(dto => converter.toTask(dto));
+        const result: theia.Task[] = [];
+        for (const dto of taskDtos) {
+            const task = converter.toTask(dto, this.getWorkspaceFolder);
+            if (task) {
+                result.push(task);
+            }
+        }
+        return result;
     }
 
     async executeTask(task: theia.Task): Promise<theia.TaskExecution> {
@@ -155,47 +162,57 @@ export class TasksExtImpl implements TasksExt {
             if (CustomExecution.is(task.execution!)) {
                 taskDto.executionId = this.addCustomExecution(task.execution!.callback);
             }
-            const executionDto = await this.proxy.$executeTask(taskDto);
-            if (executionDto) {
-                const taskExecution = this.getTaskExecution(executionDto);
-                return taskExecution;
+            const executeRequestId = this.executeRequestId++;
+            this.pendingExecuteRequests.set(executeRequestId, task);
+            try {
+                const executionDto = await this.proxy.$executeTask(taskDto, executeRequestId);
+                if (executionDto) {
+                    return this.getTaskExecution(executionDto, task)!;
+                }
+            } finally {
+                this.pendingExecuteRequests.delete(executeRequestId);
             }
             throw new Error('Run task config does not return after being started');
         }
         throw new Error('Task was not successfully transformed into a task config');
     }
 
-    $provideTasks(handle: number): Promise<TaskDto[] | undefined> {
+    async $provideTasks(handle: number): Promise<TaskDto[]> {
         const adapter = this.adaptersMap.get(handle);
         if (adapter) {
             return adapter.provideTasks(CancellationToken.None).then(tasks => {
-                if (tasks) {
-                    for (const task of tasks) {
-                        if (task.taskType === 'customExecution') {
-                            task.executionId = this.addCustomExecution(task.callback);
-                            task.callback = undefined;
-                        }
+                for (const task of tasks) {
+                    if (task.executionType === 'customExecution') {
+                        this.applyCustomExecution(task);
                     }
                 }
                 return tasks;
             });
         } else {
-            return Promise.reject(new Error('No adapter found to provide tasks'));
+            throw new Error('No adapter found to provide tasks');
         }
     }
 
-    $resolveTask(handle: number, task: TaskDto, token: theia.CancellationToken): Promise<TaskDto | undefined> {
+    async $resolveTask(handle: number, task: TaskDto, token: theia.CancellationToken): Promise<TaskDto> {
         const adapter = this.adaptersMap.get(handle);
         if (adapter) {
             return adapter.resolveTask(task, token).then(resolvedTask => {
-                if (resolvedTask && resolvedTask.taskType === 'customExecution') {
-                    resolvedTask.executionId = this.addCustomExecution(resolvedTask.callback);
-                    resolvedTask.callback = undefined;
+                // ensure we do not lose task type and execution id during resolution as we need it for custom execution
+                resolvedTask.executionType = resolvedTask.executionType ?? task.executionType;
+                if (resolvedTask.executionType === 'customExecution') {
+                    this.applyCustomExecution(resolvedTask);
                 }
                 return resolvedTask;
             });
         } else {
-            return Promise.reject(new Error('No adapter found to resolve task'));
+            throw new Error('No adapter found to resolve task');
+        }
+    }
+
+    private applyCustomExecution(task: TaskDto): void {
+        if (task.callback) {
+            task.executionId = this.addCustomExecution(task.callback);
+            task.callback = undefined;
         }
     }
 
@@ -216,27 +233,30 @@ export class TasksExtImpl implements TasksExt {
         });
     }
 
-    private async fetchTaskExecutions(): Promise<void> {
-        try {
-            const taskExecutions = await this.proxy.$taskExecutions();
-            taskExecutions.forEach(execution => this.getTaskExecution(execution));
-        } catch (error) {
-            if (this.disposed && ConnectionClosedError.is(error)) {
-                return;
-            }
-            console.error(`Can not fetch running tasks: ${error}`);
-        }
+    // Initial `this.executions` map with the running tasks from the previous session
+    async $initLoadedTasks(taskExecutions: TaskExecutionDto[]): Promise<void> {
+        taskExecutions.forEach(execution => this.getTaskExecution(execution));
     }
 
-    private getTaskExecution(execution: TaskExecutionDto): theia.TaskExecution {
+    protected getWorkspaceFolder = (uri: theia.Uri): theia.WorkspaceFolder | undefined => this.workspaceExt.getWorkspaceFolder(uri);
+
+    /**
+     * @param task the task of the execution, if the caller has it, so that it doesn't need to be converted from the DTO
+     * @returns the execution, or `undefined` if its task is scoped to a folder that is not in a workspace folder
+     */
+    private getTaskExecution(execution: TaskExecutionDto, task?: theia.Task): theia.TaskExecution | undefined {
         const executionId = execution.id;
         let result: theia.TaskExecution | undefined = this.executions.get(executionId);
         if (result) {
             return result;
         }
 
+        task = task ?? converter.toTask(execution.task, this.getWorkspaceFolder);
+        if (!task) {
+            return undefined;
+        }
         result = {
-            task: converter.toTask(execution.task),
+            task,
             terminate: () => {
                 this.proxy.$terminateTask(executionId);
             }

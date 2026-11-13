@@ -1,0 +1,613 @@
+// *****************************************************************************
+// Copyright (C) 2024 TypeFox GmbH.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+
+import {
+    LanguageModel,
+    LanguageModelParsedResponse,
+    LanguageModelMessage,
+    LanguageModelResponse,
+    LanguageModelStreamResponse,
+    LanguageModelStreamResponsePart,
+    ReasoningSettings,
+    ReasoningSupport,
+    ExecutableTool,
+    ToolCall,
+    ToolCallExecutor,
+    ToolCallResult,
+    ToolInvocationContext,
+    ToolRequest,
+    ToolRequestParameterProperty,
+    ToolRequestParametersProperties,
+    ImageContent,
+    formatToolCallContentForModel,
+    LanguageModelRequest,
+    LanguageModelStatus,
+    LanguageModelTextResponse,
+    UserRequest
+} from '@theia/ai-core';
+import { CancellationToken, ILogger } from '@theia/core';
+import { inject, injectable, named, postConstruct } from '@theia/core/shared/inversify';
+import { ChatRequest, Message, Ollama, Options, Tool, ToolCall as OllamaToolCall } from 'ollama';
+import { createProxyFetch } from '@theia/ai-core/lib/node';
+import { ollamaThinkParamFor } from './ollama-reasoning.js';
+
+export const OllamaModelIdentifier = Symbol('OllamaModelIdentifier');
+
+export interface OllamaModelParams {
+    id: string;
+    model: string;
+    status: LanguageModelStatus;
+    host: () => string | undefined;
+    proxy?: string;
+    reasoningSupport?: ReasoningSupport;
+}
+
+export const OllamaModelParams = Symbol('OllamaModelParams');
+
+export const OllamaLanguageModelFactory = Symbol('OllamaLanguageModelFactory');
+export type OllamaLanguageModelFactory = (params: OllamaModelParams) => OllamaModel;
+
+@injectable()
+export class OllamaModel implements LanguageModel {
+
+    protected readonly DEFAULT_REQUEST_SETTINGS: Partial<Omit<ChatRequest, 'stream' | 'model'>> = {
+        keep_alive: '15m',
+        // options see: https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values
+        options: {}
+    };
+
+    readonly providerId = 'ollama';
+    readonly vendor: string = 'Ollama';
+
+    id: string;
+    protected model: string;
+    status: LanguageModelStatus;
+    protected host: () => string | undefined;
+    proxy?: string;
+    reasoningSupport?: ReasoningSupport;
+
+    @inject(OllamaModelParams)
+    protected readonly params: OllamaModelParams;
+
+    @inject(ToolCallExecutor)
+    protected readonly toolCallExecutor: ToolCallExecutor;
+
+    @inject(ILogger) @named('ai-ollama:OllamaModel')
+    protected readonly logger: ILogger;
+
+    @postConstruct()
+    protected init(): void {
+        const params = this.params;
+        this.id = params.id;
+        this.model = params.model;
+        this.status = params.status;
+        this.host = params.host;
+        this.proxy = params.proxy;
+        this.reasoningSupport = params.reasoningSupport;
+    }
+
+    async request(request: UserRequest, cancellationToken?: CancellationToken): Promise<LanguageModelResponse> {
+        const settings = this.getSettings(request);
+        const ollama = this.initializeOllama();
+        const stream = !(request.settings?.stream === false); // true by default, false only if explicitly specified
+        const ollamaRequest: ExtendedChatRequest = {
+            model: this.model,
+            ...this.DEFAULT_REQUEST_SETTINGS,
+            ...settings,
+            messages: this.mergeConsecutiveAssistantMessages(
+                request.messages.map(m => this.toOllamaMessage(m)).filter((m): m is Message => m !== undefined)
+            ),
+            tools: request.tools?.map(t => this.toOllamaTool(t)),
+            stream
+        };
+        const structured = request.response_format?.type === 'json_schema';
+        return this.dispatchRequest(ollama, ollamaRequest, structured, cancellationToken, request.reasoning);
+    }
+
+    /**
+     * Retrieves the settings for the chat request, merging the request-specific settings with the default settings.
+     * @param request The language model request containing specific settings.
+     * @returns A partial ChatRequest object containing the merged settings.
+     */
+    protected getSettings(request: LanguageModelRequest): Partial<ChatRequest> {
+        const settings = request.settings ?? {};
+        return {
+            options: settings as Partial<Options>
+        };
+    }
+
+    protected async dispatchRequest(
+        ollama: Ollama,
+        ollamaRequest: ExtendedChatRequest,
+        structured: boolean,
+        cancellation?: CancellationToken,
+        reasoning?: ReasoningSettings
+    ): Promise<LanguageModelResponse> {
+
+        // Handle structured output request
+        if (structured) {
+            return this.handleStructuredOutputRequest(ollama, ollamaRequest);
+        }
+
+        if (isNonStreaming(ollamaRequest)) {
+            // handle non-streaming request
+            return this.handleNonStreamingRequest(ollama, ollamaRequest, cancellation, reasoning);
+        }
+
+        // handle streaming request
+        return this.handleStreamingRequest(ollama, ollamaRequest, cancellation, reasoning);
+    }
+
+    protected async handleStreamingRequest(
+        ollama: Ollama,
+        chatRequest: ExtendedChatRequest,
+        cancellation?: CancellationToken,
+        reasoning?: ReasoningSettings
+    ): Promise<LanguageModelStreamResponse> {
+        const supportsThinking = await this.checkThinkingSupport(ollama, chatRequest.model);
+        const thinkParam = supportsThinking ? this.getThinkingParameter(reasoning, chatRequest.model) : false;
+        const responseStream = await ollama.chat({
+            ...chatRequest,
+            stream: true,
+            think: thinkParam
+        });
+
+        cancellation?.onCancellationRequested(() => {
+            responseStream.abort();
+        });
+
+        const that = this;
+
+        const asyncIterator = {
+            async *[Symbol.asyncIterator](): AsyncIterator<LanguageModelStreamResponsePart> {
+                // Process the response stream and collect thinking, content messages, and tool calls.
+                // Tool calls are handled when the response stream is done.
+                const toolCalls: OllamaToolCall[] = [];
+                let currentContent = '';
+                let currentThought = '';
+
+                // Ollama does not have ids, so we use the most recent chunk.created_at timestamp as repalcement
+                let lastUpdated: Date = new Date();
+
+                try {
+                    for await (const chunk of responseStream) {
+                        lastUpdated = chunk.created_at;
+
+                        const thought = chunk.message.thinking;
+                        if (thought) {
+                            currentThought += thought;
+                            yield { thought, signature: '' };
+                        }
+                        const textContent = chunk.message.content;
+                        if (textContent) {
+                            currentContent += textContent;
+                            yield { content: textContent };
+                        }
+
+                        if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
+                            toolCalls.push(...chunk.message.tool_calls);
+                        }
+
+                        if (chunk.done) {
+                            if (chunk.prompt_eval_count !== undefined && chunk.eval_count !== undefined) {
+                                yield { input_tokens: chunk.prompt_eval_count, output_tokens: chunk.eval_count };
+                            }
+                            if (chunk.done_reason && chunk.done_reason !== 'stop' && chunk.done_reason !== 'tool_calls') {
+                                throw new Error('Ollama stopped unexpectedly. Reason: ' + chunk.done_reason);
+                            }
+                        }
+                    }
+
+                    if (toolCalls && toolCalls.length > 0) {
+                        chatRequest.messages.push({
+                            role: 'assistant',
+                            content: currentContent,
+                            thinking: currentThought,
+                            tool_calls: toolCalls
+                        });
+
+                        // Create tool call message parts and yield them.
+                        // This is required because when calling a tool, Theia AI expects the corresponding message part to exist.
+                        const toolCallsForResponse = that.createToolCalls(toolCalls, lastUpdated);
+                        yield { tool_calls: toolCallsForResponse };
+
+                        // Now handle the tool calls
+                        const processedToolCallsForResponse = await that.processToolCalls(toolCallsForResponse, chatRequest, cancellation);
+                        yield { tool_calls: processedToolCallsForResponse };
+
+                        // Continue the conversation with tool results
+                        const continuedResponse = await that.handleStreamingRequest(
+                            ollama,
+                            chatRequest,
+                            cancellation,
+                            reasoning
+                        );
+
+                        // Stream the continued response
+                        for await (const nestedEvent of continuedResponse.stream) {
+                            yield nestedEvent;
+                        }
+                    }
+                } catch (error) {
+                    that.logger.error('Error in Ollama streaming:', error.message);
+                    throw error;
+                }
+            }
+        };
+
+        return { stream: asyncIterator };
+    }
+
+    /**
+     * Check if the Ollama server supports thinking.
+     *
+     * Use the Ollama 'show' request to get information about the model, so we can check the capabilities for the 'thinking' capability.
+     *
+     * @param ollama The Ollama client instance.
+     * @param model The name of the Ollama model.
+     * @returns A boolean indicating whether the Ollama model supports thinking.
+     */
+    protected async checkThinkingSupport(ollama: Ollama, model: string): Promise<boolean> {
+        const result = await ollama.show({ model });
+        return result?.capabilities?.includes('thinking') || false;
+    }
+
+    protected getThinkingParameter(reasoning: ReasoningSettings | undefined, model: string): boolean | 'low' | 'medium' | 'high' {
+        return ollamaThinkParamFor(reasoning?.level, this.requiresEffortLevel(model));
+    }
+
+    /** Checks if the model requires effort levels instead of a boolean for `think`. */
+    protected requiresEffortLevel(model: string): boolean {
+        return model.toLowerCase().includes('gpt-oss');
+    }
+
+    protected async handleStructuredOutputRequest(ollama: Ollama, chatRequest: ChatRequest): Promise<LanguageModelParsedResponse> {
+        const response = await ollama.chat({
+            ...chatRequest,
+            format: 'json',
+            stream: false,
+        });
+        try {
+            const result: LanguageModelParsedResponse = {
+                content: response.message.content,
+                parsed: JSON.parse(response.message.content)
+            };
+            if (response.prompt_eval_count !== undefined && response.eval_count !== undefined) {
+                result.usage = { input_tokens: response.prompt_eval_count, output_tokens: response.eval_count };
+            }
+            return result;
+        } catch (error) {
+            this.logger.warn('Failed to parse structured response from the language model.', error);
+            const result: LanguageModelParsedResponse = {
+                content: response.message.content,
+                parsed: {}
+            };
+            if (response.prompt_eval_count !== undefined && response.eval_count !== undefined) {
+                result.usage = { input_tokens: response.prompt_eval_count, output_tokens: response.eval_count };
+            }
+            return result;
+        }
+    }
+
+    protected async handleNonStreamingRequest(
+        ollama: Ollama,
+        chatRequest: ExtendedNonStreamingChatRequest,
+        cancellation?: CancellationToken,
+        reasoning?: ReasoningSettings
+    ): Promise<LanguageModelResponse> {
+        try {
+            // even though we have a non-streaming request, we still use the streaming version for two reasons:
+            // 1. we can abort the stream if the request is cancelled instead of having to wait for the entire response
+            // 2. we can use think: true so the Ollama API separates thinking from content and we can filter out the thoughts in the response
+            const supportsThinking = await this.checkThinkingSupport(ollama, chatRequest.model);
+            const thinkParam = supportsThinking ? this.getThinkingParameter(reasoning, chatRequest.model) : false;
+            const responseStream = await ollama.chat({ ...chatRequest, stream: true, think: thinkParam });
+            cancellation?.onCancellationRequested(() => {
+                responseStream.abort();
+            });
+
+            const toolCalls: OllamaToolCall[] = [];
+            let content = '';
+            let lastUpdated: Date = new Date();
+            let inputTokenCount: number | undefined;
+            let outputTokenCount: number | undefined;
+
+            // process the response stream
+            for await (const chunk of responseStream) {
+                // if the response contains content, append it to the result
+                const textContent = chunk.message.content;
+                if (textContent) {
+                    content += textContent;
+                }
+
+                // record requested tool calls so we can process them later
+                if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
+                    toolCalls.push(...chunk.message.tool_calls);
+                }
+
+                // if the response is done, capture token usage and check the done reason
+                if (chunk.done) {
+                    lastUpdated = chunk.created_at;
+                    inputTokenCount = chunk.prompt_eval_count;
+                    outputTokenCount = chunk.eval_count;
+                    if (chunk.done_reason && chunk.done_reason !== 'stop' && chunk.done_reason !== 'tool_calls') {
+                        throw new Error('Ollama stopped unexpectedly. Reason: ' + chunk.done_reason);
+                    }
+                }
+            }
+
+            // process any tool calls by adding all of them to the messages of the conversation
+            if (toolCalls && toolCalls.length > 0) {
+                chatRequest.messages.push({
+                    role: 'assistant',
+                    content: content,
+                    tool_calls: toolCalls
+                });
+
+                const preparedToolCalls = this.createToolCalls(toolCalls, lastUpdated);
+                await this.processToolCalls(preparedToolCalls, chatRequest, cancellation);
+                if (cancellation?.isCancellationRequested) {
+                    return { text: '' };
+                }
+
+                // recurse to get the final response content (the intermediate content remains hidden, it is only part of the conversation)
+                return this.handleNonStreamingRequest(ollama, chatRequest, cancellation, reasoning);
+            }
+
+            // if no tool calls are necessary, return the final response content
+            const result: LanguageModelTextResponse = { text: content };
+            if (inputTokenCount !== undefined && outputTokenCount !== undefined) {
+                result.usage = { input_tokens: inputTokenCount, output_tokens: outputTokenCount };
+            }
+            return result;
+        } catch (error) {
+            this.logger.error('Error in ollama call:', error.message);
+            throw error;
+        }
+    }
+
+    private createToolCalls(toolCalls: OllamaToolCall[], lastUpdated: Date): ToolCall[] {
+        const toolCallsForResponse: ToolCall[] = [];
+        for (const [idx, toolCall] of toolCalls.entries()) {
+            const args = JSON.stringify(toolCall.function?.arguments);
+            toolCallsForResponse.push({
+                id: `ollama_${lastUpdated}_${idx}`,
+                function: {
+                    name: toolCall.function.name,
+                    arguments: args
+                },
+                finished: false
+            });
+        }
+        return toolCallsForResponse;
+    }
+
+    protected async processToolCalls(toolCalls: ToolCall[], chatRequest: ExtendedChatRequest, cancellation?: CancellationToken): Promise<ToolCall[]> {
+        const tools: ToolWithHandler[] = chatRequest.tools ?? [];
+        // The tools have already been converted for Ollama, so only the `ExecutableTool` shape is recovered here.
+        const executableTools: ExecutableTool[] = tools.map(tool => ({
+            name: tool.function.name ?? '',
+            handler: async (argString: string, ctx?: ToolInvocationContext) => (await tool.handler(argString, ctx)) as ToolCallResult
+        }));
+
+        const results = await this.toolCallExecutor.executeToolCalls(
+            toolCalls.map(call => ({ id: call.id ?? call.function!.name!, name: call.function!.name!, arguments: call.function!.arguments! })),
+            executableTools,
+            { cancellationToken: cancellation }
+        );
+
+        // Build the messages and response entries from the input-ordered results so that the
+        // next turn sees a deterministic ordering.
+        const toolCallsForResponse: ToolCall[] = [];
+        toolCalls.forEach((call, index) => {
+            const outcome = results[index];
+            const funcResult = outcome.notFound
+                ? 'error: Tool not found'
+                : typeof outcome.result === 'string' ? outcome.result : JSON.stringify(outcome.result);
+
+            chatRequest.messages.push({
+                role: 'tool',
+                content: `Tool call ${call.function!.name} returned: ${String(funcResult)}`,
+            });
+
+            // update tool call message
+            toolCallsForResponse.push({
+                ...call,
+                result: String(funcResult),
+                finished: true
+            });
+        });
+        return toolCallsForResponse;
+    }
+
+    protected initializeOllama(): Ollama {
+        const host = this.host();
+        if (!host) {
+            throw new Error('Please provide OLLAMA_HOST in preferences or via environment variable');
+        }
+        return new Ollama({ host: host, fetch: createProxyFetch(this.proxy) });
+    }
+
+    protected toOllamaTool(tool: ToolRequest): ToolWithHandler {
+        return {
+            type: 'function',
+            function: {
+                name: tool.name,
+                description: tool.description ?? 'Tool named ' + tool.name,
+                parameters: {
+                    ...(tool.parameters as unknown as Record<string, unknown>),
+                    type: tool.parameters?.type ?? 'object',
+                    required: tool.parameters?.required ?? [],
+                    properties: this.transformProperties(tool.parameters?.properties) ?? {}
+                },
+            },
+            handler: tool.handler
+        };
+    }
+
+    // Flatten anyOf by merging the first non-null branch into the top-level prop so that
+    // fields carried by the branch (e.g. items, properties) are visible to the callers.
+    protected normalizeProp(prop: ToolRequestParameterProperty): ToolRequestParameterProperty {
+        if (!prop.anyOf) { return prop; }
+        const nonNull = prop.anyOf.find(p => p.type && p.type !== 'null');
+        if (!nonNull) { return prop; }
+        const merged = { ...nonNull, ...prop };
+        delete (merged as Record<string, unknown>)['anyOf'];
+        return merged as ToolRequestParameterProperty;
+    }
+
+    protected recurseProperties(raw: unknown): unknown {
+        return ToolRequest.isToolRequestParametersProperties(raw) ? this.transformProperties(raw) : raw;
+    }
+
+    protected transformSchema(schema: unknown): unknown {
+        if (Array.isArray(schema)) {
+            return schema.map(item => this.transformSchema(item));
+        }
+        if (schema && typeof schema === 'object') {
+            const prop = this.normalizeProp(schema as ToolRequestParameterProperty);
+            if (!prop.type) {
+                return schema;
+            }
+            return {
+                ...prop,
+                ...(prop.description !== undefined && { description: String(prop.description) }),
+                ...(prop.properties !== undefined && { properties: this.recurseProperties(prop.properties) }),
+                ...(prop.items !== undefined && { items: this.transformSchema(prop.items) }),
+            };
+        }
+        return schema;
+    }
+
+    protected transformProperties(props: ToolRequestParametersProperties | undefined): Record<string, Record<string, unknown>> | undefined {
+        if (!props) {
+            return undefined;
+        }
+        const result: Record<string, Record<string, unknown>> = {};
+        for (const [key, rawProp] of Object.entries(props)) {
+            result[key] = this.transformSchema(rawProp) as Record<string, unknown>;
+        }
+        return result;
+    }
+
+    protected toOllamaMessage(message: LanguageModelMessage): Message | undefined {
+        const result: Message = {
+            role: this.toOllamaMessageRole(message),
+            content: ''
+        };
+
+        if (LanguageModelMessage.isTextMessage(message) && message.text.length > 0) {
+            result.content = message.text;
+        } else if (LanguageModelMessage.isToolUseMessage(message)) {
+            result.tool_calls = [{ function: { name: message.name, arguments: message.input as Record<string, unknown> } }];
+        } else if (LanguageModelMessage.isToolResultMessage(message)) {
+            result.content = `Tool call ${message.name} returned: ${formatToolCallContentForModel(message.content)}`;
+        } else if (LanguageModelMessage.isThinkingMessage(message)) {
+            result.thinking = message.thinking;
+        } else if (LanguageModelMessage.isImageMessage(message) && ImageContent.isBase64(message.image)) {
+            result.images = [message.image.base64data];
+        } else if (LanguageModelMessage.isCompactionMessage(message)) {
+            // Ollama has no server-side compaction; the opaque marker carries no representable content and is dropped.
+            return undefined;
+        } else {
+            this.logger.warn(`Unknown message type encountered when converting message to Ollama format: ${JSON.stringify(message)}. Ignoring message.`);
+            return undefined;
+        }
+
+        return result;
+    }
+
+    protected mergeConsecutiveAssistantMessages(messages: Message[]): Message[] {
+        const result: Message[] = [];
+        for (const message of messages) {
+            const previous = result[result.length - 1];
+            if (previous?.role === 'assistant' && message.role === 'assistant') {
+                const merged: Message = { ...previous, role: 'assistant' };
+
+                const previousContent = previous.content;
+                const nextContent = message.content;
+                if (previousContent && nextContent) {
+                    merged.content = `${previousContent}\n${nextContent}`;
+                } else if (nextContent) {
+                    merged.content = nextContent;
+                } else if (previousContent) {
+                    merged.content = previousContent;
+                }
+
+                const previousThinking = previous.thinking;
+                const nextThinking = message.thinking;
+                if (previousThinking && nextThinking) {
+                    merged.thinking = `${previousThinking}\n${nextThinking}`;
+                } else if (nextThinking) {
+                    merged.thinking = nextThinking;
+                } else if (previousThinking) {
+                    merged.thinking = previousThinking;
+                }
+
+                const toolCalls = [...(previous.tool_calls ?? []), ...(message.tool_calls ?? [])];
+                if (toolCalls.length > 0) {
+                    merged.tool_calls = toolCalls;
+                }
+
+                result[result.length - 1] = merged;
+            } else {
+                result.push(message);
+            }
+        }
+        return result;
+    }
+
+    protected toOllamaMessageRole(message: LanguageModelMessage): string {
+        if (LanguageModelMessage.isToolResultMessage(message)) {
+            return 'tool';
+        }
+        const actor = message.actor;
+        if (actor === 'ai') {
+            return 'assistant';
+        }
+        if (actor === 'user') {
+            return 'user';
+        }
+        if (actor === 'system') {
+            return 'system';
+        }
+        this.logger.warn(`Unknown actor encountered when converting message to Ollama format: ${actor}. Falling back to 'user'.`);
+        return 'user'; // default fallback
+    }
+}
+
+/**
+ * Extended Tool containing a handler
+ * @see Tool
+ */
+type ToolWithHandler = Tool & { handler: (arg_string: string, ctx?: ToolInvocationContext) => Promise<unknown> };
+
+/**
+ * Extended chat request with mandatory messages and ToolWithHandler tools
+ *
+ * @see ChatRequest
+ * @see ToolWithHandler
+ */
+type ExtendedChatRequest = ChatRequest & {
+    messages: Message[]
+    tools?: ToolWithHandler[]
+};
+
+type ExtendedNonStreamingChatRequest = ExtendedChatRequest & { stream: false };
+
+function isNonStreaming(request: ExtendedChatRequest): request is ExtendedNonStreamingChatRequest {
+    return !request.stream;
+}

@@ -1,31 +1,33 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable, inject } from '@theia/core/shared/inversify';
+import { injectable, inject, named } from '@theia/core/shared/inversify';
 import { StatusBar } from '@theia/core/lib/browser/status-bar/status-bar';
-import { StatusBarAlignment, StatusBarEntry, FrontendApplicationContribution, PreferenceServiceImpl, PreferenceChange, codicon } from '@theia/core/lib/browser';
-import { MessageService } from '@theia/core/lib/common';
-import { CommandRegistry } from '@theia/core/shared/@phosphor/commands';
-import { Menu } from '@theia/core/shared/@phosphor/widgets';
+import { StatusBarAlignment, StatusBarEntry, FrontendApplicationContribution, OnWillStopAction, codicon } from '@theia/core/lib/browser';
+import { MessageService, PreferenceChange, PreferenceServiceImpl } from '@theia/core/lib/common';
+import { CommandRegistry } from '@theia/core/shared/@lumino/commands';
+import { Menu } from '@theia/core/shared/@lumino/widgets';
 import { FrontendApplicationStateService } from '@theia/core/lib/browser/frontend-application-state';
 import { ConnectionStatusService, ConnectionStatus } from '@theia/core/lib/browser/connection-status-service';
-import { HostedPluginServer } from '../common/plugin-dev-protocol';
-import { HostedPluginManagerClient, HostedInstanceState, HostedPluginCommands, HostedInstanceData } from './hosted-plugin-manager-client';
-import { HostedPluginLogViewer } from './hosted-plugin-log-viewer';
-import { HostedPluginPreferences } from './hosted-plugin-preferences';
+import { PluginDevServer } from '../common/plugin-dev-protocol.js';
+import { HostedPluginManagerClient, HostedInstanceState, HostedPluginCommands, HostedInstanceData } from './hosted-plugin-manager-client.js';
+import { HostedPluginLogViewer } from './hosted-plugin-log-viewer.js';
+import { HostedPluginPreferences } from '../common/hosted-plugin-preferences.js';
+import { nls } from '@theia/core/lib/common/nls';
+import { ILogger } from '@theia/core';
 
 /**
  * Adds a status bar element displaying the state of secondary Theia instance with hosted plugin and
@@ -44,8 +46,8 @@ export class HostedPluginController implements FrontendApplicationContribution {
     @inject(FrontendApplicationStateService)
     protected readonly frontendApplicationStateService: FrontendApplicationStateService;
 
-    @inject(HostedPluginServer)
-    protected readonly hostedPluginServer: HostedPluginServer;
+    @inject(PluginDevServer)
+    protected readonly hostedPluginServer: PluginDevServer;
 
     @inject(HostedPluginManagerClient)
     protected readonly hostedPluginManagerClient: HostedPluginManagerClient;
@@ -65,10 +67,30 @@ export class HostedPluginController implements FrontendApplicationContribution {
     @inject(MessageService)
     protected readonly messageService: MessageService;
 
+    @inject(ILogger) @named('plugin-dev:HostedPluginController')
+    protected readonly logger: ILogger;
+
     private pluginState: HostedInstanceState = HostedInstanceState.STOPPED;
     // used only for displaying Running instead of Watching in status bar if run of watcher fails
     private watcherSuccess: boolean;
     private entry: StatusBarEntry | undefined;
+
+    onWillStop(): OnWillStopAction | undefined {
+        if (this.pluginState === HostedInstanceState.RUNNING || this.pluginState === HostedInstanceState.STARTING) {
+            return {
+                reason: 'Hosted plugin instance is still running',
+                action: async () => {
+                    try {
+                        await this.hostedPluginManagerClient.stop(false);
+                    } catch {
+                        // Best effort — don't block shutdown if termination fails
+                    }
+                    return true;
+                }
+            };
+        }
+        return undefined;
+    }
 
     public initialize(): void {
         this.hostedPluginServer.getHostedPlugin().then(pluginMetadata => {
@@ -102,7 +124,7 @@ export class HostedPluginController implements FrontendApplicationContribution {
 
                 this.preferenceService.onPreferenceChanged(preference => this.onPreferencesChanged(preference));
             } else {
-                console.error(`Need to load plugin ${pluginMetadata.model.id}`);
+                this.logger.error(`Need to load plugin ${pluginMetadata.model.id}`);
             }
         });
     }
@@ -114,7 +136,7 @@ export class HostedPluginController implements FrontendApplicationContribution {
         this.pluginState = HostedInstanceState.STOPPED;
 
         this.entry = {
-            text: 'Hosted Plugin: Stopped $(angle-up)',
+            text: `${nls.localize('theia/plugin-dev/hostedPluginStopped', 'Hosted Plugin: Stopped')} $(angle-up)`,
             alignment: StatusBarAlignment.LEFT,
             priority: 100,
             onclick: e => {
@@ -135,7 +157,7 @@ export class HostedPluginController implements FrontendApplicationContribution {
         this.hostedPluginLogViewer.showLogConsole();
 
         this.entry = {
-            text: '$(cog~spin) Hosted Plugin: Starting',
+            text: `$(cog~spin) ${nls.localize('theia/plugin-dev/hostedPluginStarting', 'Hosted Plugin: Starting')}`,
             alignment: StatusBarAlignment.LEFT,
             priority: 100
         };
@@ -152,9 +174,9 @@ export class HostedPluginController implements FrontendApplicationContribution {
 
         let entryText: string;
         if (this.hostedPluginPreferences['hosted-plugin.watchMode'] && this.watcherSuccess) {
-            entryText = '$(cog~spin) Hosted Plugin: Watching $(angle-up)';
+            entryText = `$(cog~spin) ${nls.localize('theia/plugin-dev/hostedPluginWatching', 'Hosted Plugin: Watching')}$(angle-up)`;
         } else {
-            entryText = '$(cog~spin) Hosted Plugin: Running $(angle-up)';
+            entryText = `$(cog~spin) ${nls.localize('theia/plugin-dev/hostedPluginRunning', 'Hosted Plugin: Running')} $(angle-up)`;
         }
 
         this.entry = {
@@ -177,7 +199,7 @@ export class HostedPluginController implements FrontendApplicationContribution {
         this.pluginState = HostedInstanceState.FAILED;
 
         this.entry = {
-            text: 'Hosted Plugin: Stopped $(angle-up)',
+            text: `${nls.localize('theia/plugin-dev/hostedPluginStopped', 'Hosted Plugin: Stopped')} $(angle-up)`,
             alignment: StatusBarAlignment.LEFT,
             priority: 100,
             onclick: e => {
@@ -194,7 +216,7 @@ export class HostedPluginController implements FrontendApplicationContribution {
             if (await this.hostedPluginServer.isHostedPluginInstanceRunning()) {
                 const pluginLocation = await this.hostedPluginServer.getHostedPluginURI();
                 const isWatchCompilationRunning = await this.hostedPluginServer.isWatchCompilationRunning(pluginLocation);
-                if (preference.newValue === true) {
+                if (this.hostedPluginPreferences['hosted-plugin.watchMode']) {
                     if (!isWatchCompilationRunning) {
                         await this.runWatchCompilation(pluginLocation.toString());
                     }
@@ -258,7 +280,7 @@ export class HostedPluginController implements FrontendApplicationContribution {
             // Re-set the element only if it's visible on status bar
             if (this.entry) {
                 const offlineElement = {
-                    text: 'Hosted Plugin: Stopped',
+                    text: nls.localize('theia/plugin-dev/hostedPluginStopped', 'Hosted Plugin: Stopped'),
                     alignment: StatusBarAlignment.LEFT,
                     priority: 100
                 };
@@ -303,8 +325,8 @@ export class HostedPluginController implements FrontendApplicationContribution {
      */
     protected addCommandsForRunningPlugin(commands: CommandRegistry, menu: Menu): void {
         commands.addCommand(HostedPluginCommands.STOP.id, {
-            label: 'Stop Instance',
-            icon: codicon('debug-stop'),
+            label: nls.localize('theia/plugin-dev/stopInstance', 'Stop Instance'),
+            iconClass: codicon('debug-stop'),
             execute: () => setTimeout(() => this.hostedPluginManagerClient.stop(), 100)
         });
 
@@ -314,8 +336,8 @@ export class HostedPluginController implements FrontendApplicationContribution {
         });
 
         commands.addCommand(HostedPluginCommands.RESTART.id, {
-            label: 'Restart Instance',
-            icon: codicon('debug-restart'),
+            label: nls.localize('theia/plugin-dev/restartInstance', 'Restart Instance'),
+            iconClass: codicon('debug-restart'),
             execute: () => setTimeout(() => this.hostedPluginManagerClient.restart(), 100)
         });
 
@@ -330,8 +352,8 @@ export class HostedPluginController implements FrontendApplicationContribution {
      */
     protected addCommandsForStoppedPlugin(commands: CommandRegistry, menu: Menu): void {
         commands.addCommand(HostedPluginCommands.START.id, {
-            label: 'Start Instance',
-            icon: codicon('play'),
+            label: nls.localize('theia/plugin-dev/startInstance', 'Start Instance'),
+            iconClass: codicon('play'),
             execute: () => setTimeout(() => this.hostedPluginManagerClient.start(), 100)
         });
 
@@ -341,8 +363,8 @@ export class HostedPluginController implements FrontendApplicationContribution {
         });
 
         commands.addCommand(HostedPluginCommands.DEBUG.id, {
-            label: 'Debug Instance',
-            icon: codicon('debug'),
+            label: nls.localize('theia/plugin-dev/debugInstance', 'Debug Instance'),
+            iconClass: codicon('debug'),
             execute: () => setTimeout(() => this.hostedPluginManagerClient.debug(), 100)
         });
 

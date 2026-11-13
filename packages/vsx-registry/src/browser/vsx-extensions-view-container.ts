@@ -11,23 +11,26 @@
  * with the GNU Classpath Exception which is available at
  * https://www.gnu.org/software/classpath/license.html.
  *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
  *******************************************************************************‚*/
 
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
-import { ViewContainer, PanelLayout, ViewContainerPart, Message, codicon } from '@theia/core/lib/browser';
-import { VSXExtensionsSearchBar } from './vsx-extensions-search-bar';
-import { VSXExtensionsModel } from './vsx-extensions-model';
-import { VSXSearchMode } from './vsx-extensions-search-model';
-import { generateExtensionWidgetId } from './vsx-extensions-widget';
-import { VSXExtensionsSourceOptions } from './vsx-extensions-source';
-import { VSXExtensionsCommands } from './vsx-extension-commands';
+import { ViewContainer, PanelLayout, ViewContainerPart, Message, codicon, Widget } from '@theia/core/lib/browser';
+import { VSXExtensionsSearchBar } from './vsx-extensions-search-bar.js';
+import { VSXExtensionsModel } from './vsx-extensions-model.js';
+import { VSXSearchMode } from './vsx-extensions-search-model.js';
+import { generateExtensionWidgetId } from './vsx-extensions-widget.js';
+import { VSXExtensionsSourceOptions } from './vsx-extensions-source.js';
+import { VSXExtensionsCommands } from './vsx-extension-commands.js';
+import { nls } from '@theia/core/lib/common/nls';
 
 @injectable()
 export class VSXExtensionsViewContainer extends ViewContainer {
 
     static ID = 'vsx-extensions-view-container';
-    static LABEL = 'Extensions';
+    static LABEL = nls.localizeByDefault('Extensions');
+
+    override disableDNDBetweenContainers = true;
 
     @inject(VSXExtensionsSearchBar)
     protected readonly searchBar: VSXExtensionsSearchBar;
@@ -36,7 +39,7 @@ export class VSXExtensionsViewContainer extends ViewContainer {
     protected readonly model: VSXExtensionsModel;
 
     @postConstruct()
-    protected init(): void {
+    protected override init(): void {
         super.init();
         this.id = VSXExtensionsViewContainer.ID;
         this.addClass('theia-vsx-extensions-view-container');
@@ -48,17 +51,17 @@ export class VSXExtensionsViewContainer extends ViewContainer {
         });
     }
 
-    protected onActivateRequest(msg: Message): void {
+    protected override onActivateRequest(msg: Message): void {
         this.searchBar.activate();
     }
 
-    protected onAfterAttach(msg: Message): void {
-        super.onBeforeAttach(msg);
+    protected override onAfterAttach(msg: Message): void {
+        super.onAfterAttach(msg);
         this.updateMode();
         this.toDisposeOnDetach.push(this.model.search.onDidChangeQuery(() => this.updateMode()));
     }
 
-    protected configureLayout(layout: PanelLayout): void {
+    protected override configureLayout(layout: PanelLayout): void {
         layout.addWidget(this.searchBar);
         super.configureLayout(layout);
     }
@@ -95,7 +98,7 @@ export class VSXExtensionsViewContainer extends ViewContainer {
         }
     }
 
-    protected registerPart(part: ViewContainerPart): void {
+    protected override registerPart(part: ViewContainerPart): void {
         super.registerPart(part);
         this.applyModeToPart(part);
     }
@@ -132,7 +135,7 @@ export class VSXExtensionsViewContainer extends ViewContainer {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    protected doStoreState(): any {
+    protected override doStoreState(): any {
         const modes: VSXExtensionsViewContainer.State['modes'] = {};
         for (const mode of this.lastModeState.keys()) {
             modes[mode] = this.lastModeState.get(mode);
@@ -144,7 +147,7 @@ export class VSXExtensionsViewContainer extends ViewContainer {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    protected doRestoreState(state: any): void {
+    protected override doRestoreState(state: any): void {
         // eslint-disable-next-line guard-for-in
         for (const key in state.modes) {
             const mode = Number(key) as VSXSearchMode;
@@ -156,14 +159,36 @@ export class VSXExtensionsViewContainer extends ViewContainer {
         this.model.search.query = state.query;
     }
 
-    protected updateToolbarItems(allParts: ViewContainerPart[]): void {
+    protected override updateToolbarItems(allParts: ViewContainerPart[]): void {
         super.updateToolbarItems(allParts);
-        this.registerToolbarItem(VSXExtensionsCommands.INSTALL_FROM_VSIX.id, { tooltip: VSXExtensionsCommands.INSTALL_FROM_VSIX.label, group: 'other_1' });
-        this.registerToolbarItem(VSXExtensionsCommands.CLEAR_ALL.id, { tooltip: VSXExtensionsCommands.CLEAR_ALL.label, priority: 1, onDidChange: this.model.onDidChange });
+        this.toDisposeOnUpdateTitle.push(this.toolbarRegistry.registerItem({
+            id: VSXExtensionsCommands.INSTALL_FROM_VSIX.id,
+            command: VSXExtensionsCommands.INSTALL_FROM_VSIX.id,
+            text: VSXExtensionsCommands.INSTALL_FROM_VSIX.label,
+            group: 'other_1',
+            isVisible: (widget: Widget) => widget === this.getTabBarDelegate()
+        }));
+
+        this.toDisposeOnUpdateTitle.push(this.toolbarRegistry.registerItem({
+            id: VSXExtensionsCommands.CLEAR_ALL.id,
+            command: VSXExtensionsCommands.CLEAR_ALL.id,
+            text: VSXExtensionsCommands.CLEAR_ALL.label,
+            priority: 1,
+            onDidChange: this.model.onDidChange,
+            isVisible: (widget: Widget) => widget === this.getTabBarDelegate()
+        }));
+
+        this.toDisposeOnUpdateTitle.push(this.toolbarRegistry.registerItem({
+            id: VSXExtensionsCommands.REFRESH.id,
+            command: VSXExtensionsCommands.REFRESH.id,
+            tooltip: VSXExtensionsCommands.REFRESH.label,
+            priority: 2,
+            isVisible: (widget: Widget) => widget === this.getTabBarDelegate()
+        }));
     }
 
-    protected getToggleVisibilityGroupLabel(): string {
-        return 'a/Views';
+    protected override getToggleVisibilityGroupLabel(): string {
+        return nls.localizeByDefault('Views');
     }
 }
 export namespace VSXExtensionsViewContainer {

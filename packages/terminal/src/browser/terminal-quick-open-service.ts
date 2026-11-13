@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2019 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { inject, injectable, optional } from '@theia/core/shared/inversify';
 import {
@@ -22,10 +22,10 @@ import {
     QuickAccessRegistry,
     QuickInputService
 } from '@theia/core/lib/browser';
-import { CancellationToken, CommandContribution, CommandRegistry, CommandService } from '@theia/core/lib/common';
-import { TerminalWidget } from './base/terminal-widget';
-import { TerminalService } from './base/terminal-service';
-import { TerminalCommands } from './terminal-frontend-contribution';
+import { CancellationToken, CommandContribution, CommandRegistry, CommandService, nls } from '@theia/core/lib/common';
+import { TerminalWidget } from './base/terminal-widget.js';
+import { TerminalService } from './base/terminal-service.js';
+import { TerminalCommands } from './terminal-frontend-contribution.js';
 import { filterItems, QuickPickItem, QuickPicks } from '@theia/core/lib/browser/quick-input/quick-input-service';
 
 @injectable()
@@ -51,8 +51,8 @@ export class TerminalQuickOpenService implements QuickAccessProvider {
     async getPicks(filter: string, token: CancellationToken): Promise<QuickPicks> {
         const items: QuickPickItem[] = [];
 
-        // Get the sorted list of currently opened terminal widgets
-        const widgets: TerminalWidget[] = this.terminalService.all
+        // Get the sorted list of currently opened terminal widgets that aren't hidden from users
+        const widgets: TerminalWidget[] = this.terminalService.all.filter(widget => !widget.hiddenFromUser)
             .sort((a: TerminalWidget, b: TerminalWidget) => this.compareItems(a, b));
 
         for (const widget of widgets) {
@@ -60,7 +60,7 @@ export class TerminalQuickOpenService implements QuickAccessProvider {
         }
         // Append a quick open item to create a new terminal.
         items.push({
-            label: 'Open New Terminal',
+            label: nls.localizeByDefault('Create New Terminal'),
             iconClasses: codiconArray('add'),
             execute: () => this.doCreateNewTerminal()
         });
@@ -73,7 +73,7 @@ export class TerminalQuickOpenService implements QuickAccessProvider {
             getInstance: () => this,
             prefix: TerminalQuickOpenService.PREFIX,
             placeholder: '',
-            helpEntries: [{ description: 'Show All Opened Terminals', needsEditor: false }]
+            helpEntries: [{ description: nls.localizeByDefault('Show All Opened Terminals'), needsEditor: false }]
         });
     }
 

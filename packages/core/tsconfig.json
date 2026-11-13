@@ -4,14 +4,21 @@
     "composite": true,
     "rootDir": "src",
     "outDir": "lib",
-    "baseUrl": "."
+    "jsxImportSource": "react"
   },
   "include": [
-    "src"
+    "src",
+    "src/**/*.json"
   ],
   "references": [
     {
       "path": "../../dev-packages/application-package"
+    },
+    {
+      "path": "../../dev-packages/private-re-exports"
+    },
+    {
+      "path": "../../dev-packages/request"
     }
   ]
 }

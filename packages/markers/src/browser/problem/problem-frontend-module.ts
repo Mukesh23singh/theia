@@ -1,38 +1,38 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import '../../../src/browser/style/index.css';
 
 import { ContainerModule } from '@theia/core/shared/inversify';
-import { ProblemWidget, PROBLEMS_WIDGET_ID } from './problem-widget';
-import { ProblemContribution } from './problem-contribution';
-import { createProblemWidget } from './problem-container';
+import { ProblemWidget, PROBLEMS_WIDGET_ID } from './problem-widget.js';
+import { ProblemContribution } from './problem-contribution.js';
+import { createProblemWidget } from './problem-container.js';
 import { FrontendApplicationContribution, bindViewContribution, ApplicationShellLayoutMigration, LabelProviderContribution } from '@theia/core/lib/browser';
-import { ProblemManager } from './problem-manager';
+import { SaveErrorChecker } from '@theia/core/lib/browser/saveable-service';
+import { ProblemManager } from './problem-manager.js';
 import { WidgetFactory } from '@theia/core/lib/browser/widget-manager';
-import { NavigatorTreeDecorator } from '@theia/navigator/lib/browser/navigator-decorator-service';
-import { ProblemDecorator } from './problem-decorator';
-import { ProblemTabBarDecorator } from './problem-tabbar-decorator';
+import { ProblemTabBarDecorator } from './problem-tabbar-decorator.js';
 import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
-import { ProblemLayoutVersion3Migration } from './problem-layout-migrations';
+import { ProblemLayoutVersion3Migration } from './problem-layout-migrations.js';
 import { TabBarDecorator } from '@theia/core/lib/browser/shell/tab-bar-decorator';
-import { bindProblemPreferences } from './problem-preferences';
-import { MarkerTreeLabelProvider } from '../marker-tree-label-provider';
-import { ProblemWidgetTabBarDecorator } from './problem-widget-tab-bar-decorator';
-import { OpenEditorsTreeDecorator } from '@theia/navigator/lib/browser/open-editors-widget/navigator-open-editors-decorator-service';
+import { MarkerTreeLabelProvider } from '../marker-tree-label-provider.js';
+import { ProblemWidgetTabBarDecorator } from './problem-widget-tab-bar-decorator.js';
+import { ProblemDecorationContribution, ProblemDecorationsProvider } from './problem-decorations-provider.js';
+import { ProblemAutoSaveContribution } from './problem-auto-save-contribution.js';
+import { bindProblemPreferences } from '../../common/problem-preferences.js';
 
 export default new ContainerModule(bind => {
     bindProblemPreferences(bind);
@@ -52,15 +52,18 @@ export default new ContainerModule(bind => {
     bind(FrontendApplicationContribution).toService(ProblemContribution);
     bind(TabBarToolbarContribution).toService(ProblemContribution);
 
-    bind(ProblemDecorator).toSelf().inSingletonScope();
-    bind(NavigatorTreeDecorator).toService(ProblemDecorator);
-    bind(OpenEditorsTreeDecorator).toService(ProblemDecorator);
+    bind(ProblemDecorationsProvider).toSelf().inSingletonScope();
     bind(ProblemTabBarDecorator).toSelf().inSingletonScope();
     bind(TabBarDecorator).toService(ProblemTabBarDecorator);
+    bind(ProblemDecorationContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(ProblemDecorationContribution);
 
     bind(MarkerTreeLabelProvider).toSelf().inSingletonScope();
     bind(LabelProviderContribution).toService(MarkerTreeLabelProvider);
 
     bind(ProblemWidgetTabBarDecorator).toSelf().inSingletonScope();
     bind(TabBarDecorator).toService(ProblemWidgetTabBarDecorator);
+
+    bind(ProblemAutoSaveContribution).toSelf().inSingletonScope();
+    bind(SaveErrorChecker).toService(ProblemAutoSaveContribution);
 });

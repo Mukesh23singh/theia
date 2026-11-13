@@ -16,7 +16,7 @@ The `@theia/typehierarchy` extension includes support for `super` and `subtype` 
 
 ## Additional Information
 
-- [API documentation for `@theia/typehierarchy`](https://eclipse-theia.github.io/theia/docs/next/modules/typehierarchy.html)
+- [API documentation for `@theia/typehierarchy`](https://eclipse-theia.github.io/theia/docs/next/modules/_theia_typehierarchy.html)
 - [Theia - GitHub](https://github.com/eclipse-theia/theia)
 - [Theia - Website](https://theia-ide.org/)
 
@@ -26,5 +26,6 @@ The `@theia/typehierarchy` extension includes support for `super` and `subtype` 
 - [一 (Secondary) GNU General Public License, version 2 with the GNU Classpath Exception](https://projects.eclipse.org/license/secondary-gpl-2.0-cp)
 
 ## Trademark
+
 "Theia" is a trademark of the Eclipse Foundation
-https://www.eclipse.org/theia
+<https://www.eclipse.org/theia>

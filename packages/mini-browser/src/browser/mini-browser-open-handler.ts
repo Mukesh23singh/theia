@@ -1,20 +1,20 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { Widget } from '@theia/core/shared/@phosphor/widgets';
+import { Widget } from '@theia/core/shared/@lumino/widgets';
 import { injectable, inject, optional } from '@theia/core/shared/inversify';
 import URI from '@theia/core/lib/common/uri';
 import { MaybePromise } from '@theia/core/lib/common/types';
@@ -26,27 +26,32 @@ import { TabBarToolbarContribution, TabBarToolbarRegistry } from '@theia/core/li
 import { NavigatableWidget, NavigatableWidgetOpenHandler } from '@theia/core/lib/browser/navigatable';
 import { open, OpenerService } from '@theia/core/lib/browser/opener-service';
 import { LabelProvider } from '@theia/core/lib/browser/label-provider';
-import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application';
+import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import { WidgetOpenerOptions } from '@theia/core/lib/browser/widget-open-handler';
-import { MiniBrowserService } from '../common/mini-browser-service';
-import { MiniBrowser, MiniBrowserProps } from './mini-browser';
-import { LocationMapperService } from './location-mapper-service';
+import { MiniBrowserService } from '../common/mini-browser-service.js';
+import { MiniBrowser, MiniBrowserProps } from './mini-browser.js';
+import { LocationMapperService } from './location-mapper-service.js';
+import { nls } from '@theia/core/lib/common/nls';
 
 export namespace MiniBrowserCommands {
-    export const PREVIEW: Command = {
+
+    export const PREVIEW_CATEGORY = 'Preview';
+    export const PREVIEW_CATEGORY_KEY = nls.getDefaultKey(PREVIEW_CATEGORY);
+
+    export const PREVIEW = Command.toLocalizedCommand({
         id: 'mini-browser.preview',
         label: 'Open Preview',
         iconClass: codicon('open-preview')
-    };
+    }, 'vscode.markdown-language-features/package/markdown.preview.title');
     export const OPEN_SOURCE: Command = {
         id: 'mini-browser.open.source',
         iconClass: codicon('go-to-file')
     };
-    export const OPEN_URL: Command = {
+    export const OPEN_URL = Command.toDefaultLocalizedCommand({
         id: 'mini-browser.openUrl',
-        category: 'Preview',
+        category: PREVIEW_CATEGORY,
         label: 'Open URL'
-    };
+    });
 }
 
 /**
@@ -70,15 +75,15 @@ export class MiniBrowserOpenHandler extends NavigatableWidgetOpenHandler<MiniBro
     /**
      * Instead of going to the backend with each file URI to ask whether it can handle the current file or not,
      * we have this map of extension and priority pairs that we populate at application startup.
-     * The real advantage of this approach is the following: [Phosphor cannot run async code when invoking `isEnabled`/`isVisible`
+     * The real advantage of this approach is the following: [Lumino cannot run async code when invoking `isEnabled`/`isVisible`
      * for the command handlers](https://github.com/eclipse-theia/theia/issues/1958#issuecomment-392829371)
      * so the menu item would be always visible for the user even if the file type cannot be handled eventually.
-     * Hopefully, we could get rid of this hack once we have migrated the existing Phosphor code to [React](https://github.com/eclipse-theia/theia/issues/1915).
+     * Hopefully, we could get rid of this hack once we have migrated the existing Lumino code to [React](https://github.com/eclipse-theia/theia/issues/1915).
      */
     protected readonly supportedExtensions: Map<string, number> = new Map();
 
     readonly id = MiniBrowser.ID;
-    readonly label = 'Preview';
+    readonly label = nls.localize(MiniBrowserCommands.PREVIEW_CATEGORY_KEY, MiniBrowserCommands.PREVIEW_CATEGORY);
 
     @inject(OpenerService)
     protected readonly openerService: OpenerService;
@@ -120,7 +125,7 @@ export class MiniBrowserOpenHandler extends NavigatableWidgetOpenHandler<MiniBro
         }
     }
 
-    async open(uri: URI, options?: MiniBrowserOpenerOptions): Promise<MiniBrowser> {
+    override async open(uri: URI, options?: MiniBrowserOpenerOptions): Promise<MiniBrowser> {
         const widget = await super.open(uri, options);
         const area = this.shell.getAreaFor(widget);
         if (area === 'right' || area === 'left') {
@@ -133,7 +138,7 @@ export class MiniBrowserOpenHandler extends NavigatableWidgetOpenHandler<MiniBro
         return widget;
     }
 
-    protected async getOrCreateWidget(uri: URI, options?: MiniBrowserOpenerOptions): Promise<MiniBrowser> {
+    protected override async getOrCreateWidget(uri: URI, options?: MiniBrowserOpenerOptions): Promise<MiniBrowser> {
         const props = await this.options(uri, options);
         const widget = await super.getOrCreateWidget(uri, props);
         widget.setProps(props);
@@ -215,12 +220,12 @@ export class MiniBrowserOpenHandler extends NavigatableWidgetOpenHandler<MiniBro
         toolbar.registerItem({
             id: MiniBrowserCommands.PREVIEW.id,
             command: MiniBrowserCommands.PREVIEW.id,
-            tooltip: 'Open Preview to the Side'
+            tooltip: nls.localize('vscode.markdown-language-features/package/markdown.previewSide.title', 'Open Preview to the Side')
         });
         toolbar.registerItem({
             id: MiniBrowserCommands.OPEN_SOURCE.id,
             command: MiniBrowserCommands.OPEN_SOURCE.id,
-            tooltip: 'Open Source'
+            tooltip: nls.localize('vscode.markdown-language-features/package/markdown.showSource.title', 'Open Source')
         });
     }
 
@@ -268,7 +273,7 @@ export class MiniBrowserOpenHandler extends NavigatableWidgetOpenHandler<MiniBro
 
     protected getSourceUri(ref?: Widget): URI | undefined {
         const uri = ref instanceof MiniBrowser && ref.getResourceUri() || undefined;
-        if (!uri || uri.scheme === 'http' || uri.scheme === 'https') {
+        if (!uri || uri.scheme === 'http' || uri.scheme === 'https' || uri.isEqual(MiniBrowserOpenHandler.PREVIEW_URI)) {
             return undefined;
         }
         return uri;
@@ -276,8 +281,8 @@ export class MiniBrowserOpenHandler extends NavigatableWidgetOpenHandler<MiniBro
 
     protected async openUrl(arg?: string): Promise<void> {
         const url = arg ? arg : await this.quickInputService?.input({
-            prompt: 'URL to open',
-            placeHolder: 'Type a URL'
+            prompt: nls.localizeByDefault('URL to open'),
+            placeHolder: nls.localize('theia/mini-browser/typeUrl', 'Type a URL')
         });
         if (url) {
             await this.openPreview(url);
@@ -292,7 +297,7 @@ export class MiniBrowserOpenHandler extends NavigatableWidgetOpenHandler<MiniBro
     protected async getOpenPreviewProps(startPage: string): Promise<MiniBrowserOpenerOptions> {
         const resetBackground = await this.resetBackground(new URI(startPage));
         return {
-            name: 'Preview',
+            name: nls.localize(MiniBrowserCommands.PREVIEW_CATEGORY_KEY, MiniBrowserCommands.PREVIEW_CATEGORY),
             startPage,
             toolbar: 'read-only',
             widgetOptions: {

@@ -1,32 +1,32 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { inject, injectable } from 'inversify';
-import { Command, CommandContribution, CommandRegistry, environment } from '../common';
-import { WindowService } from './window/window-service';
-import { KeybindingContribution, KeybindingRegistry } from './keybinding';
-import { MenuContribution, MenuModelRegistry } from '../common/menu';
-import { CommonMenus } from '../browser/common-frontend-contribution';
+import { Command, CommandContribution, CommandRegistry, environment } from '../common/index.js';
+import { WindowService } from './window/window-service.js';
+import { KeybindingContribution, KeybindingRegistry } from './keybinding.js';
+import { MenuContribution, MenuModelRegistry } from '../common/menu/index.js';
+import { CommonMenus } from './common-menus.js';
 
 export namespace WindowCommands {
 
-    export const NEW_WINDOW: Command = {
+    export const NEW_WINDOW = Command.toDefaultLocalizedCommand({
         id: 'workbench.action.newWindow',
         label: 'New Window'
-    };
+    });
 }
 
 @injectable()
@@ -51,7 +51,7 @@ export class WindowContribution implements CommandContribution, KeybindingContri
     }
 
     registerMenus(registry: MenuModelRegistry): void {
-        registry.registerMenuAction(CommonMenus.FILE_NEW, {
+        registry.registerMenuAction(CommonMenus.FILE_NEW_TEXT, {
             commandId: WindowCommands.NEW_WINDOW.id,
             order: 'c'
         });

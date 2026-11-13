@@ -3,6 +3,7 @@ Thank you for your Pull Request. Please provide a description and review
 the requirements below.
 
 Contributors guide: https://github.com/theia-ide/theia/blob/master/CONTRIBUTING.md
+Review flow: https://github.com/eclipse-theia/theia/blob/master/doc/pull-requests.md#review-flow
 
 Note: Security vulnerabilities should not be disclosed on GitHub, through a PR or any
 other means. See SECURITY.md at the root of this repository, to learn how to report
@@ -10,14 +11,31 @@ vulnerabilities.
 -->
 
 #### What it does
+
 <!-- Include relevant issues and describe how they are addressed. -->
 
 #### How to test
+
 <!-- Explain how a reviewer can reproduce a bug, test new functionality or verify performance improvements. -->
+
+#### Follow-ups
+
+<!-- Please list potential follow-up work, including known issues, possible future work, identified technical debt, and potentially introduced technical debt. If the PR introduces technical debt, specify the reason why this is acceptable. -->
+
+#### Breaking changes
+
+- [ ] This PR introduces breaking changes and requires careful review. If yes, the breaking changes section in the [changelog](https://github.com/eclipse-theia/theia/blob/master/CHANGELOG.md) has been updated.
+
+<!-- Only breaking changes need a manual changelog entry. Non-breaking changes do not need an entry, they are collected at release time. See https://github.com/eclipse-theia/theia/blob/master/doc/pull-requests.md#changelog-entry -->
+
+#### Attribution
+
+<!-- If the changelog entry for this change should contain an attribution at the end (e.g. Contributed on behalf of x) add it in this section -->
 
 #### Review checklist
 
 - [ ] As an author, I have thoroughly tested my changes and carefully followed [the review guidelines](https://github.com/theia-ide/theia/blob/master/doc/pull-requests.md#requesting-a-review)
+- [ ] User-facing text is internationalized using the `nls` service (for details, please see the [Internationalization/Localization section](https://github.com/theia-ide/theia/blob/master/doc/coding-guidelines.md#internationalizationlocalization) in the Coding Guidelines)
 
 #### Reminder for reviewers
 

@@ -16,7 +16,7 @@ The `@theia/outline-view` extension contributes the code outline tree based on a
 
 ## Additional Information
 
-- [API documentation for `@theia/outline-view`](https://eclipse-theia.github.io/theia/docs/next/modules/outline_view.html)
+- [API documentation for `@theia/outline-view`](https://eclipse-theia.github.io/theia/docs/next/modules/_theia_outline-view.html)
 - [Theia - GitHub](https://github.com/eclipse-theia/theia)
 - [Theia - Website](https://theia-ide.org/)
 
@@ -26,5 +26,6 @@ The `@theia/outline-view` extension contributes the code outline tree based on a
 - [一 (Secondary) GNU General Public License, version 2 with the GNU Classpath Exception](https://projects.eclipse.org/license/secondary-gpl-2.0-cp)
 
 ## Trademark
+
 "Theia" is a trademark of the Eclipse Foundation
-https://www.eclipse.org/theia
+<https://www.eclipse.org/theia>

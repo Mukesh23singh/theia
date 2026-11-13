@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2021 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
@@ -20,10 +20,10 @@
  *--------------------------------------------------------------------------------------------*/
 // code copied and modified from https://github.com/microsoft/vscode/blob/1.55.2/src/vs/workbench/api/browser/mainThreadSecretState.ts
 
-import { SecretsExt, SecretsMain } from '../../common/plugin-api-rpc';
-import { RPCProtocol } from '../../common/rpc-protocol';
+import { SecretsExt, SecretsMain } from '../../common/plugin-api-rpc.js';
+import { RPCProtocol } from '../../common/rpc-protocol.js';
 import { interfaces } from '@theia/core/shared/inversify';
-import { MAIN_RPC_CONTEXT } from '../../common';
+import { MAIN_RPC_CONTEXT } from '../../common/index.js';
 import { CredentialsService } from '@theia/core/lib/browser/credentials-service';
 
 export class SecretsMainImpl implements SecretsMain {
@@ -77,6 +77,31 @@ export class SecretsMainImpl implements SecretsMain {
             await this.credentialsService.deletePassword(fullKey, key);
         } catch (e) {
             throw new Error('Cannot delete password');
+        }
+    }
+
+    async $getKeys(extensionId: string): Promise<string[]> {
+        return this.doGetKeys(extensionId);
+    }
+
+    private async doGetKeys(extensionId: string): Promise<string[]> {
+        if (!this.credentialsService.keys) {
+            throw new Error('CredentialsProvider does not support keys() method');
+        }
+        const fullKey = SecretsMainImpl.getFullKey(extensionId);
+        const allKeys = await this.credentialsService.keys(fullKey);
+        const keys = allKeys
+            .map(key => this.parseKey(key))
+            .filter((parsedKey): parsedKey is { extensionId: string; key: string } => parsedKey !== undefined && parsedKey.extensionId === extensionId)
+            .map(({ key }) => key);
+        return keys;
+    }
+
+    private parseKey(key: string): { extensionId: string; key: string } | undefined {
+        try {
+            return JSON.parse(key);
+        } catch {
+            return undefined;
         }
     }
 }

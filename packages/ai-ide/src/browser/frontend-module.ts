@@ -1,0 +1,417 @@
+// *****************************************************************************
+// Copyright (C) 2024 EclipseSource GmbH.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+
+import '../../src/browser/style/index.css';
+
+import { ContainerModule } from '@theia/core/shared/inversify';
+import { ChatAgent, ChatAgentRecommendationService } from '@theia/ai-chat/lib/common';
+import { Agent, AIVariableContribution, bindToolProvider } from '@theia/ai-core/lib/common';
+import { ArchitectAgent } from './architect-agent.js';
+import { CoderAgent } from './coder-agent.js';
+import { SummarizeSessionCommandContribution } from './summarize-session-command-contribution.js';
+import {
+    AccessibleRootContribution,
+    FileContentFunction,
+    FileDiagnosticProvider,
+    FindFilesByPattern,
+    GetWorkspaceDirectoryStructure,
+    GetWorkspaceFileList,
+    WorkspaceFunctionScope
+} from './workspace-functions.js';
+import { WorkspaceSearchProvider } from './workspace-search-provider.js';
+import { MemoryDirectoryVariableContribution } from './memory-directory-variable-contribution.js';
+import {
+    FrontendApplicationContribution,
+    WidgetFactory,
+    bindViewContribution,
+    RemoteConnectionProvider,
+    ServiceConnectionProvider
+} from '@theia/core/lib/browser';
+import { TaskListProvider, TaskRunnerProvider } from './workspace-task-provider.js';
+import {
+    LaunchListProvider,
+    LaunchRunnerProvider,
+    LaunchStopProvider,
+} from './workspace-launch-provider.js';
+import { WorkspacePreferencesSchema } from '../common/workspace-preferences.js';
+import {
+    ClearFileChanges,
+    GetProposedFileState,
+    ReplaceContentInFileFunctionHelper,
+    SuggestFileReplacements,
+    SuggestFileReplacements_Simple,
+    SimpleSuggestFileReplacements,
+    SuggestFileContent,
+    WriteFileContent,
+    WriteFileReplacements,
+    WriteFileReplacements_Simple,
+    SimpleWriteFileReplacements,
+    FileChangeSetTitleProvider,
+    DefaultFileChangeSetTitleProvider,
+    ReplaceContentInFileFunctionHelperV2
+} from './file-changeset-functions.js';
+import { OrchestratorChatAgent } from '../common/orchestrator-chat-agent.js';
+import { UniversalChatAgent } from '../common/universal-chat-agent.js';
+import { AppTesterChatAgent } from './app-tester-chat-agent.js';
+import { GitHubChatAgent } from './github-chat-agent.js';
+import { CommandChatAgent } from '../common/command-chat-agents.js';
+import { ListChatContext, ResolveChatContext, AddFileToChatContext } from './context-functions.js';
+import { AgentsConfigurationCategory } from './ai-configuration/categories/agents-configuration-category.js';
+import { GeneralConfigurationCategory } from './ai-configuration/categories/general-configuration-category.js';
+import { ModelsConfigurationCategory } from './ai-configuration/categories/models-configuration-category.js';
+import { ModelAliasesConfigurationCategory } from './ai-configuration/categories/model-aliases-configuration-category.js';
+import { VariablesConfigurationCategory } from './ai-configuration/categories/variables-configuration-category.js';
+import { TokenUsageConfigurationCategory } from './ai-configuration/categories/token-usage-configuration-category.js';
+import { ToolsConfigurationCategory } from './ai-configuration/categories/tools-configuration-category.js';
+import { PromptsAndSkillsConfigurationCategory } from './ai-configuration/categories/prompts-and-skills-configuration-category.js';
+import { PromptSnippetsConfigurationCategory } from './ai-configuration/categories/prompt-snippets-configuration-category.js';
+import { AiConfigurationOpenPreferenceRenderer, AiConfigurationOpenPreferenceRendererContribution } from './ai-configuration/ai-configuration-open-preference-renderer.js';
+import { PreferenceNodeRendererContribution } from '@theia/preferences/lib/browser/views/components/preference-node-renderer-creator';
+import { AiConfigurationBreadcrumbsContribution } from './ai-configuration/ai-configuration-breadcrumbs-contribution.js';
+import { BreadcrumbsContribution } from '@theia/core/lib/browser/breadcrumbs/breadcrumbs-constants';
+import { AiConfigurationLabelProviderContribution } from './ai-configuration/ai-configuration-label-provider-contribution.js';
+import { LabelProviderContribution } from '@theia/core/lib/browser/label-provider';
+import { AiConfigurationCategory } from '@theia/ai-core-ui/lib/browser/ai-configuration/ai-configuration-category';
+import { AIConfigurationSelectionService } from './ai-configuration/ai-configuration-service.js';
+import { AIConfigurationViewContribution } from './ai-configuration/ai-configuration-view-contribution.js';
+import { AIConfigurationContainerWidget } from './ai-configuration/ai-configuration-widget.js';
+import { AiConfigurationDetailWidget } from './ai-configuration/ai-configuration-detail-widget.js';
+import { AiConfigurationTreeWidget, createAiConfigurationTreeContainer } from './ai-configuration/ai-configuration-tree-widget.js';
+import { AiConfigurationSearchWidget } from './ai-configuration/ai-configuration-search-widget.js';
+import { ContextFilesVariableContribution } from '../common/context-files-variable.js';
+import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
+import { TemplatePreferenceContribution } from './template-preference-contribution.js';
+import { ChatWelcomeMessageProvider } from '@theia/ai-chat-ui/lib/browser/chat-tree-view';
+import { WalkthroughProvider } from '@theia/getting-started/lib/common/walkthrough-provider';
+import { IdeChatWelcomeMessageProvider } from './ide-chat-welcome-message-provider.js';
+import { AiGettingStartedWalkthroughProvider } from './ai-getting-started-walkthrough.js';
+import { AiGettingStartedContribution } from './ai-getting-started-contribution.js';
+import { AiWalkthroughContextKeys } from './ai-walkthrough-context-keys.js';
+import { ChatSessionsWelcomeMessageProvider } from './chat-sessions-welcome-message-provider.js';
+import { ChatSessionItemActionContribution, DefaultChatSessionItemActionContribution } from './chat-session-item-action-contribution.js';
+import { AiAllowAllModeChatBanner } from './ai-allow-all-mode-chat-banner.js';
+import { ChatBannerProvider } from '@theia/ai-chat-ui/lib/browser/chat-banner-provider';
+import { DefaultChatAgentRecommendationService } from './default-chat-agent-recommendation-service.js';
+import { TaskContextSummaryVariableContribution } from './task-background-summary-variable.js';
+import { GitHubRepoVariableContribution } from './github-repo-variable-contribution.js';
+import { TaskContextFileStorageService } from './task-context-file-storage-service.js';
+import { TaskContextStorageService } from '@theia/ai-chat/lib/browser/task-context-service';
+import { bindRootContributionProvider, CommandContribution, PreferenceContribution } from '@theia/core';
+import { BrowserAutomation, browserAutomationPath } from '../common/browser-automation-protocol.js';
+import { GitHubRepoService, githubRepoServicePath } from '../common/github-repo-protocol.js';
+import { CloseBrowserProvider, IsBrowserRunningProvider, LaunchBrowserProvider, QueryDomProvider } from './app-tester-chat-functions.js';
+import { GetSkillFileContent, ListSkills } from './skill-file-functions.js';
+import { aiIdePreferenceSchema } from '../common/ai-ide-preferences.js';
+import { AIActivationService } from '@theia/ai-core/lib/browser';
+import { AIIdeActivationServiceImpl } from './ai-ide-activation-service.js';
+import { AiConfigurationPreferences } from '../common/ai-configuration-preferences.js';
+import { WorkspaceRestrictionContribution } from '@theia/workspace/lib/browser/workspace-trust-service';
+import { AIWorkspaceRestrictionContribution } from './ai-workspace-restriction-contribution.js';
+
+import { AgentsMdAgent } from './agents-md-agent.js';
+import { CreateSkillAgent } from './create-skill-agent.js';
+import { SuggestTerminalCommand } from './ai-terminal-functions.js';
+import { TodoWriteTool } from './todo-tool.js';
+import { TodoToolRenderer } from './todo-tool-renderer.js';
+import { UserInteractionTool } from './user-interaction-tool.js';
+import { UserInteractionToolRenderer } from './user-interaction-tool-renderer.js';
+import { ChatResponsePartRenderer } from '@theia/ai-chat-ui/lib/browser/chat-response-part-renderer';
+import { ContextFileValidationService } from '@theia/ai-chat/lib/browser/context-file-validation-service';
+import { ContextFileValidationServiceImpl } from './context-file-validation-service-impl.js';
+import { RememberCommandContribution } from './remember-command-contribution.js';
+import { CreateTaskContextFunction, GetTaskContextFunction, EditTaskContextFunction, ListTaskContextsFunction, RewriteTaskContextFunction } from './task-context-functions.js';
+import { FixGitHubTicketCommandContribution } from './implement-gh-ticket-command-contribution.js';
+import { AnalyzesGhTicketCommandContribution } from './analyze-gh-ticket-command-contribution.js';
+import { AddressGhReviewCommandContribution } from './address-pr-review-command-contribution.js';
+import { AppTesterCapabilityContribution } from './apptester-capability-contribution.js';
+import { GitHubCapabilityContribution } from './github-capability-contribution.js';
+import { ShellExecutionCapabilityContribution } from './shell-execution-capability-contribution.js';
+import { MemoryCapabilityContribution } from './memory-capability-contribution.js';
+import { OpenEditorsHintContribution } from './open-editors-hint-contribution.js';
+import { AgentModeConfirmationService, AgentModeConfirmationServiceImpl } from './agent-mode-confirmation-service.js';
+import { ExploreAgent } from './explore-agent.js';
+import { CodeReviewerAgent } from './code-reviewer-agent.js';
+import { CodeReviewCapabilityContribution } from './code-review-capability-contribution.js';
+import { PRReviewAgent } from './review/pr-review-agent.js';
+import { PRReviewCapabilityContribution } from './review/pr-review-capability-contribution.js';
+import { PerspectiveContribution } from '@theia/core/lib/browser/perspective-service';
+import { AIFirstPerspectiveContribution } from './ai-first-perspective-contribution.js';
+import { ChatSessionListService } from './chat-session-list-service.js';
+import { AISessionsWidget } from './ai-sessions-widget.js';
+import { AISessionsViewContribution } from './ai-sessions-view-contribution.js';
+import { CommitMessageAgent } from './commit-message-agent.js';
+import { CommitMessageRunner } from './commit-message-runner.js';
+import { CommitMessageCommandContribution } from './commit-message-command-contribution.js';
+import { GetGitChangesTool } from './git-changes-tool.js';
+import { AiAwareScmCommitWidget } from './ai-aware-scm-commit-widget.js';
+import { ScmCommitWidget } from '@theia/scm/lib/browser/scm-commit-widget';
+
+export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
+    bind(PreferenceContribution).toConstantValue({ schema: aiIdePreferenceSchema });
+    bind(PreferenceContribution).toConstantValue({ schema: WorkspacePreferencesSchema });
+
+    bind(AgentModeConfirmationServiceImpl).toSelf().inSingletonScope();
+    bind(AgentModeConfirmationService).toService(AgentModeConfirmationServiceImpl);
+
+    bind(AIIdeActivationServiceImpl).toSelf().inSingletonScope();
+    // rebinds the default implementation of '@theia/ai-core'
+    rebind(AIActivationService).toService(AIIdeActivationServiceImpl);
+
+    bind(AIWorkspaceRestrictionContribution).toSelf().inSingletonScope();
+    bind(WorkspaceRestrictionContribution).toService(AIWorkspaceRestrictionContribution);
+
+    bind(ArchitectAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(ArchitectAgent);
+    bind(ChatAgent).toService(ArchitectAgent);
+
+    bind(CoderAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(CoderAgent);
+    bind(ChatAgent).toService(CoderAgent);
+
+    bind(AgentsMdAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(AgentsMdAgent);
+    bind(ChatAgent).toService(AgentsMdAgent);
+
+    bind(CreateSkillAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(CreateSkillAgent);
+    bind(ChatAgent).toService(CreateSkillAgent);
+
+    bind(OrchestratorChatAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(OrchestratorChatAgent);
+    bind(ChatAgent).toService(OrchestratorChatAgent);
+
+    bind(UniversalChatAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(UniversalChatAgent);
+    bind(ChatAgent).toService(UniversalChatAgent);
+
+    bind(AppTesterChatAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(AppTesterChatAgent);
+    bind(ChatAgent).toService(AppTesterChatAgent);
+
+    bind(GitHubChatAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(GitHubChatAgent);
+    bind(ChatAgent).toService(GitHubChatAgent);
+    bind(BrowserAutomation).toDynamicValue(ctx => {
+        const provider = ctx.container.get<ServiceConnectionProvider>(RemoteConnectionProvider);
+        return provider.createProxy<BrowserAutomation>(browserAutomationPath);
+    }).inSingletonScope();
+
+    bind(CommandChatAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(CommandChatAgent);
+    bind(ChatAgent).toService(CommandChatAgent);
+
+    bind(ExploreAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(ExploreAgent);
+    bind(ChatAgent).toService(ExploreAgent);
+
+    bind(CodeReviewerAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(CodeReviewerAgent);
+    bind(ChatAgent).toService(CodeReviewerAgent);
+
+    bind(PRReviewAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(PRReviewAgent);
+    bind(ChatAgent).toService(PRReviewAgent);
+
+    bind(ChatSessionListService).toSelf().inSingletonScope();
+
+    bind(WalkthroughProvider).to(AiGettingStartedWalkthroughProvider).inSingletonScope();
+    bind(CommandContribution).to(AiGettingStartedContribution).inSingletonScope();
+    bind(AiWalkthroughContextKeys).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(AiWalkthroughContextKeys);
+
+    bind(ChatWelcomeMessageProvider).to(IdeChatWelcomeMessageProvider).inSingletonScope();
+    bind(ChatWelcomeMessageProvider).to(ChatSessionsWelcomeMessageProvider).inSingletonScope();
+    bind(ChatBannerProvider).to(AiAllowAllModeChatBanner).inSingletonScope();
+    bindRootContributionProvider(bind, ChatSessionItemActionContribution);
+    bind(DefaultChatSessionItemActionContribution).toSelf().inSingletonScope();
+    bind(ChatSessionItemActionContribution).toService(DefaultChatSessionItemActionContribution);
+    bind(ChatAgentRecommendationService).to(DefaultChatAgentRecommendationService).inSingletonScope();
+
+    bindToolProvider(GetWorkspaceFileList, bind);
+    bindToolProvider(FileContentFunction, bind);
+    bindToolProvider(GetWorkspaceDirectoryStructure, bind);
+    bindToolProvider(FileDiagnosticProvider, bind);
+    bindToolProvider(FindFilesByPattern, bind);
+    bindToolProvider(GetSkillFileContent, bind);
+    bindToolProvider(ListSkills, bind);
+    bind(WorkspaceFunctionScope).toSelf().inSingletonScope();
+    bindToolProvider(WorkspaceSearchProvider, bind);
+
+    bindRootContributionProvider(bind, AccessibleRootContribution);
+    bind(MemoryDirectoryVariableContribution).toSelf().inSingletonScope();
+    bind(AIVariableContribution).toService(MemoryDirectoryVariableContribution);
+    bind(AccessibleRootContribution).toService(MemoryDirectoryVariableContribution);
+
+    bindToolProvider(SuggestFileContent, bind);
+    bindToolProvider(WriteFileContent, bind);
+    bindToolProvider(TaskListProvider, bind);
+    bindToolProvider(TaskRunnerProvider, bind);
+    bindToolProvider(LaunchListProvider, bind);
+    bindToolProvider(LaunchRunnerProvider, bind);
+    bindToolProvider(LaunchStopProvider, bind);
+    bind(ReplaceContentInFileFunctionHelper).toSelf().inSingletonScope();
+    bind(FileChangeSetTitleProvider).to(DefaultFileChangeSetTitleProvider).inSingletonScope();
+    bind(ReplaceContentInFileFunctionHelperV2).toSelf().inSingletonScope();
+    bindToolProvider(SuggestFileReplacements, bind);
+    bindToolProvider(SuggestFileReplacements_Simple, bind);
+    bindToolProvider(WriteFileReplacements, bind);
+    bindToolProvider(WriteFileReplacements_Simple, bind);
+    bindToolProvider(ListChatContext, bind);
+    bindToolProvider(ResolveChatContext, bind);
+    bind(AIConfigurationSelectionService).toSelf().inSingletonScope();
+    // The container widget owns these children and disposes them when the view is closed. They must
+    // therefore be transient: a reopened container gets fresh children instead of injecting the
+    // already-disposed singletons from the previous instance (which rendered an empty view and logged
+    // "node does not belong to this tree" errors on layout restore).
+    bind(AiConfigurationSearchWidget).toSelf();
+    bind(AiConfigurationDetailWidget).toSelf();
+    bind(AiConfigurationTreeWidget)
+        .toDynamicValue(({ container }) => createAiConfigurationTreeContainer(container).get(AiConfigurationTreeWidget));
+    bind(AIConfigurationContainerWidget).toSelf();
+    bind(WidgetFactory)
+        .toDynamicValue(ctx => ({
+            id: AIConfigurationContainerWidget.ID,
+            createWidget: () => ctx.container.get(AIConfigurationContainerWidget)
+        }))
+        .inSingletonScope();
+
+    bindToolProvider(LaunchBrowserProvider, bind);
+    bindToolProvider(CloseBrowserProvider, bind);
+    bindToolProvider(IsBrowserRunningProvider, bind);
+    bindToolProvider(QueryDomProvider, bind);
+
+    bindViewContribution(bind, AIConfigurationViewContribution);
+    bind(TabBarToolbarContribution).toService(AIConfigurationViewContribution);
+
+    bind(AgentsConfigurationCategory).toSelf().inSingletonScope();
+    bind(AiConfigurationCategory).toService(AgentsConfigurationCategory);
+
+    bind(GeneralConfigurationCategory).toSelf().inSingletonScope();
+    bind(AiConfigurationCategory).toService(GeneralConfigurationCategory);
+
+    bind(ModelsConfigurationCategory).toSelf().inSingletonScope();
+    bind(AiConfigurationCategory).toService(ModelsConfigurationCategory);
+
+    bind(ModelAliasesConfigurationCategory).toSelf().inSingletonScope();
+    bind(AiConfigurationCategory).toService(ModelAliasesConfigurationCategory);
+
+    bind(VariablesConfigurationCategory).toSelf().inSingletonScope();
+    bind(AiConfigurationCategory).toService(VariablesConfigurationCategory);
+
+    bind(TokenUsageConfigurationCategory).toSelf().inSingletonScope();
+    bind(AiConfigurationCategory).toService(TokenUsageConfigurationCategory);
+
+    bind(ToolsConfigurationCategory).toSelf().inSingletonScope();
+    bind(AiConfigurationCategory).toService(ToolsConfigurationCategory);
+
+    bind(PromptsAndSkillsConfigurationCategory).toSelf().inSingletonScope();
+    bind(AiConfigurationCategory).toService(PromptsAndSkillsConfigurationCategory);
+
+    bind(PromptSnippetsConfigurationCategory).toSelf().inSingletonScope();
+    bind(AiConfigurationCategory).toService(PromptSnippetsConfigurationCategory);
+
+    // Renders the Settings-UI "AI Features" placeholder as a button that opens the AI Configuration view (#316).
+    bind(AiConfigurationOpenPreferenceRenderer).toSelf();
+    bind(PreferenceNodeRendererContribution).to(AiConfigurationOpenPreferenceRendererContribution).inSingletonScope();
+
+    // Real Theia breadcrumbs for the AI Configuration view.
+    bind(AiConfigurationBreadcrumbsContribution).toSelf().inSingletonScope();
+    bind(BreadcrumbsContribution).toService(AiConfigurationBreadcrumbsContribution);
+    // Give the view's resource URI a readable name (window title, breadcrumbs) instead of "/".
+    bind(AiConfigurationLabelProviderContribution).toSelf().inSingletonScope();
+    bind(LabelProviderContribution).toService(AiConfigurationLabelProviderContribution);
+
+    bindToolProvider(SimpleSuggestFileReplacements, bind);
+    bindToolProvider(SimpleWriteFileReplacements, bind);
+    bindToolProvider(ClearFileChanges, bind);
+    bindToolProvider(GetProposedFileState, bind);
+    bindToolProvider(AddFileToChatContext, bind);
+
+    bind(AIVariableContribution).to(ContextFilesVariableContribution).inSingletonScope();
+
+    bind(PreferenceContribution).toConstantValue({ schema: AiConfigurationPreferences });
+
+    bind(FrontendApplicationContribution).to(TemplatePreferenceContribution);
+
+    bind(TaskContextSummaryVariableContribution).toSelf().inSingletonScope();
+    bind(AIVariableContribution).toService(TaskContextSummaryVariableContribution);
+
+    bind(GitHubRepoService).toDynamicValue(ctx => {
+        const provider = ctx.container.get<ServiceConnectionProvider>(RemoteConnectionProvider);
+        return provider.createProxy<GitHubRepoService>(githubRepoServicePath);
+    }).inSingletonScope();
+
+    bind(GitHubRepoVariableContribution).toSelf().inSingletonScope();
+    bind(AIVariableContribution).toService(GitHubRepoVariableContribution);
+    bind(TaskContextFileStorageService).toSelf().inSingletonScope();
+    rebind(TaskContextStorageService).toService(TaskContextFileStorageService);
+
+    bind(CommandContribution).to(SummarizeSessionCommandContribution);
+
+    bindToolProvider(SuggestTerminalCommand, bind);
+
+    // Task context functions for Architect planning mode
+    bindToolProvider(CreateTaskContextFunction, bind);
+    bindToolProvider(GetTaskContextFunction, bind);
+    bindToolProvider(EditTaskContextFunction, bind);
+    bindToolProvider(ListTaskContextsFunction, bind);
+    bindToolProvider(RewriteTaskContextFunction, bind);
+    bindToolProvider(TodoWriteTool, bind);
+    bindToolProvider(UserInteractionTool, bind);
+    bind(ChatResponsePartRenderer).to(TodoToolRenderer).inSingletonScope();
+    bind(ChatResponsePartRenderer).to(UserInteractionToolRenderer).inSingletonScope();
+
+    bind(ContextFileValidationServiceImpl).toSelf().inSingletonScope();
+    bind(ContextFileValidationService).toService(ContextFileValidationServiceImpl);
+
+    bind(FrontendApplicationContribution).to(RememberCommandContribution);
+    bind(FrontendApplicationContribution).to(FixGitHubTicketCommandContribution);
+    bind(FrontendApplicationContribution).to(AddressGhReviewCommandContribution);
+    bind(FrontendApplicationContribution).to(AnalyzesGhTicketCommandContribution);
+    bind(FrontendApplicationContribution).to(AppTesterCapabilityContribution);
+    bind(FrontendApplicationContribution).to(GitHubCapabilityContribution);
+    bind(FrontendApplicationContribution).to(ShellExecutionCapabilityContribution);
+    bind(FrontendApplicationContribution).to(MemoryCapabilityContribution);
+    bind(FrontendApplicationContribution).to(OpenEditorsHintContribution);
+
+    bind(FrontendApplicationContribution).to(CodeReviewCapabilityContribution);
+    bind(FrontendApplicationContribution).to(PRReviewCapabilityContribution);
+
+    bind(AIFirstPerspectiveContribution).toSelf().inSingletonScope();
+    bind(PerspectiveContribution).toService(AIFirstPerspectiveContribution);
+
+    bind(AISessionsWidget).toSelf();
+    bind(WidgetFactory)
+        .toDynamicValue(ctx => ({
+            id: AISessionsWidget.ID,
+            createWidget: () => ctx.container.get(AISessionsWidget)
+        }))
+        .inSingletonScope();
+    bindViewContribution(bind, AISessionsViewContribution);
+    bind(TabBarToolbarContribution).toService(AISessionsViewContribution);
+
+    // CommitMessageAgent is a plain (non-chat) `Agent`: it is driven exclusively from the SCM
+    // commit widget via `CommitMessageRunner`, so it does not appear in chat `@`-mention
+    // completion or the chat agent list. The `Agent` binding registers its prompt fragments
+    // with the prompt service.
+    bind(CommitMessageAgent).toSelf().inSingletonScope();
+    bind(Agent).toService(CommitMessageAgent);
+    bindToolProvider(GetGitChangesTool, bind);
+    bind(CommitMessageRunner).toSelf().inSingletonScope();
+    bind(CommitMessageCommandContribution).toSelf().inSingletonScope();
+    bind(CommandContribution).toService(CommitMessageCommandContribution);
+    rebind(ScmCommitWidget).to(AiAwareScmCommitWidget);
+});

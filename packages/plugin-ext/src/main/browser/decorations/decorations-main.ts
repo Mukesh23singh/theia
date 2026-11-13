@@ -1,31 +1,31 @@
-/********************************************************************************
- * Copyright (C) 2019 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 import {
     DecorationData,
     DecorationRequest,
     DecorationsExt,
     DecorationsMain,
     MAIN_RPC_CONTEXT
-} from '../../../common/plugin-api-rpc';
+} from '../../../common/plugin-api-rpc.js';
 
 import { interfaces } from '@theia/core/shared/inversify';
 import { Emitter } from '@theia/core/lib/common/event';
 import { Disposable } from '@theia/core/lib/common/disposable';
-import { RPCProtocol } from '../../../common/rpc-protocol';
-import { UriComponents } from '../../../common/uri-components';
+import { RPCProtocol } from '../../../common/rpc-protocol.js';
+import { UriComponents } from '../../../common/uri-components.js';
 import { URI as VSCodeURI } from '@theia/core/shared/vscode-uri';
 import { CancellationToken } from '@theia/core/lib/common/cancellation';
 import URI from '@theia/core/lib/common/uri';
@@ -92,7 +92,7 @@ class DecorationRequestsQueue {
 export class DecorationsMainImpl implements DecorationsMain, Disposable {
 
     private readonly proxy: DecorationsExt;
-    private readonly providers = new Map<number, [Emitter<URI[]>, Disposable]>();
+    private readonly providers = new Map<number, [Emitter<URI[] | undefined>, Disposable]>();
     private readonly decorationsService: DecorationsService;
 
     constructor(rpc: RPCProtocol, container: interfaces.Container) {
@@ -106,7 +106,7 @@ export class DecorationsMainImpl implements DecorationsMain, Disposable {
     }
 
     async $registerDecorationProvider(handle: number): Promise<void> {
-        const emitter = new Emitter<URI[]>();
+        const emitter = new Emitter<URI[] | undefined>();
         const queue = new DecorationRequestsQueue(this.proxy, handle);
         const registration = this.decorationsService.registerDecorationsProvider({
             onDidChange: emitter.event,
@@ -128,11 +128,11 @@ export class DecorationsMainImpl implements DecorationsMain, Disposable {
         this.providers.set(handle, [emitter, registration]);
     }
 
-    $onDidChange(handle: number, resources: UriComponents[]): void {
+    $onDidChange(handle: number, resources: UriComponents[] | null): void {
         const providerSet = this.providers.get(handle);
         if (providerSet) {
             const [emitter] = providerSet;
-            emitter.fire(resources && resources.map(r => new URI(VSCodeURI.revive(r).toString())));
+            emitter.fire(resources ? resources.map(r => new URI(VSCodeURI.revive(r).toString())) : undefined);
         }
     }
 

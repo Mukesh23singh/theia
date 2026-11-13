@@ -1,38 +1,35 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
 import * as theia from '@theia/plugin';
-import * as model from '../common/plugin-api-rpc-model';
-import { CommandRegistryExt, PLUGIN_RPC_CONTEXT as Ext, CommandRegistryMain } from '../common/plugin-api-rpc';
-import { RPCProtocol } from '../common/rpc-protocol';
-import { Disposable } from './types-impl';
+import * as model from '../common/plugin-api-rpc-model.js';
+import { CommandRegistryExt, PLUGIN_RPC_CONTEXT as Ext, CommandRegistryMain } from '../common/plugin-api-rpc.js';
+import { RPCProtocol } from '../common/rpc-protocol.js';
+import { Disposable, URI } from './types-impl.js';
 import { DisposableCollection } from '@theia/core';
-import { KnownCommands } from './known-commands';
+import { KnownCommands } from './known-commands.js';
+import { ArgumentProcessor } from '../common/commands.js';
+import { isUriComponents } from './type-converters.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Handler = <T>(...args: any[]) => T | PromiseLike<T | undefined>;
-
-export interface ArgumentProcessor {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    processArgument(arg: any): any;
-}
 
 export class CommandRegistryImpl implements CommandRegistryExt {
 
@@ -46,6 +43,16 @@ export class CommandRegistryImpl implements CommandRegistryExt {
         this.proxy = rpc.getProxy(Ext.COMMAND_REGISTRY_MAIN);
         this.argumentProcessors = [];
         this.commandsConverter = new CommandsConverter(this);
+        this.registerArgumentProcessor({
+            processArgument: arg => {
+                // Revive URI-like plain objects that lost their class identity during RPC/JSON serialization
+                // (e.g. command arguments from markdown links parsed by CommandOpenHandler)
+                if (isUriComponents(arg) && !(arg instanceof URI)) {
+                    return URI.revive(arg);
+                }
+                return arg;
+            }
+        });
     }
 
     get converter(): CommandsConverter {
@@ -197,10 +204,10 @@ export class CommandsConverter {
         // we're deprecating Command.id, so it has to be optional.
         // Existing code will have compiled against a non - optional version of the field, so asserting it to exist is ok
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return KnownCommands.map((external.command || external.id)!, external.arguments, (mappedId: string, mappedArgs: any[]) =>
+        return KnownCommands.map(external.command, external.arguments, (mappedId: string, mappedArgs: any[]) =>
         ({
             id: mappedId,
-            title: external.title || external.label || ' ',
+            title: external.title || ' ',
             tooltip: external.tooltip,
             arguments: mappedArgs
         }));
@@ -208,11 +215,16 @@ export class CommandsConverter {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private executeSafeCommand<R>(...args: any[]): PromiseLike<R | undefined> {
-        const command = this.commandsMap.get(args[0]);
-        if (!command || !command.command) {
-            return Promise.reject(`command ${args[0]} not found`);
+        const handle = args[0];
+        if (typeof handle !== 'number') {
+            return Promise.reject(`Invalid handle ${handle}`);
         }
-        return this.commands.executeCommand(command.command, ...(command.arguments || []));
+        const command = this.commandsMap.get(handle);
+        if (!command || !command.command) {
+            return Promise.reject(`Safe command with handle ${handle} not found`);
+        }
+        const allArgs = (command.arguments ?? []).concat(args.slice(1));
+        return this.commands.executeCommand(command.command, ...allArgs);
     }
 
 }

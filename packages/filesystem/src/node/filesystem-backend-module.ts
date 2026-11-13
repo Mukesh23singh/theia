@@ -1,47 +1,50 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as path from 'path';
 import { ContainerModule, interfaces } from '@theia/core/shared/inversify';
-import { ConnectionHandler, JsonRpcConnectionHandler, ILogger } from '@theia/core/lib/common';
-import { FileSystemWatcherServer, FileSystemWatcherService } from '../common/filesystem-watcher-protocol';
-import { FileSystemWatcherServerClient } from './filesystem-watcher-client';
-import { NsfwFileSystemWatcherService, NsfwFileSystemWatcherServerOptions } from './nsfw-watcher/nsfw-filesystem-service';
-import { NodeFileUploadService } from './node-file-upload-service';
-import { NsfwOptions } from './nsfw-watcher/nsfw-options';
-import { DiskFileSystemProvider } from './disk-file-system-provider';
+import { ConnectionHandler, RpcConnectionHandler, ILogger } from '@theia/core/lib/common';
+import { FileSystemWatcherServer, FileSystemWatcherService } from '../common/filesystem-watcher-protocol.js';
+import { FileSystemWatcherServerClient } from './filesystem-watcher-client.js';
+import { FileSystemWatcherServiceImpl } from './filesystem-watcher-service-impl.js';
+import { ParcelFileSystemWatcherServerOptions } from './parcel-watcher/parcel-watcher.js';
+import { NodeFileUploadService } from './upload/node-file-upload-service.js';
+import { ParcelWatcherOptions } from './parcel-watcher/parcel-options.js';
+import { DiskFileSystemProvider } from './disk-file-system-provider.js';
 import {
     remoteFileSystemPath, RemoteFileSystemServer, RemoteFileSystemClient, FileSystemProviderServer, RemoteFileSystemProxyFactory
-} from '../common/remote-file-system-provider';
-import { FileSystemProvider } from '../common/files';
+} from '../common/remote-file-system-provider.js';
+import { FileSystemProvider } from '../common/files.js';
 import { EncodingService } from '@theia/core/lib/common/encoding-service';
 import { BackendApplicationContribution, IPCConnectionProvider } from '@theia/core/lib/node';
-import { JsonRpcProxyFactory, ConnectionErrorHandler } from '@theia/core';
-import { FileSystemWatcherServiceDispatcher } from './filesystem-watcher-dispatcher';
+import { RpcProxyFactory, ConnectionErrorHandler } from '@theia/core';
+import { FileSystemWatcherServiceDispatcher } from './filesystem-watcher-dispatcher.js';
+import { bindFileSystemPreferences } from '../common/index.js';
+import { ArchiveExtractor, ArchiveExtractorImpl } from './archive/archive-extractor.js';
 
-export const NSFW_SINGLE_THREADED = process.argv.includes('--no-cluster');
-export const NSFW_WATCHER_VERBOSE = process.argv.includes('--nsfw-watcher-verbose');
+export const WATCHER_SINGLE_THREADED = process.argv.includes('--no-cluster');
+export const WATCHER_VERBOSE = process.argv.includes('--watcher-verbose');
 
-export const NsfwFileSystemWatcherServiceProcessOptions = Symbol('NsfwFileSystemWatcherServiceProcessOptions');
+export const FileSystemWatcherServiceProcessOptions = Symbol('FileSystemWatcherServiceProcessOptions');
 /**
- * Options to control the way the `NsfwFileSystemWatcherService` process is spawned.
+ * Options to control the way the `FileSystemWatcherServiceImpl` process is spawned.
  */
-export interface NsfwFileSystemWatcherServiceProcessOptions {
+export interface FileSystemWatcherServiceProcessOptions {
     /**
-     * Path to the script that will run the `NsfwFileSystemWatcherService` in a new process.
+     * Path to the script that will run the `FileSystemWatcherServiceImpl` in a new process.
      */
     entryPoint: string;
 }
@@ -54,53 +57,56 @@ export default new ContainerModule(bind => {
     bind(FileSystemProviderServer).toSelf();
     bind(RemoteFileSystemServer).toService(FileSystemProviderServer);
     bind(ConnectionHandler).toDynamicValue(ctx =>
-        new JsonRpcConnectionHandler<RemoteFileSystemClient>(remoteFileSystemPath, client => {
+        new RpcConnectionHandler<RemoteFileSystemClient>(remoteFileSystemPath, client => {
             const server = ctx.container.get<RemoteFileSystemServer>(RemoteFileSystemServer);
             server.setClient(client);
             client.onDidCloseConnection(() => server.dispose());
             return server;
-        }, RemoteFileSystemProxyFactory)
+        }, { factoryConstructor: RemoteFileSystemProxyFactory, independentOfShellEnvironment: true })
     ).inSingletonScope();
     bind(NodeFileUploadService).toSelf().inSingletonScope();
     bind(BackendApplicationContribution).toService(NodeFileUploadService);
+    bindFileSystemPreferences(bind);
+    bind(ArchiveExtractorImpl).toSelf().inSingletonScope();
+    bind(ArchiveExtractor).toService(ArchiveExtractorImpl);
 });
 
 export function bindFileSystemWatcherServer(bind: interfaces.Bind): void {
-    bind<NsfwOptions>(NsfwOptions).toConstantValue({});
+    bind<ParcelWatcherOptions>(ParcelWatcherOptions).toConstantValue({});
 
     bind(FileSystemWatcherServiceDispatcher).toSelf().inSingletonScope();
 
     bind(FileSystemWatcherServerClient).toSelf();
     bind(FileSystemWatcherServer).toService(FileSystemWatcherServerClient);
 
-    bind<NsfwFileSystemWatcherServiceProcessOptions>(NsfwFileSystemWatcherServiceProcessOptions).toDynamicValue(ctx => ({
-        entryPoint: path.join(__dirname, 'nsfw-watcher'),
+    bind<FileSystemWatcherServiceProcessOptions>(FileSystemWatcherServiceProcessOptions).toDynamicValue(ctx => ({
+        entryPoint: path.join(import.meta.dirname, 'parcel-watcher'),
     })).inSingletonScope();
-    bind<NsfwFileSystemWatcherServerOptions>(NsfwFileSystemWatcherServerOptions).toDynamicValue(ctx => {
+    bind<ParcelFileSystemWatcherServerOptions>(ParcelFileSystemWatcherServerOptions).toDynamicValue(ctx => {
         const logger = ctx.container.get<ILogger>(ILogger);
-        const nsfwOptions = ctx.container.get<NsfwOptions>(NsfwOptions);
+        const watcherOptions = ctx.container.get<ParcelWatcherOptions>(ParcelWatcherOptions);
         return {
-            nsfwOptions,
-            verbose: NSFW_WATCHER_VERBOSE,
+            parcelOptions: watcherOptions,
+            verbose: WATCHER_VERBOSE,
             info: (message, ...args) => logger.info(message, ...args),
             error: (message, ...args) => logger.error(message, ...args),
         };
     }).inSingletonScope();
 
     bind<FileSystemWatcherService>(FileSystemWatcherService).toDynamicValue(
-        ctx => NSFW_SINGLE_THREADED
-            ? createNsfwFileSystemWatcherService(ctx)
-            : spawnNsfwFileSystemWatcherServiceProcess(ctx)
+        ctx => WATCHER_SINGLE_THREADED
+            ? createParcelFileSystemWatcherService(ctx)
+            : spawnParcelFileSystemWatcherServiceProcess(ctx)
     ).inSingletonScope();
 }
 
 /**
  * Run the watch server in the current process.
  */
-export function createNsfwFileSystemWatcherService(ctx: interfaces.Context): FileSystemWatcherService {
-    const options = ctx.container.get<NsfwFileSystemWatcherServerOptions>(NsfwFileSystemWatcherServerOptions);
+export function createParcelFileSystemWatcherService(ctx: interfaces.Context): FileSystemWatcherService {
+    const options = ctx.container.get<ParcelFileSystemWatcherServerOptions>(ParcelFileSystemWatcherServerOptions);
     const dispatcher = ctx.container.get<FileSystemWatcherServiceDispatcher>(FileSystemWatcherServiceDispatcher);
-    const server = new NsfwFileSystemWatcherService(options);
+    const server = new FileSystemWatcherServiceImpl(options);
     server.setClient(dispatcher);
     return server;
 }
@@ -109,21 +115,21 @@ export function createNsfwFileSystemWatcherService(ctx: interfaces.Context): Fil
  * Run the watch server in a child process.
  * Return a proxy forwarding calls to the child process.
  */
-export function spawnNsfwFileSystemWatcherServiceProcess(ctx: interfaces.Context): FileSystemWatcherService {
-    const options = ctx.container.get<NsfwFileSystemWatcherServiceProcessOptions>(NsfwFileSystemWatcherServiceProcessOptions);
+export function spawnParcelFileSystemWatcherServiceProcess(ctx: interfaces.Context): FileSystemWatcherService {
+    const options = ctx.container.get<FileSystemWatcherServiceProcessOptions>(FileSystemWatcherServiceProcessOptions);
     const dispatcher = ctx.container.get<FileSystemWatcherServiceDispatcher>(FileSystemWatcherServiceDispatcher);
-    const serverName = 'nsfw-watcher';
+    const serverName = 'parcel-watcher';
     const logger = ctx.container.get<ILogger>(ILogger);
-    const nsfwOptions = ctx.container.get<NsfwOptions>(NsfwOptions);
+    const watcherOptions = ctx.container.get<ParcelWatcherOptions>(ParcelWatcherOptions);
     const ipcConnectionProvider = ctx.container.get<IPCConnectionProvider>(IPCConnectionProvider);
-    const proxyFactory = new JsonRpcProxyFactory<FileSystemWatcherService>();
+    const proxyFactory = new RpcProxyFactory<FileSystemWatcherService>();
     const serverProxy = proxyFactory.createProxy();
     // We need to call `.setClient` before listening, else the JSON-RPC calls won't go through.
     serverProxy.setClient(dispatcher);
     const args: string[] = [
-        `--nsfwOptions=${JSON.stringify(nsfwOptions)}`
+        `--watchOptions=${JSON.stringify(watcherOptions)}`
     ];
-    if (NSFW_WATCHER_VERBOSE) {
+    if (WATCHER_VERBOSE) {
         args.push('--verbose');
     }
     ipcConnectionProvider.listen({

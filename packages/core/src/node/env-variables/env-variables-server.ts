@@ -1,49 +1,86 @@
-/********************************************************************************
- * Copyright (C) 2018-2020 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018-2020 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { join } from 'path';
 import { homedir } from 'os';
-import { injectable } from 'inversify';
+import { injectable, inject, named } from 'inversify';
 import * as drivelist from 'drivelist';
-import { EnvVariable, EnvVariablesServer } from '../../common/env-variables';
-import { isWindows } from '../../common/os';
-import { FileUri } from '../file-uri';
+import { pathExists, mkdir } from '../../../shared/fs-extra/index.cjs';
+import { EnvVariable, EnvVariablesServer } from '../../common/env-variables/index.js';
+import { isWindows } from '../../common/os.js';
+import { FileUri } from '../../common/file-uri.js';
+import { BackendApplicationPath } from '../backend-application.js';
+import { BackendApplicationConfigProvider } from '../backend-application-config-provider.js';
+import { ILogger } from '../../common/logger.js';
 
+/**
+ * Serves the environment variables of the backend process.
+ *
+ * The variables are read from `process.env` on every request rather than captured once, because the backend
+ * takes the `PATH` of the user's login shell after it has started, see `ShellEnvironmentServer`.
+ */
 @injectable()
 export class EnvVariablesServerImpl implements EnvVariablesServer {
 
-    protected readonly envs: { [key: string]: EnvVariable } = {};
     protected readonly homeDirUri = FileUri.create(homedir()).toString();
     protected readonly configDirUri: Promise<string>;
+    protected readonly pathExistenceCache: { [key: string]: boolean } = {};
+
+    @inject(ILogger) @named('core:EnvVariablesServerImpl')
+    protected readonly logger: ILogger;
 
     constructor() {
         this.configDirUri = this.createConfigDirUri();
-        this.configDirUri.then(configDirUri => console.log(`Configuration directory URI: '${configDirUri}'`));
-        const prEnv = process.env;
-        Object.keys(prEnv).forEach((key: string) => {
-            let keyName = key;
-            if (isWindows) {
-                keyName = key.toLowerCase();
-            }
-            this.envs[keyName] = { 'name': keyName, 'value': prEnv[key] };
-        });
+        this.configDirUri.then(configDirUri => this.logger.info(`Configuration directory URI: '${configDirUri}'`));
+    }
+
+    /**
+     * The variables of `process.env` as of now, keyed by name, which is lower-cased on Windows.
+     * Both `getVariables` and `getValue` answer from it.
+     */
+    protected get envs(): { [key: string]: EnvVariable } {
+        const envs: { [key: string]: EnvVariable } = {};
+        for (const [key, value] of Object.entries(process.env)) {
+            const name = isWindows ? key.toLowerCase() : key;
+            envs[name] = { name, value };
+        }
+        return envs;
     }
 
     protected async createConfigDirUri(): Promise<string> {
-        return FileUri.create(process.env.THEIA_CONFIG_DIR || join(homedir(), '.theia')).toString();
+        if (process.env.THEIA_CONFIG_DIR) {
+            // this has been explicitly set by the user, so we do not override its value
+            return FileUri.create(process.env.THEIA_CONFIG_DIR).toString();
+        }
+
+        const dataFolderPath = join(BackendApplicationPath, 'data');
+        const userDataPath = join(dataFolderPath, 'user-data');
+        const dataFolderExists = this.pathExistenceCache[dataFolderPath] ??= await pathExists(dataFolderPath);
+        let theiaConfigDir: string;
+        if (dataFolderExists) {
+            const userDataExists = this.pathExistenceCache[userDataPath] ??= await pathExists(userDataPath);
+            if (!userDataExists) {
+                await mkdir(userDataPath);
+                this.pathExistenceCache[userDataPath] = true;
+            }
+            theiaConfigDir = userDataPath;
+        } else {
+            theiaConfigDir = join(homedir(), BackendApplicationConfigProvider.get().configurationFolder);
+        }
+        return FileUri.create(theiaConfigDir).toString();
     }
 
     async getExecPath(): Promise<string> {
@@ -51,14 +88,12 @@ export class EnvVariablesServerImpl implements EnvVariablesServer {
     }
 
     async getVariables(): Promise<EnvVariable[]> {
-        return Object.keys(this.envs).map(key => this.envs[key]);
+        return Object.values(this.envs);
     }
 
     async getValue(key: string): Promise<EnvVariable | undefined> {
-        if (isWindows) {
-            key = key.toLowerCase();
-        }
-        return this.envs[key];
+        // `process.env` is case-insensitive on Windows, where the name is reported in lower case as in `getVariables`.
+        return this.envs[isWindows ? key.toLowerCase() : key];
     }
 
     getConfigDirUri(): Promise<string> {

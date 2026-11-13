@@ -1,24 +1,26 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
-import { injectable } from '@theia/core/shared/inversify';
-import { Message } from '@theia/core/shared/@phosphor/messaging';
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+import { injectable, unmanaged } from '@theia/core/shared/inversify';
+import { Message } from '@theia/core/shared/@lumino/messaging';
 import { codiconArray, Key } from '@theia/core/lib/browser';
-import { AbstractDialog } from '@theia/core/lib/browser/dialogs';
+import { AbstractDialog, DialogProps } from '@theia/core/lib/browser/dialogs';
 import '../../../../src/main/browser/dialogs/style/modal-notification.css';
-import { MainMessageItem } from '../../../common/plugin-api-rpc';
+import { MainMessageItem, MainMessageOptions } from '../../../common/plugin-api-rpc.js';
+import { FrontendApplicationConfigProvider } from '@theia/core/lib/browser/frontend-application-config-provider';
+import { nls } from '@theia/core/lib/common/nls';
 
 export enum MessageType {
     Error = 'error',
@@ -29,17 +31,18 @@ export enum MessageType {
 const NOTIFICATION = 'modal-Notification';
 const ICON = 'icon';
 const TEXT = 'text';
+const DETAIL = 'detail';
 
 @injectable()
 export class ModalNotification extends AbstractDialog<string | undefined> {
 
     protected actionTitle: string | undefined;
 
-    constructor() {
-        super({ title: 'Theia' });
+    constructor(@unmanaged() props?: Partial<DialogProps>) {
+        super({ title: FrontendApplicationConfigProvider.get().applicationName, ...props });
     }
 
-    protected onCloseRequest(msg: Message): void {
+    protected override onCloseRequest(msg: Message): void {
         this.actionTitle = undefined;
         this.accept();
     }
@@ -48,27 +51,37 @@ export class ModalNotification extends AbstractDialog<string | undefined> {
         return this.actionTitle;
     }
 
-    showDialog(messageType: MessageType, text: string, actions: MainMessageItem[]): Promise<string | undefined> {
-        this.contentNode.appendChild(this.createMessageNode(messageType, text, actions));
+    showDialog(messageType: MessageType, text: string, options: MainMessageOptions, actions: MainMessageItem[]): Promise<string | undefined> {
+        this.contentNode.appendChild(this.createMessageNode(messageType, text, options, actions));
         return this.open();
     }
 
-    protected createMessageNode(messageType: MessageType, text: string, actions: MainMessageItem[]): HTMLElement {
-        const messageNode = document.createElement('div');
+    protected createMessageNode(messageType: MessageType, text: string, options: MainMessageOptions, actions: MainMessageItem[]): HTMLElement {
+        const doc = this.node.ownerDocument;
+        const messageNode = doc.createElement('div');
         messageNode.classList.add(NOTIFICATION);
 
-        const iconContainer = messageNode.appendChild(document.createElement('div'));
+        const iconContainer = messageNode.appendChild(doc.createElement('div'));
         iconContainer.classList.add(ICON);
-        const iconElement = iconContainer.appendChild(document.createElement('i'));
+        const iconElement = iconContainer.appendChild(doc.createElement('i'));
         iconElement.classList.add(...this.toIconClass(messageType), messageType.toString());
 
-        const textContainer = messageNode.appendChild(document.createElement('div'));
+        const textContainer = messageNode.appendChild(doc.createElement('div'));
         textContainer.classList.add(TEXT);
-        const textElement = textContainer.appendChild(document.createElement('p'));
+        const textElement = textContainer.appendChild(doc.createElement('p'));
         textElement.textContent = text;
 
-        actions.forEach((action: MainMessageItem) => {
-            const button = this.createButton(action.title);
+        if (options.detail) {
+            const detailContainer = textContainer.appendChild(doc.createElement('div'));
+            detailContainer.classList.add(DETAIL);
+            const detailElement = detailContainer.appendChild(doc.createElement('p'));
+            detailElement.textContent = options.detail;
+        }
+
+        actions.forEach((action: MainMessageItem, index: number) => {
+            const button = index === 0
+                ? this.appendAcceptButton(action.title)
+                : this.createButton(action.title);
             button.classList.add('main');
             this.controlPanel.appendChild(button);
             this.addKeyListener(button,
@@ -79,8 +92,10 @@ export class ModalNotification extends AbstractDialog<string | undefined> {
                 },
                 'click');
         });
-        if (!actions.some(action => action.isCloseAffordance === true)) {
-            this.appendCloseButton('close');
+        if (actions.length <= 0) {
+            this.appendAcceptButton();
+        } else if (!actions.some(action => action.isCloseAffordance === true)) {
+            this.appendCloseButton(nls.localizeByDefault('Close'));
         }
 
         return messageNode;

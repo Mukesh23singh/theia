@@ -1,22 +1,23 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { named, injectable, inject } from 'inversify';
-import URI from '../common/uri';
-import { ContributionProvider, Prioritizeable, MaybePromise, Emitter, Event, Disposable } from '../common';
+import URI from '../common/uri.js';
+import { ContributionProvider, Prioritizeable, MaybePromise, Emitter, Event, Disposable, PreferenceService } from '../common/index.js';
+import { match } from '../common/glob.js';
 
 export interface OpenerOptions {
 }
@@ -79,6 +80,12 @@ export interface OpenerService {
      * Add open handler i.e. for custom editors
      */
     addHandler?(openHandler: OpenHandler): Disposable;
+
+    /**
+     * Remove open handler
+     */
+    removeHandler?(openHandler: OpenHandler): void;
+
     /**
      * Event that fires when a new opener is added or removed.
      */
@@ -89,6 +96,17 @@ export async function open(openerService: OpenerService, uri: URI, options?: Ope
     const opener = await openerService.getOpener(uri, options);
     return opener.open(uri, options);
 }
+
+export function getDefaultHandler(uri: URI, preferenceService: PreferenceService): string | undefined {
+    const associations = preferenceService.get('workbench.editorAssociations', { fallback: {} });
+    const defaultHandler = Object.entries(associations).find(([key]) => match(key, uri.path.base))?.[1];
+    if (typeof defaultHandler === 'string') {
+        return defaultHandler;
+    }
+    return undefined;
+}
+
+export const defaultHandlerPriority = 100_000;
 
 @injectable()
 export class DefaultOpenerService implements OpenerService {
@@ -108,9 +126,13 @@ export class DefaultOpenerService implements OpenerService {
         this.onDidChangeOpenersEmitter.fire();
 
         return Disposable.create(() => {
-            this.customEditorOpenHandlers.splice(this.customEditorOpenHandlers.indexOf(openHandler), 1);
-            this.onDidChangeOpenersEmitter.fire();
+            this.removeHandler(openHandler);
         });
+    }
+
+    removeHandler(openHandler: OpenHandler): void {
+        this.customEditorOpenHandlers.splice(this.customEditorOpenHandlers.indexOf(openHandler), 1);
+        this.onDidChangeOpenersEmitter.fire();
     }
 
     async getOpener(uri: URI, options?: OpenerOptions): Promise<OpenHandler> {

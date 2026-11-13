@@ -1,36 +1,37 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import debounce from 'p-debounce';
-import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
-import { Disposable, DisposableCollection, Event, Emitter } from '@theia/core/lib/common';
+import { injectable, inject, postConstruct, named } from '@theia/core/shared/inversify';
+import { Disposable, DisposableCollection, Event, Emitter, deepClone, nls, ILogger } from '@theia/core/lib/common';
 import URI from '@theia/core/lib/common/uri';
-import { DebugSession, DebugState } from '../debug-session';
-import { DebugSessionManager } from '../debug-session-manager';
-import { DebugThread } from '../model/debug-thread';
-import { DebugStackFrame } from '../model/debug-stack-frame';
-import { DebugSourceBreakpoint } from '../model/debug-source-breakpoint';
-import { DebugWatchExpression } from './debug-watch-expression';
-import { DebugWatchManager } from '../debug-watch-manager';
-import { DebugFunctionBreakpoint } from '../model/debug-function-breakpoint';
-
-export const DebugViewOptions = Symbol('DebugViewOptions');
-export interface DebugViewOptions {
-    session?: DebugSession
-}
+import { DebugSession, DebugState } from '../debug-session.js';
+import { DebugSessionManager } from '../debug-session-manager.js';
+import { DebugThread } from '../model/debug-thread.js';
+import { DebugStackFrame } from '../model/debug-stack-frame.js';
+import { DebugSourceBreakpoint } from '../model/debug-source-breakpoint.js';
+import { DebugWatchExpression } from './debug-watch-expression.js';
+import { DebugWatchManager } from '../debug-watch-manager.js';
+import { DebugFunctionBreakpoint } from '../model/debug-function-breakpoint.js';
+import { DebugInstructionBreakpoint } from '../model/debug-instruction-breakpoint.js';
+import { DebugSessionOptionsBase } from '../debug-session-options.js';
+import { BreakpointManager } from '../breakpoint/breakpoint-manager.js';
+import { DebugExceptionBreakpoint } from './debug-exception-breakpoint.js';
+import { DebugDataBreakpoint } from '../model/debug-data-breakpoint.js';
+import { DebugVariable } from '../console/debug-console-items.js';
 
 @injectable()
 export class DebugViewModel implements Disposable {
@@ -48,6 +49,12 @@ export class DebugViewModel implements Disposable {
         this.onDidChangeBreakpointsEmitter.fire(uri);
     }
 
+    protected readonly onDidResolveLazyVariableEmitter = new Emitter<DebugVariable>();
+    readonly onDidResolveLazyVariable: Event<DebugVariable> = this.onDidResolveLazyVariableEmitter.event;
+    protected fireDidResolveLazyVariable(variable: DebugVariable): void {
+        this.onDidResolveLazyVariableEmitter.fire(variable);
+    }
+
     protected readonly _watchExpressions = new Map<number, DebugWatchExpression>();
 
     protected readonly onDidChangeWatchExpressionsEmitter = new Emitter<void>();
@@ -59,71 +66,54 @@ export class DebugViewModel implements Disposable {
     protected readonly toDispose = new DisposableCollection(
         this.onDidChangeEmitter,
         this.onDidChangeBreakpointsEmitter,
-        this.onDidChangeWatchExpressionsEmitter
+        this.onDidResolveLazyVariableEmitter,
+        this.onDidChangeWatchExpressionsEmitter,
     );
-
-    @inject(DebugViewOptions)
-    protected readonly options: DebugViewOptions;
 
     @inject(DebugSessionManager)
     protected readonly manager: DebugSessionManager;
 
+    @inject(BreakpointManager)
+    protected readonly breakpointManager: BreakpointManager;
+
     @inject(DebugWatchManager)
     protected readonly watch: DebugWatchManager;
 
-    protected readonly _sessions = new Set<DebugSession>();
+    @inject(ILogger) @named('debug:DebugViewModel')
+    protected readonly logger: ILogger;
+
     get sessions(): IterableIterator<DebugSession> {
-        return this._sessions.values();
+        return this.manager.sessions[Symbol.iterator]();
     }
     get sessionCount(): number {
-        return this._sessions.size;
+        return this.manager.sessions.length;
     }
-    push(session: DebugSession): void {
-        if (this._sessions.has(session)) {
-            return;
-        }
-        this._sessions.add(session);
-        this.fireDidChange();
-    }
-    delete(session: DebugSession): boolean {
-        if (this._sessions.delete(session)) {
-            this.fireDidChange();
-            return true;
-        }
-        return false;
-    }
-
     get session(): DebugSession | undefined {
-        return this.sessions.next().value;
+        return this.currentSession;
     }
     get id(): string {
         return this.session && this.session.id || '-1';
     }
     get label(): string {
-        return this.session && this.session.label || 'Unknown Session';
-    }
-    has(session: DebugSession | undefined): session is DebugSession {
-        return !!session && this._sessions.has(session);
+        return this.session && this.session.label || nls.localize('theia/debug/unknownSession', 'Unknown Session');
     }
 
     @postConstruct()
     protected init(): void {
-        if (this.options.session) {
-            this.push(this.options.session);
-        }
-        this.toDispose.push(this.manager.onDidChangeActiveDebugSession(({ previous, current }) => {
-            if (this.has(previous) && !this.has(current)) {
-                this.fireDidChange();
-            }
+        this.toDispose.push(this.manager.onDidChangeActiveDebugSession(() => {
+            this.fireDidChange();
         }));
         this.toDispose.push(this.manager.onDidChange(current => {
-            if (this.has(current)) {
-                this.fireDidChange();
-            }
+            // Always fire change to update views, even if session is not current
+            // This ensures threads view updates for all sessions
+            this.fireDidChange();
         }));
-        this.toDispose.push(this.manager.onDidChangeBreakpoints(({ session, uri }) => {
-            if (!session || session === this.currentSession) {
-                this.fireDidChangeBreakpoints(uri);
+        this.toDispose.push(this.breakpointManager.onDidChangeMarkers(uri => {
+            this.fireDidChangeBreakpoints(uri);
+        }));
+        this.toDispose.push(this.manager.onDidResolveLazyVariable(({ session, variable }) => {
+            if (session === this.currentSession) {
+                this.fireDidResolveLazyVariable(variable);
             }
         }));
         this.updateWatchExpressions();
@@ -135,8 +125,7 @@ export class DebugViewModel implements Disposable {
     }
 
     get currentSession(): DebugSession | undefined {
-        const { currentSession } = this.manager;
-        return this.has(currentSession) && currentSession || this.session;
+        return this.manager.currentSession;
     }
     set currentSession(currentSession: DebugSession | undefined) {
         this.manager.currentSession = currentSession;
@@ -155,23 +144,35 @@ export class DebugViewModel implements Disposable {
         return currentThread && currentThread.currentFrame;
     }
 
-    get breakpoints(): DebugSourceBreakpoint[] {
-        return this.manager.getBreakpoints(this.currentSession);
+    get breakpoints(): readonly DebugSourceBreakpoint[] {
+        return this.breakpointManager.getBreakpoints();
     }
 
-    get functionBreakpoints(): DebugFunctionBreakpoint[] {
-        return this.manager.getFunctionBreakpoints(this.currentSession);
+    get functionBreakpoints(): readonly DebugFunctionBreakpoint[] {
+        return this.breakpointManager.getFunctionBreakpoints();
     }
 
-    async start(): Promise<void> {
+    get instructionBreakpoints(): readonly DebugInstructionBreakpoint[] {
+        return this.breakpointManager.getInstructionBreakpoints();
+    }
+
+    get exceptionBreakpoints(): readonly DebugExceptionBreakpoint[] {
+        return this.breakpointManager.getExceptionBreakpoints()
+            .filter(candidate => this.currentSession ? candidate.isEnabledForSession(this.currentSession.id) : candidate.isPersistentlyVisible());
+    }
+
+    get dataBreakpoints(): readonly DebugDataBreakpoint[] {
+        return this.breakpointManager.getDataBreakpoints();
+    }
+
+    async start(options: Partial<Pick<DebugSessionOptionsBase, 'startedByUser'>> = {}): Promise<void> {
         const { session } = this;
         if (!session) {
             return;
         }
-        const newSession = await this.manager.start(session.options);
+        const optionsCopy = deepClone(session.options);
+        const newSession = await this.manager.start(Object.assign(optionsCopy, options));
         if (newSession) {
-            this._sessions.delete(session);
-            this._sessions.add(newSession);
             this.fireDidChange();
         }
     }
@@ -181,16 +182,12 @@ export class DebugViewModel implements Disposable {
         if (!session) {
             return;
         }
-        const newSession = await this.manager.restart(session);
-        if (newSession !== session) {
-            this._sessions.delete(session);
-            this._sessions.add(newSession);
-        }
+        await this.manager.restartSession(session);
         this.fireDidChange();
     }
 
     async terminate(): Promise<void> {
-        this.manager.terminateSessions();
+        this.manager.terminateSession();
     }
 
     get watchExpressions(): IterableIterator<DebugWatchExpression> {
@@ -198,11 +195,12 @@ export class DebugViewModel implements Disposable {
     }
 
     async addWatchExpression(expression: string = ''): Promise<DebugWatchExpression | undefined> {
-        const watchExpression = new DebugWatchExpression({
+        const watchExpression: DebugWatchExpression = new DebugWatchExpression({
             id: Number.MAX_SAFE_INTEGER,
             expression,
             session: () => this.currentSession,
-            onDidChange: () => { /* no-op */ }
+            remove: () => this.removeWatchExpression(watchExpression),
+            onDidChange: () => { /* no-op */ },
         });
         await watchExpression.open();
         if (!watchExpression.expression) {
@@ -227,10 +225,11 @@ export class DebugViewModel implements Disposable {
             toRemove.delete(id);
             if (!this._watchExpressions.has(id)) {
                 added = true;
-                const watchExpression = new DebugWatchExpression({
+                const watchExpression: DebugWatchExpression = new DebugWatchExpression({
                     id,
                     expression,
                     session: () => this.currentSession,
+                    remove: () => this.removeWatchExpression(watchExpression),
                     onDidChange: () => this.fireDidChangeWatchExpressions()
                 });
                 this._watchExpressions.set(id, watchExpression);
@@ -249,11 +248,9 @@ export class DebugViewModel implements Disposable {
     protected refreshWatchExpressions = debounce(() => {
         this.refreshWatchExpressionsQueue = this.refreshWatchExpressionsQueue.then(async () => {
             try {
-                for (const watchExpression of this.watchExpressions) {
-                    await watchExpression.evaluate();
-                }
+                await Promise.all(Array.from(this.watchExpressions).map(expr => expr.evaluate()));
             } catch (e) {
-                console.error('Failed to refresh watch expressions: ', e);
+                this.logger.error('Failed to refresh watch expressions: ', e);
             }
         });
     }, 50);

@@ -1,25 +1,26 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, inject, named } from 'inversify';
-import { ContributionProvider } from '../common/contribution-provider';
-import { FrontendApplicationContribution } from './frontend-application';
-import { MaybePromise } from '../common';
-import { Endpoint } from './endpoint';
-import { timeout, Deferred } from '../common/promise-util';
+import { ContributionProvider } from '../common/contribution-provider.js';
+import { FrontendApplicationContribution } from './frontend-application-contribution.js';
+import { Emitter, MaybePromise, URI } from '../common/index.js';
+import { timeout, Deferred } from '../common/promise-util.js';
+import { IJSONSchema } from '../common/json-schema.js';
+import { ILogger } from '../common/logger.js';
 
 export interface JsonSchemaConfiguration {
     fileMatch: string | string[];
@@ -40,6 +41,9 @@ export class JsonSchemaStore implements FrontendApplicationContribution {
 
     @inject(ContributionProvider) @named(JsonSchemaContribution)
     protected readonly contributions: ContributionProvider<JsonSchemaContribution>;
+
+    @inject(ILogger) @named('core:JsonSchemaStore')
+    protected readonly logger: ILogger;
 
     protected readonly _schemas = new Deferred<JsonSchemaConfiguration[]>();
     get schemas(): Promise<JsonSchemaConfiguration[]> {
@@ -68,9 +72,9 @@ export class JsonSchemaStore implements FrontendApplicationContribution {
             if (result) {
                 pendingRegistrations.push(result.then(() => { }, e => {
                     if (e instanceof Error && e.message === frozenErrorCode) {
-                        console.error(`${contribution.constructor.name}.registerSchemas is taking more than ${registerTimeout.toFixed(1)} ms, new schemas are ignored.`);
+                        this.logger.error(`${contribution.constructor.name}.registerSchemas is taking more than ${registerTimeout.toFixed(1)} ms, new schemas are ignored.`);
                     } else {
-                        console.error(e);
+                        this.logger.error(e);
                     }
                 }));
             }
@@ -93,14 +97,51 @@ export class JsonSchemaStore implements FrontendApplicationContribution {
 }
 
 @injectable()
+export class JsonSchemaDataStore {
+
+    protected readonly _schemas = new Map<string, string>();
+
+    protected readonly onDidSchemaUpdateEmitter = new Emitter<URI>();
+    readonly onDidSchemaUpdate = this.onDidSchemaUpdateEmitter.event;
+
+    hasSchema(uri: URI): boolean {
+        return this._schemas.has(uri.toString());
+    }
+
+    getSchema(uri: URI): string | undefined {
+        return this._schemas.get(uri.toString());
+    }
+
+    setSchema(uri: URI, schema: IJSONSchema | string): void {
+        this._schemas.set(uri.toString(), typeof schema === 'string' ? schema : JSON.stringify(schema));
+        this.notifySchemaUpdate(uri);
+    }
+
+    deleteSchema(uri: URI): void {
+        if (this._schemas.delete(uri.toString())) {
+            this.notifySchemaUpdate(uri);
+        }
+    }
+
+    notifySchemaUpdate(uri: URI): void {
+        this.onDidSchemaUpdateEmitter.fire(uri);
+    }
+
+}
+
+@injectable()
 export class DefaultJsonSchemaContribution implements JsonSchemaContribution {
 
+    private static excludedSchemaUrls = [
+        'https://www.schemastore.org/task.json'
+    ];
+
     async registerSchemas(context: JsonSchemaRegisterContext): Promise<void> {
-        const url = `${new Endpoint().httpScheme}//schemastore.azurewebsites.net/api/json/catalog.json`;
-        const response = await fetch(url);
-        const schemas: DefaultJsonSchemaContribution.SchemaData[] = (await response.json()).schemas!;
-        for (const s of schemas) {
-            if (s.fileMatch) {
+        // `catalog.json` is downloaded into `lib` when the package is installed, so it is not known to the compiler.
+        // @ts-expect-error TS2307
+        const catalog: { schemas: DefaultJsonSchemaContribution.SchemaData[] } = (await import('./catalog.json', { with: { type: 'json' } })).default;
+        for (const s of catalog.schemas) {
+            if (s.fileMatch && this.shouldRegisterSchema(s)) {
                 context.registerSchema({
                     fileMatch: s.fileMatch,
                     url: s.url
@@ -109,6 +150,9 @@ export class DefaultJsonSchemaContribution implements JsonSchemaContribution {
         }
     }
 
+    protected shouldRegisterSchema(s: DefaultJsonSchemaContribution.SchemaData): boolean {
+        return !DefaultJsonSchemaContribution.excludedSchemaUrls.includes(s.url);
+    }
 }
 export namespace DefaultJsonSchemaContribution {
     export interface SchemaData {
@@ -120,4 +164,3 @@ export namespace DefaultJsonSchemaContribution {
         schema: any;
     }
 }
-

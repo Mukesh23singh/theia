@@ -1,27 +1,32 @@
-/********************************************************************************
- * Copyright (C) 2018 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import * as yargs from 'yargs';
+// Parses the log config the loggers are built from, so no ILogger exists yet.
+/* eslint-disable @theia/named-logger-check */
+
+import * as yargs from '../../shared/yargs/index.cjs';
 import { injectable } from 'inversify';
-import { LogLevel } from '../common/logger';
-import { CliContribution } from './cli';
-import * as fs from 'fs-extra';
-import * as nsfw from 'nsfw';
-import { Event, Emitter } from '../common/event';
+import { LogLevel } from '../common/logger.js';
+import { CliContribution } from './cli.js';
+import * as fs from '../../shared/fs-extra/index.cjs';
+import { AsyncSubscription, subscribe } from '../../shared/@parcel/watcher/index.cjs';
+import { Event, Emitter } from '../common/event.js';
 import * as path from 'path';
+import { Disposable, DisposableCollection } from '../common/index.js';
+import { escapeRegExpCharacters } from '../common/strings.js';
 
 /** Maps logger names to log levels.  */
 export interface LogLevels {
@@ -34,14 +39,19 @@ export interface LogLevels {
  * what the log level per logger should be.
  */
 @injectable()
-export class LogLevelCliContribution implements CliContribution {
+export class LogLevelCliContribution implements CliContribution, Disposable {
 
     protected _logLevels: LogLevels = {};
+    protected wildcardRegexCache = new Map<string, RegExp>();
+    protected asyncSubscriptions: AsyncSubscription[] = [];
+    protected toDispose = new DisposableCollection();
 
     /**
      * Log level to use for loggers not specified in `logLevels`.
      */
     protected _defaultLogLevel: LogLevel = LogLevel.INFO;
+
+    protected _logFile?: string;
 
     protected logConfigChangedEvent: Emitter<void> = new Emitter<void>();
 
@@ -51,6 +61,14 @@ export class LogLevelCliContribution implements CliContribution {
 
     get logLevels(): LogLevels {
         return this._logLevels;
+    }
+
+    get logFile(): string | undefined {
+        return this._logFile;
+    }
+
+    constructor() {
+        this.toDispose.push(this.logConfigChangedEvent);
     }
 
     configure(conf: yargs.Argv): void {
@@ -64,6 +82,12 @@ export class LogLevelCliContribution implements CliContribution {
             description: 'Path to the JSON file specifying the configuration of various loggers',
             type: 'string',
             nargs: 1,
+        });
+
+        conf.option('log-file', {
+            description: 'Path to the log file',
+            type: 'string',
+            nargs: 1
         });
     }
 
@@ -87,26 +111,65 @@ export class LogLevelCliContribution implements CliContribution {
                 console.error(`Error reading log config file ${filename}: ${e}`);
             }
         }
+
+        if (args['log-file'] !== undefined) {
+            let filename = args['log-file'] as string;
+            try {
+                filename = path.resolve(filename);
+                try {
+                    const stat = await fs.stat(filename);
+                    if (stat && stat.isFile()) {
+                        // Rename the previous log file to avoid overwriting it
+                        const oldFilename = `${filename}.${stat.ctime.toISOString().replace(/:/g, '-')}.old`;
+                        await fs.rename(filename, oldFilename);
+                    }
+                } catch {
+                    // File does not exist, just continue to create it
+                }
+                await fs.writeFile(filename, '');
+                this._logFile = filename;
+            } catch (e) {
+                console.error(`Error creating log file ${filename}: ${e}`);
+            }
+        }
+
+        // some initial loggers have already been constructed. Fire the event to notify them.
+        if (args['log-level'] || args['log-config'] || args['log-file']) {
+            this.logConfigChangedEvent.fire();
+        }
     }
 
-    protected watchLogConfigFile(filename: string): Promise<void> {
-        return nsfw(filename, async (events: nsfw.FileChangeEvent[]) => {
+    protected async watchLogConfigFile(filename: string): Promise<void> {
+        const dir = path.dirname(filename);
+        const subscription = await subscribe(dir, async (err, events) => {
+            if (err) {
+                console.log(`Error during log file watching ${filename}: ${err}`);
+                return;
+            }
             try {
                 for (const event of events) {
-                    switch (event.action) {
-                        case nsfw.actions.CREATED:
-                        case nsfw.actions.MODIFIED:
-                            await this.slurpLogConfigFile(filename);
-                            this.logConfigChangedEvent.fire(undefined);
-                            break;
+                    if (event.path === filename) {
+                        switch (event.type) {
+                            case 'create':
+                            case 'update':
+                                await this.slurpLogConfigFile(filename);
+                                this.logConfigChangedEvent.fire(undefined);
+                                break;
+                        }
                     }
                 }
             } catch (e) {
                 console.error(`Error reading log config file ${filename}: ${e}`);
             }
-        }).then((watcher: nsfw.NSFW) => {
-            watcher.start();
         });
+        this.asyncSubscriptions.push(subscription);
+    }
+
+    async dispose(): Promise<void> {
+        for (const sub of this.asyncSubscriptions) {
+            sub.unsubscribe();
+        }
+        this.toDispose.dispose();
     }
 
     protected async slurpLogConfigFile(filename: string): Promise<void> {
@@ -132,6 +195,7 @@ export class LogLevelCliContribution implements CliContribution {
 
             this._defaultLogLevel = newDefaultLogLevel;
             this._logLevels = newLogLevels;
+            this.wildcardRegexCache.clear();
 
             console.log(`Successfully read new log config from ${filename}.`);
         } catch (e) {
@@ -144,13 +208,23 @@ export class LogLevelCliContribution implements CliContribution {
     }
 
     logLevelFor(loggerName: string): LogLevel {
-        const level = this._logLevels[loggerName];
-
-        if (level !== undefined) {
-            return level;
-        } else {
-            return this.defaultLogLevel;
+        if (loggerName in this._logLevels) {
+            return this._logLevels[loggerName];
         }
+
+        const keys = Object.keys(this._logLevels);
+        for (let i = keys.length - 1; i >= 0; i--) {
+            const pattern = keys[i];
+
+            if (pattern.includes('*')) {
+                const regex = this.getWildcardRegex(pattern);
+                if (regex.test(loggerName)) {
+                    return this._logLevels[pattern];
+                }
+            }
+        }
+
+        return this.defaultLogLevel;
     }
 
     /**
@@ -164,5 +238,19 @@ export class LogLevelCliContribution implements CliContribution {
         }
 
         return level;
+    }
+
+    /**
+     * Converts a wildcard string into a strict regular expression and caches it.
+     * Example: "ai-core*" -> /^ai-core.*$/
+     */
+    protected getWildcardRegex(pattern: string): RegExp {
+        let regex = this.wildcardRegexCache.get(pattern);
+        if (!regex) {
+            const escapedPattern = pattern.split('*').map(escapeRegExpCharacters).join('.*');
+            regex = new RegExp(`^${escapedPattern}$`);
+            this.wildcardRegexCache.set(pattern, regex);
+        }
+        return regex;
     }
 }

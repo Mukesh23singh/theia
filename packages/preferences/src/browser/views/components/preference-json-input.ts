@@ -1,31 +1,32 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { PreferenceLeafNodeRenderer } from './preference-node-renderer';
-import { injectable, inject } from '@theia/core/shared/inversify';
-import { CommandService } from '@theia/core/lib/common';
-import { PreferencesCommands } from '../../util/preference-types';
-import { JSONValue } from '@theia/core/shared/@phosphor/coreutils';
+import { PreferenceLeafNodeRenderer, PreferenceNodeRenderer } from './preference-node-renderer.js';
+import { injectable, inject, interfaces } from '@theia/core/shared/inversify';
+import { CommandService, nls } from '@theia/core/lib/common';
+import { Preference, PreferencesCommands } from '../../util/preference-types.js';
+import { JSONValue } from '@theia/core/shared/@lumino/coreutils';
+import { PreferenceLeafNodeRendererContribution } from './preference-node-renderer-creator.js';
 
 @injectable()
 export class PreferenceJSONLinkRenderer extends PreferenceLeafNodeRenderer<JSONValue, HTMLAnchorElement> {
     @inject(CommandService) protected readonly commandService: CommandService;
 
     protected createInteractable(parent: HTMLElement): void {
-        const message = 'Edit in settings.json';
+        const message = nls.localizeByDefault('Edit in settings.json');
         const interactable = document.createElement('a');
         this.interactable = interactable;
         interactable.classList.add('theia-json-input');
@@ -59,5 +60,19 @@ export class PreferenceJSONLinkRenderer extends PreferenceLeafNodeRenderer<JSONV
 
     protected handleUserInteraction(): void {
         this.commandService.executeCommand(PreferencesCommands.OPEN_PREFERENCES_JSON_TOOLBAR.id, this.id);
+    }
+}
+
+@injectable()
+export class PreferenceJSONLinkRendererContribution extends PreferenceLeafNodeRendererContribution {
+    static ID = 'preference-json-link-renderer';
+    id = PreferenceJSONLinkRendererContribution.ID;
+
+    canHandleLeafNode(_node: Preference.LeafNode): number {
+        return 1;
+    }
+
+    createLeafNodeRenderer(container: interfaces.Container): PreferenceNodeRenderer {
+        return container.get(PreferenceJSONLinkRenderer);
     }
 }

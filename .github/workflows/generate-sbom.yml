@@ -1,0 +1,67 @@
+name: Generate NPM SBOM
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version"
+        default: "master"
+        required: true
+
+env:
+  NODE_VERSION: "24.x"
+  REGISTRY_URL: "https://registry.npmjs.org"
+  PRODUCT_PATH: "./"
+  CDXGEN_VERSION: "11.7.0"
+
+permissions:
+  contents: read
+
+jobs:
+  generate-sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-22.04
+    permissions:
+      id-token: write
+      packages: read
+
+    steps:
+      - name: Extract version
+        id: version
+        run: |
+          VERSION="${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.version }}"
+          echo "PROJECT_VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Product version: $VERSION"
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.version.outputs.PROJECT_VERSION }}
+
+      - name: Setup Node SDK
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: ${{ env.REGISTRY_URL }}
+
+      - name: Install dependencies
+        run: |
+          npm ci
+
+      - name: Install cdxgen
+        run: |
+          npm install -g @cyclonedx/cdxgen@${{ env.CDXGEN_VERSION }}
+
+      - name: Generate SBOM
+        run: |
+          cdxgen -r -o ${{ env.PRODUCT_PATH }}bom.json
+
+      - name: Upload SBOM
+        uses: eclipse-csi/workflows/upload-sbom@d83da6f2897e985d9d2b9541174c7ee5ee6d88ad # main
+        with:
+          sbom-file: ${{ env.PRODUCT_PATH }}/bom.json
+          product-name: "theia"
+          product-version: ${{ steps.version.outputs.PROJECT_VERSION }}

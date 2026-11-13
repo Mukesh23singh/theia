@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -20,18 +20,17 @@
 /**
  * based on https://github.com/Microsoft/vscode/blob/bf9a27ec01f2ef82fc45f69e0c946c7d74a57d3e/src/vs/workbench/api/node/extHostDocumentSaveParticipant.ts
  */
-import { DocumentsExt, ModelChangedEvent, PLUGIN_RPC_CONTEXT, DocumentsMain, SingleEditOperation } from '../common/plugin-api-rpc';
-import { URI } from './types-impl';
-import { UriComponents } from '../common/uri-components';
-import { RPCProtocol } from '../common/rpc-protocol';
+import { DocumentsExt, ModelChangedEvent, PLUGIN_RPC_CONTEXT, DocumentsMain, SingleEditOperation } from '../common/plugin-api-rpc.js';
+import { TextEdit, URI } from './types-impl.js';
+import { UriComponents } from '../common/uri-components.js';
+import { RPCProtocol } from '../common/rpc-protocol.js';
 import { Emitter, Event } from '@theia/core/lib/common/event';
 import * as theia from '@theia/plugin';
-import { DocumentDataExt, setWordDefinitionFor } from './document-data';
-import { EditorsAndDocumentsExtImpl } from './editors-and-documents';
-import * as Converter from './type-converters';
+import { DocumentDataExt, setWordDefinitionFor } from './document-data.js';
+import { EditorsAndDocumentsExtImpl } from './editors-and-documents.js';
+import * as Converter from './type-converters.js';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
-import { Range, TextDocumentShowOptions } from '../common/plugin-api-rpc-model';
-import { TextEdit } from './types-impl';
+import { Range, TextDocumentShowOptions } from '../common/plugin-api-rpc-model.js';
 
 export class DocumentsExtImpl implements DocumentsExt {
     private toDispose = new DisposableCollection();
@@ -159,12 +158,27 @@ export class DocumentsExtImpl implements DocumentsExt {
         const uriString = uri.toString();
         const data = this.editorsAndDocuments.getDocument(uriString);
         if (!data) {
-            throw new Error('unknown document');
+            throw new Error('unknown document: ' + uriString);
         }
         data.acceptIsDirty(isDirty);
         this._onDidChangeDocument.fire({
             document: data.document,
-            contentChanges: []
+            contentChanges: [],
+            reason: undefined,
+        });
+    }
+    $acceptEncodingChanged(strUrl: UriComponents, encoding: string): void {
+        const uri = URI.revive(strUrl);
+        const uriString = uri.toString();
+        const data = this.editorsAndDocuments.getDocument(uriString);
+        if (!data) {
+            throw new Error('unknown document: ' + uriString);
+        }
+        data.acceptEncoding(encoding);
+        this._onDidChangeDocument.fire({
+            document: data.document,
+            contentChanges: [],
+            reason: undefined,
         });
     }
     $acceptModelChanged(strUrl: UriComponents, e: ModelChangedEvent, isDirty: boolean): void {
@@ -172,19 +186,19 @@ export class DocumentsExtImpl implements DocumentsExt {
         const uriString = uri.toString();
         const data = this.editorsAndDocuments.getDocument(uriString);
         if (!data) {
-            throw new Error('unknown document');
+            throw new Error('unknown document: ' + uriString);
         }
         data.acceptIsDirty(isDirty);
         data.onEvents(e);
         this._onDidChangeDocument.fire({
             document: data.document,
-            contentChanges: e.changes.map(change =>
-                ({
-                    range: Converter.toRange(change.range),
-                    rangeOffset: change.rangeOffset,
-                    rangeLength: change.rangeLength,
-                    text: change.text
-                }))
+            reason: e.reason,
+            contentChanges: e.changes.map(change => ({
+                range: Converter.toRange(change.range),
+                rangeOffset: change.rangeOffset,
+                rangeLength: change.rangeLength,
+                text: change.text
+            }))
         });
     }
     getAllDocumentData(): DocumentDataExt[] {
@@ -238,13 +252,16 @@ export class DocumentsExtImpl implements DocumentsExt {
         }
     }
 
-    async openDocument(uri: URI): Promise<DocumentDataExt | undefined> {
+    async openDocument(uri: URI, options?: { language?: string; content?: string; encoding?: string }): Promise<DocumentDataExt | undefined> {
+        // If we have the document cached and no encoding options are provided,
+        // we should just return current document
         const cached = this.editorsAndDocuments.getDocument(uri.toString());
         if (cached) {
-            return cached;
+            if (!options?.encoding || options.encoding === cached.document.encoding) {
+                return cached;
+            }
         }
-
-        await this.proxy.$tryOpenDocument(uri);
+        await this.proxy.$tryOpenDocument(uri, options?.encoding);
         return this.editorsAndDocuments.getDocument(uri.toString());
     }
 
@@ -272,7 +289,7 @@ export class DocumentsExtImpl implements DocumentsExt {
         return this.editorsAndDocuments.getDocument(uri.toString());
     }
 
-    async createDocumentData(options?: { language?: string; content?: string }): Promise<URI> {
+    async createDocumentData(options?: { language?: string; content?: string, encoding?: string }): Promise<URI> {
         return this.proxy.$tryCreateDocument(options).then(data => URI.revive(data));
     }
 

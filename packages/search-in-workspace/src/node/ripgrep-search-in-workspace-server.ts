@@ -1,27 +1,28 @@
-/********************************************************************************
- * Copyright (C) 2017-2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017-2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as fs from '@theia/core/shared/fs-extra';
 import * as path from 'path';
 import { ILogger } from '@theia/core';
+import { BundledResourceProvider } from '@theia/core/lib/node';
 import { RawProcess, RawProcessFactory, RawProcessOptions } from '@theia/process/lib/node';
-import { FileUri } from '@theia/core/lib/node/file-uri';
+import { FileUri } from '@theia/core/lib/common/file-uri';
 import URI from '@theia/core/lib/common/uri';
-import { inject, injectable } from '@theia/core/shared/inversify';
-import { SearchInWorkspaceServer, SearchInWorkspaceOptions, SearchInWorkspaceResult, SearchInWorkspaceClient, LinePreview } from '../common/search-in-workspace-interface';
+import { inject, injectable, named } from '@theia/core/shared/inversify';
+import { SearchInWorkspaceServer, SearchInWorkspaceOptions, SearchInWorkspaceResult, SearchInWorkspaceClient, LinePreview } from '../common/search-in-workspace-interface.js';
 
 export const RgPath = Symbol('RgPath');
 
@@ -86,8 +87,12 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
     @inject(RgPath)
     protected readonly rgPath: string;
 
+    @inject(BundledResourceProvider)
+    protected readonly bundledResourceProvider: BundledResourceProvider;
+
     constructor(
-        @inject(ILogger) protected readonly logger: ILogger,
+        @inject(ILogger) @named('search-in-workspace:RipgrepSearchInWorkspaceServer')
+        protected readonly logger: ILogger,
         @inject(RawProcessFactory) protected readonly rawProcessFactory: RawProcessFactory,
     ) { }
 
@@ -95,11 +100,28 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         this.client = client;
     }
 
+    /**
+     * Resolve the ripgrep binary to a path that can be spawned, which is not the case for a binary packaged into an asar archive.
+     */
+    protected async resolveRgPath(): Promise<string> {
+        try {
+            return await this.bundledResourceProvider.resolveExternalPath(this.rgPath);
+        } catch (error) {
+            // Spawn the binary as configured to report the failure to the client.
+            this.logger.warn(`Could not resolve the ripgrep binary '${this.rgPath}'.`, error);
+            return this.rgPath;
+        }
+    }
+
     protected getArgs(options?: SearchInWorkspaceOptions): string[] {
         const args = new Set<string>();
 
         args.add('--hidden');
         args.add('--json');
+
+        if (options?.multiline) {
+            args.add('--multiline');
+        }
 
         if (options?.matchCase) {
             args.add('--case-sensitive');
@@ -122,6 +144,10 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
 
         if (options?.exclude) {
             this.addGlobArgs(args, options.exclude, true);
+        }
+
+        if (options?.followSymlinks) {
+            args.add('--follow');
         }
 
         if (options?.useRegExp || options?.matchWholeWord) {
@@ -212,7 +238,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         const rootPaths = rootUris.map(root => FileUri.fsPath(root));
         // If there are absolute paths in `include` we will remove them and use
         // those as paths to search from.
-        const searchPaths = this.extractSearchPathsFromIncludes(rootPaths, options);
+        const searchPaths = await this.extractSearchPathsFromIncludes(rootPaths, options);
         options.include = this.replaceRelativeToAbsolute(searchPaths, options.include);
         options.exclude = this.replaceRelativeToAbsolute(searchPaths, options.exclude);
         const rgArgs = this.getArgs(options);
@@ -230,7 +256,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
 
         const args = [...rgArgs, what, ...searchPaths];
         const processOptions: RawProcessOptions = {
-            command: this.rgPath,
+            command: await this.resolveRgPath(),
             args
         };
 
@@ -331,7 +357,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
                             }
                             const character = (start < prefixLength ? start : prefixLength) + prefix.length + 1;
                             lineInfo = <LinePreview>{
-                                text: prefix + lineInfo.substr(start, length),
+                                text: prefix + lineInfo.substring(start, start + length),
                                 character
                             };
                         }
@@ -384,23 +410,27 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
      * Any pattern that resulted in a valid search path will be removed from the 'include' list as it is
      * provided as an equivalent search path instead.
      */
-    protected extractSearchPathsFromIncludes(rootPaths: string[], options: SearchInWorkspaceOptions): string[] {
+    protected async extractSearchPathsFromIncludes(rootPaths: string[], options: SearchInWorkspaceOptions): Promise<string[]> {
         if (!options.include) {
             return rootPaths;
         }
         const resolvedPaths = new Set<string>();
-        options.include = options.include.filter(pattern => {
+        const include: string[] = [];
+        for (const pattern of options.include) {
             let keep = true;
             for (const root of rootPaths) {
-                const absolutePath = this.getAbsolutePathFromPattern(root, pattern);
+                const absolutePath = await this.getAbsolutePathFromPattern(root, pattern);
                 // undefined means the pattern cannot be converted into an absolute path
                 if (absolutePath) {
                     resolvedPaths.add(absolutePath);
                     keep = false;
                 }
             }
-            return keep;
-        });
+            if (keep) {
+                include.push(pattern);
+            }
+        }
+        options.include = include;
         return resolvedPaths.size > 0
             ? Array.from(resolvedPaths)
             : rootPaths;
@@ -413,7 +443,7 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
      *
      * @returns undefined if the pattern cannot be converted into an absolute path.
      */
-    protected getAbsolutePathFromPattern(root: string, pattern: string): string | undefined {
+    protected async getAbsolutePathFromPattern(root: string, pattern: string): Promise<string | undefined> {
         pattern = pattern.replace(/\\/g, '/');
         // The pattern is not referring to a single file or folder, i.e. not to be converted
         if (!path.isAbsolute(pattern) && !pattern.startsWith('./')) {
@@ -421,11 +451,11 @@ export class RipgrepSearchInWorkspaceServer implements SearchInWorkspaceServer {
         }
         // remove the `/**` suffix if present
         if (pattern.endsWith('/**')) {
-            pattern = pattern.substr(0, pattern.length - 3);
+            pattern = pattern.substring(0, pattern.length - 3);
         }
         // if `pattern` is absolute then `root` will be ignored by `path.resolve()`
         const targetPath = path.resolve(root, pattern);
-        if (fs.existsSync(targetPath)) {
+        if (await fs.pathExists(targetPath)) {
             return targetPath;
         }
         return undefined;

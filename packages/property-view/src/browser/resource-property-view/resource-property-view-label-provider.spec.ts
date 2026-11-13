@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { enableJSDOM } from '@theia/core/lib/browser/test/jsdom';
 
@@ -20,18 +20,14 @@ let disableJSDOM = enableJSDOM();
 
 import { expect } from 'chai';
 import { FrontendApplicationConfigProvider } from '@theia/core/lib/browser/frontend-application-config-provider';
-import { ApplicationProps } from '@theia/application-package/lib/application-props';
-FrontendApplicationConfigProvider.set({
-    ...ApplicationProps.DEFAULT.frontend.config
-});
+FrontendApplicationConfigProvider.set({});
 
 import { Container } from '@theia/core/shared/inversify';
 import { TreeNode } from '@theia/core/lib/browser/tree/tree';
-import { ResourcePropertiesLabelProvider } from './resource-property-view-label-provider';
+import { DEFAULT_INFO_ICON, ResourcePropertiesLabelProvider, } from './resource-property-view-label-provider.js';
 import { LabelProvider, LabelProviderContribution } from '@theia/core/lib/browser/label-provider';
 import { ContributionProvider } from '@theia/core/lib/common';
-import { ResourcePropertiesCategoryNode, ResourcePropertiesItemNode } from './resource-property-view-tree-items';
-import { DEFAULT_INFO_ICON } from './resource-property-view-label-provider';
+import { ResourcePropertiesCategoryNode, ResourcePropertiesItemNode } from './resource-property-view-tree-items.js';
 
 disableJSDOM();
 

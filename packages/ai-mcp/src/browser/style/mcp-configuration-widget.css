@@ -1,0 +1,166 @@
+/********************************************************************************
+ * Copyright (C) 2025 EclipseSource GmbH.
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License v. 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0.
+ *
+ * This Source Code may also be made available under the following Secondary
+ * Licenses when the conditions for such availability set forth in the Eclipse
+ * Public License v. 2.0 are satisfied: GNU General Public License, version 2
+ * with the GNU Classpath Exception which is available at
+ * https://www.gnu.org/software/classpath/license.html.
+ *
+ * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+ ********************************************************************************/
+
+/* MCP Server Configuration Widget Styles */
+
+/* Container */
+.mcp-configuration-container {
+  padding: calc(var(--theia-ui-padding) * 2);
+  max-width: 1200px;
+}
+
+.mcp-no-servers {
+  padding: calc(var(--theia-ui-padding) * 3);
+  text-align: center;
+  color: var(--theia-descriptionForeground);
+}
+
+/* Inline-editable server configuration form: give the label column more room than the read-only view and
+   let the control column fill the width, and align each label with the top of its (possibly multi-line) control. */
+.mcp-config-form .mcp-property-row {
+  grid-template-columns: 11em 1fr;
+  align-items: center;
+}
+
+.mcp-config-form .mcp-field-control {
+  min-width: 0;
+}
+
+/* Read-only value (e.g. the server type) shown inline in an otherwise editable form. */
+.mcp-field-static {
+  color: var(--theia-descriptionForeground);
+}
+
+/* Action Button */
+.mcp-action-button {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: calc(var(--theia-ui-padding) / 2);
+  color: var(--theia-icon-foreground);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: background-color 0.2s;
+  font-size: var(--theia-ui-font-size2);
+}
+
+.mcp-action-button:disabled {
+  cursor: default;
+}
+
+.mcp-action-button:disabled:hover {
+  background: inherit;
+}
+
+.mcp-action-button:hover {
+  background-color: var(--theia-list-hoverBackground);
+}
+
+/* Server Content - Property Rows */
+.mcp-property-row {
+  display: grid;
+  grid-template-columns: 6em 1fr;
+  gap: calc(var(--theia-ui-padding) * 2);
+  align-items: start;
+  padding: calc(var(--theia-ui-padding) / 2) 0;
+}
+
+.mcp-property-label {
+  font-weight: 500;
+  color: var(--theia-descriptionForeground);
+  text-align: left;
+}
+
+.mcp-property-value {
+  color: var(--theia-foreground);
+  word-break: break-word;
+}
+
+.mcp-property-value code {
+  background-color: var(--theia-editorWidget-background);
+  padding: calc(var(--theia-ui-padding) / 4) calc(var(--theia-ui-padding) / 2);
+  border-radius: 3px;
+  font-family: var(--monaco-monospace-font);
+  font-size: var(--theia-ui-font-size0);
+  border: var(--theia-border-width) solid var(--theia-widget-border);
+}
+
+/* Toolbar of "copy all …" actions above the tools list. */
+.mcp-tools-actions {
+  display: flex;
+  gap: calc(var(--theia-ui-padding) / 2);
+}
+
+.mcp-copy-tool-button {
+  background: transparent;
+  border: none;
+  padding: calc(var(--theia-ui-padding) / 4);
+  cursor: pointer;
+  font-size: var(--theia-ui-font-size0);
+  color: var(--theia-icon-foreground);
+  white-space: nowrap;
+  opacity: 0.8;
+  transition: opacity 0.1s;
+}
+
+.mcp-copy-tool-button:hover {
+  opacity: 1;
+}
+
+/* Header Actions */
+.mcp-header-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--theia-ui-padding);
+  margin-bottom: calc(var(--theia-ui-padding) * 2);
+}
+
+.mcp-header-actions .theia-button {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--theia-ui-padding) / 2);
+}
+
+/* Delete Button */
+.mcp-action-button.mcp-delete-button {
+  color: var(--theia-errorForeground);
+}
+
+.mcp-action-button.mcp-delete-button:hover {
+  background-color: var(--theia-errorBackground);
+  /* `errorBackground` is undefined in the high-contrast themes, so the hover needs a ring there instead;
+     `contrastActiveBorder` exists only in those themes. */
+  outline: 1px dotted var(--theia-contrastActiveBorder, transparent);
+  outline-offset: -1px;
+}
+
+/* Agent Plugin paths: displayed, never editable - `@theia/ai-registry` derives them from where the
+   plugin was installed, so the server form shows them without an input. */
+.mcp-property-readonly {
+  color: var(--theia-descriptionForeground);
+  word-break: break-all;
+}
+
+.mcp-property-variable {
+  margin-left: calc(var(--theia-ui-padding) / 2);
+  padding: 0 4px;
+  border: 1px solid var(--theia-panel-border);
+  border-radius: 3px;
+  font-size: calc(var(--theia-ui-font-size0) * 0.9);
+  color: var(--theia-descriptionForeground);
+}

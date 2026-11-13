@@ -1,22 +1,22 @@
-/********************************************************************************
- * Copyright (C) 2021 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable } from '@theia/core/shared/inversify';
 import { Emitter, Event, Disposable, DisposableCollection } from '@theia/core';
-import { ConsoleSession } from './console-session';
+import { ConsoleSession } from './console-session.js';
 import { Severity } from '@theia/core/lib/common/severity';
 
 @injectable()
@@ -109,10 +109,12 @@ export class ConsoleSessionManager implements Disposable {
     delete(id: string): void {
         const session = this.sessions.get(id);
         if (this.sessions.delete(id) && session) {
-            this.sessionDeletedEmitter.fire(session);
-            if (this.sessions.size === 0) {
-                this.selectedSessionChangedEmitter.fire(undefined);
+            if (this.selectedSession === session) {
+                // select a new sessions or undefined if none are left
+                this.selectedSession = this.sessions.values().next().value;
             }
+            session.dispose();
+            this.sessionDeletedEmitter.fire(session);
         }
     }
 

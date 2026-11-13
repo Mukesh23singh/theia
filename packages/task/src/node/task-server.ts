@@ -1,21 +1,21 @@
-/********************************************************************************
- * Copyright (C) 2017 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { inject, injectable, named } from '@theia/core/shared/inversify';
-import { Disposable, DisposableCollection, ILogger } from '@theia/core/lib/common/';
+import { Disposable, DisposableCollection, ILogger } from '@theia/core/lib/common';
 import {
     TaskClient,
     TaskExitedEvent,
@@ -25,13 +25,13 @@ import {
     TaskOutputProcessedEvent,
     RunTaskOption,
     BackgroundTaskEndedEvent
-} from '../common';
-import { TaskManager } from './task-manager';
-import { TaskRunnerRegistry } from './task-runner';
-import { Task } from './task';
-import { ProcessTask } from './process/process-task';
-import { ProblemCollector } from './task-problem-collector';
-import { CustomTask } from './custom/custom-task';
+} from '../common/index.js';
+import { TaskManager } from './task-manager.js';
+import { TaskRunnerRegistry } from './task-runner.js';
+import { Task } from './task.js';
+import { ProcessTask } from './process/process-task.js';
+import { ProblemCollector } from './task-problem-collector.js';
+import { CustomTask } from './custom/custom-task.js';
 
 @injectable()
 export class TaskServerImpl implements TaskServer, Disposable {
@@ -45,7 +45,7 @@ export class TaskServerImpl implements TaskServer, Disposable {
     // Currently there is only one property ('isActive'), but in the future we may want to store more properties
     protected readonly backgroundTaskStatusMap = new Map<number, { 'isActive': boolean }>();
 
-    @inject(ILogger) @named('task')
+    @inject(ILogger) @named('task:TaskServerImpl')
     protected readonly logger: ILogger;
 
     @inject(TaskManager)
@@ -90,7 +90,9 @@ export class TaskServerImpl implements TaskServer, Disposable {
     }
 
     async run(taskConfiguration: TaskConfiguration, ctx?: string, option?: RunTaskOption): Promise<TaskInfo> {
-        const runner = this.runnerRegistry.getRunner(taskConfiguration.type, taskConfiguration.taskType);
+        const runner = taskConfiguration.executionType ?
+            this.runnerRegistry.getRunner(taskConfiguration.type, taskConfiguration.executionType) :
+            this.runnerRegistry.getRunner(taskConfiguration.type);
         const task = await runner.run(taskConfiguration, ctx);
 
         if (!this.toDispose.has(task.id)) {
@@ -161,7 +163,7 @@ export class TaskServerImpl implements TaskServer, Disposable {
         this.toDispose.get(task.id)!.push(task);
 
         const taskInfo = await task.getRuntimeInfo();
-        this.fireTaskCreatedEvent(taskInfo);
+        this.fireTaskCreatedEvent(taskInfo, task);
         return taskInfo;
     }
 

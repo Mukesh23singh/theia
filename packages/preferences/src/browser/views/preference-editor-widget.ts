@@ -1,49 +1,47 @@
-/********************************************************************************
- * Copyright (C) 2020 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { postConstruct, injectable, inject } from '@theia/core/shared/inversify';
-import throttle = require('@theia/core/shared/lodash.throttle');
+import throttle from '@theia/core/shared/lodash.throttle';
+import deepEqual from 'fast-deep-equal';
 import {
-    PreferenceService,
     CompositeTreeNode,
     SelectableTreeNode,
-    StatefulWidget,
     TopDownTreeIterator,
-    PreferenceChanges,
     ExpandableTreeNode,
 } from '@theia/core/lib/browser';
-import { unreachable } from '@theia/core/lib/common';
-import { BaseWidget, DEFAULT_SCROLL_OPTIONS, } from '@theia/core/lib/browser/widgets/widget';
-import { PreferenceTreeModel, PreferenceFilterChangeEvent, PreferenceFilterChangeSource } from '../preference-tree-model';
-import { PreferenceNodeRendererFactory, GeneralPreferenceNodeRenderer } from './components/preference-node-renderer';
-import { Preference } from '../util/preference-types';
-import { COMMONLY_USED_SECTION_PREFIX } from '../util/preference-tree-generator';
-import { PreferencesScopeTabBar } from './preference-scope-tabbar-widget';
-
-export interface PreferencesEditorState {
-    firstVisibleChildID: string,
-}
+import {
+    Disposable, DisposableCollection, nls, PreferenceProviderDataChanges,
+    PreferenceProviderProvider, PreferenceSchemaService, PreferenceService, unreachable
+} from '@theia/core';
+import { BaseWidget, DEFAULT_SCROLL_OPTIONS } from '@theia/core/lib/browser/widgets/widget';
+import { PreferenceTreeModel, PreferenceFilterChangeEvent, PreferenceFilterChangeSource } from '../preference-tree-model.js';
+import { PreferenceNodeRendererFactory, GeneralPreferenceNodeRenderer } from './components/preference-node-renderer.js';
+import { Preference } from '../util/preference-types.js';
+import { PreferencesScopeTabBar } from './preference-scope-tabbar-widget.js';
+import { PreferenceNodeRendererCreatorRegistry } from './components/preference-node-renderer-creator.js';
+import { COMMONLY_USED_SECTION_PREFIX } from '../util/preference-layout.js';
 
 @injectable()
-export class PreferencesEditorWidget extends BaseWidget implements StatefulWidget {
+export class PreferencesEditorWidget extends BaseWidget {
     static readonly ID = 'settings.editor';
-    static readonly LABEL = 'Settings Editor';
+    static readonly LABEL = nls.localizeByDefault('Settings Editor');
 
-    scrollOptions = DEFAULT_SCROLL_OPTIONS;
+    override scrollOptions = DEFAULT_SCROLL_OPTIONS;
 
     protected scrollContainer: HTMLDivElement;
     /**
@@ -56,28 +54,43 @@ export class PreferencesEditorWidget extends BaseWidget implements StatefulWidge
     protected lastUserSelection = '';
     protected isAtScrollTop = true;
     protected firstVisibleChildID = '';
+    /**
+     * Tracks the node ID of the preference row the user last focused.
+     * Used to scroll back to that preference when the search filter is cleared.
+     */
+    protected lastFocusedRendererNodeId = '';
     protected renderers = new Map<string, GeneralPreferenceNodeRenderer>();
+    protected preferenceDataKeys = new Map<string, string>();
     // The commonly used section will duplicate preference ID's, so we'll keep a separate list of them.
     protected commonlyUsedRenderers = new Map<string, GeneralPreferenceNodeRenderer>();
 
     @inject(PreferenceService) protected readonly preferenceService: PreferenceService;
     @inject(PreferenceTreeModel) protected readonly model: PreferenceTreeModel;
     @inject(PreferenceNodeRendererFactory) protected readonly rendererFactory: PreferenceNodeRendererFactory;
+    @inject(PreferenceNodeRendererCreatorRegistry) protected readonly rendererRegistry: PreferenceNodeRendererCreatorRegistry;
+    @inject(PreferenceSchemaService) protected readonly schemaProvider: PreferenceSchemaService;
     @inject(PreferencesScopeTabBar) protected readonly tabbar: PreferencesScopeTabBar;
+    @inject(PreferenceProviderProvider) protected readonly providerProvider: PreferenceProviderProvider;
 
     @postConstruct()
-    protected async init(): Promise<void> {
+    protected init(): void {
+        this.doInit();
+    }
+
+    protected async doInit(): Promise<void> {
+
         this.id = PreferencesEditorWidget.ID;
         this.title.label = PreferencesEditorWidget.LABEL;
         this.addClass('settings-main');
         this.toDispose.pushAll([
-            this.preferenceService.onPreferencesChanged(e => this.handlePreferenceChanges(e)),
+            this.subscribeToPreferenceProviderChanges(),
             this.model.onFilterChanged(e => this.handleDisplayChange(e)),
             this.model.onSelectionChanged(e => this.handleSelectionChange(e)),
         ]);
         this.createContainers();
         await this.preferenceService.ready;
         this.handleDisplayChange({ source: PreferenceFilterChangeSource.Schema });
+        this.rendererRegistry.onDidChange(() => this.handleRegistryChange());
     }
 
     protected createContainers(): void {
@@ -85,19 +98,43 @@ export class PreferencesEditorWidget extends BaseWidget implements StatefulWidge
         innerWrapper.classList.add('settings-main-scroll-container');
         this.scrollContainer = innerWrapper;
         innerWrapper.addEventListener('scroll', this.onScroll, { passive: true });
+        innerWrapper.addEventListener('focusin', e => {
+            const target = e.target;
+            if (target instanceof HTMLElement) {
+                const prefRow = target.closest('.single-pref');
+                const nodeId = prefRow?.getAttribute('data-node-id');
+                if (nodeId) {
+                    this.lastFocusedRendererNodeId = nodeId;
+                }
+            }
+        });
         this.node.appendChild(innerWrapper);
         const noLeavesMessage = document.createElement('div');
         noLeavesMessage.classList.add('settings-no-results-announcement');
-        noLeavesMessage.textContent = 'That search query has returned no results.';
+        noLeavesMessage.textContent = nls.localizeByDefault('No Settings Found');
         this.node.appendChild(noLeavesMessage);
+    }
+
+    protected subscribeToPreferenceProviderChanges(): Disposable {
+        const res = new DisposableCollection();
+        for (const scope of this.schemaProvider.validScopes) {
+            const provider = this.providerProvider(scope);
+            if (!provider) { continue; }
+            provider.onDidPreferencesChanged(e => this.handlePreferenceChanges(e), this, res);
+        }
+        return res;
     }
 
     protected handleDisplayChange(e: PreferenceFilterChangeEvent): void {
         const { isFiltered } = this.model;
-        const currentFirstVisible = this.firstVisibleChildID;
         const leavesAreVisible = this.areLeavesVisible();
+        // Capture scroll target before handlers modify visibility / DOM layout.
+        const scrollTarget = this.getScrollTarget(e.source);
+
         if (e.source === PreferenceFilterChangeSource.Search) {
             this.handleSearchChange(isFiltered, leavesAreVisible);
+        } else if (e.source === PreferenceFilterChangeSource.Category) {
+            this.handleCategoryChange(isFiltered, leavesAreVisible);
         } else if (e.source === PreferenceFilterChangeSource.Scope) {
             this.handleScopeChange(isFiltered);
         } else if (e.source === PreferenceFilterChangeSource.Schema) {
@@ -105,12 +142,65 @@ export class PreferencesEditorWidget extends BaseWidget implements StatefulWidge
         } else {
             unreachable(e.source, 'Not all PreferenceFilterChangeSource enum variants handled.');
         }
-        this.resetScroll(currentFirstVisible, e.source === PreferenceFilterChangeSource.Search && !isFiltered);
+
+        // Only sync the tree to a row that is still shown. A row hidden by the change, e.g. because
+        // it is not valid in the new scope or lies outside the selected category, must not pull the
+        // tree selection away from the page that is shown.
+        if (scrollTarget && this.isRendererVisible(scrollTarget)) {
+            this.showInTree(scrollTarget);
+        }
+        this.resetScroll(scrollTarget);
+        this.pinCategoryHeaders();
+
+        if (e.source === PreferenceFilterChangeSource.Search) {
+            // Reset focus if search context changes.
+            this.lastFocusedRendererNodeId = '';
+        }
+    }
+
+    protected getScrollTarget(source: PreferenceFilterChangeSource): string | undefined {
+        if (source === PreferenceFilterChangeSource.Category) {
+            // A newly selected category always opens at its top. Scrolling back to the last focused
+            // control would re-select its (previous) category in the tree and desync tree and editor.
+            return undefined;
+        }
+        if (source !== PreferenceFilterChangeSource.Search) {
+            return this.firstVisibleChildID;
+        }
+        if (!this.model.isFiltered && this.lastFocusedRendererNodeId && this.isRendererInViewport(this.lastFocusedRendererNodeId)) {
+            return this.lastFocusedRendererNodeId;
+        }
+        return undefined;
+    }
+
+    protected isRendererVisible(nodeId: string): boolean {
+        const { id, collection } = this.analyzeIDAndGetRendererGroup(nodeId);
+        return !!collection.get(id)?.visible;
+    }
+
+    protected isRendererInViewport(nodeId: string): boolean {
+        const { id, collection } = this.analyzeIDAndGetRendererGroup(nodeId);
+        const renderer = collection.get(id);
+        if (!renderer?.visible) { return false; }
+        const scrollTop = this.scrollContainer.scrollTop;
+        const viewportBottom = scrollTop + this.scrollContainer.clientHeight;
+        const elementTop = renderer.node.offsetTop;
+        const elementBottom = elementTop + renderer.node.offsetHeight;
+        return elementTop < viewportBottom && elementBottom > scrollTop;
+    }
+
+    protected handleRegistryChange(): void {
+        for (const [id, renderer, collection] of this.allRenderers()) {
+            renderer.dispose();
+            collection.delete(id);
+        }
+        this.handleDisplayChange({ source: PreferenceFilterChangeSource.Schema });
     }
 
     protected handleSchemaChange(isFiltered: boolean): void {
         for (const [id, renderer, collection] of this.allRenderers()) {
-            if (!this.model.getNode(renderer.nodeId)) {
+            const node = this.model.getNode(renderer.nodeId);
+            if (!node || (Preference.LeafNode.is(node) && this.hasSchemaChanged(renderer, node))) {
                 renderer.dispose();
                 collection.delete(id);
             }
@@ -149,6 +239,10 @@ export class PreferencesEditorWidget extends BaseWidget implements StatefulWidge
         }
     }
 
+    protected hasSchemaChanged(renderer: GeneralPreferenceNodeRenderer, node: Preference.LeafNode): boolean {
+        return !deepEqual(renderer.schema, node.preference.data);
+    }
+
     protected handleSearchChange(isFiltered: boolean, leavesAreVisible: boolean): void {
         if (leavesAreVisible) {
             for (const [, renderer] of this.allRenderers()) {
@@ -156,6 +250,14 @@ export class PreferencesEditorWidget extends BaseWidget implements StatefulWidge
                 if (!isHidden) {
                     renderer.handleSearchChange?.(isFiltered);
                 }
+            }
+        }
+    }
+
+    protected handleCategoryChange(isFiltered: boolean, leavesAreVisible: boolean): void {
+        if (leavesAreVisible) {
+            for (const [, renderer] of this.allRenderers()) {
+                this.hideIfFailsFilters(renderer, isFiltered);
             }
         }
     }
@@ -176,11 +278,29 @@ export class PreferencesEditorWidget extends BaseWidget implements StatefulWidge
         }
     }
 
-    protected handlePreferenceChanges(e: PreferenceChanges): void {
-        for (const id of Object.keys(e)) {
-            this.commonlyUsedRenderers.get(id)?.handleValueChange?.();
-            this.renderers.get(id)?.handleValueChange?.();
+    protected handlePreferenceChanges(e: PreferenceProviderDataChanges): void {
+        for (const { preferenceName } of e) {
+            this.commonlyUsedRenderers.get(preferenceName)?.handleValueChange?.();
+            this.renderers.get(preferenceName)?.handleValueChange?.();
         }
+    }
+
+    /**
+     * Returns true if a category filter is active and `node` is outside the visible slice:
+     * not the selected category itself, not a descendant of it, and not one of its
+     * composite ancestors (whose headers we keep visible above the selected category).
+     * Keeps the left tree intact (filtering is applied here, not in the model).
+     */
+    protected isOutsideSelectedCategory(node: Preference.TreeNode): boolean {
+        const categoryId = this.model.categoryFilterId;
+        if (!categoryId || node.id === categoryId) {
+            return false;
+        }
+        const category = this.model.getNode(categoryId);
+        if (!CompositeTreeNode.is(category) || CompositeTreeNode.isAncestor(category, node)) {
+            return false;
+        }
+        return !(CompositeTreeNode.is(node) && CompositeTreeNode.isAncestor(node, category));
     }
 
     /**
@@ -188,7 +308,7 @@ export class PreferencesEditorWidget extends BaseWidget implements StatefulWidge
      */
     protected hideIfFailsFilters(renderer: GeneralPreferenceNodeRenderer, isFiltered: boolean): boolean {
         const row = this.model.currentRows.get(renderer.nodeId);
-        if (!row || (CompositeTreeNode.is(row.node) && (isFiltered || row.visibleChildren === 0))) {
+        if (!row || (CompositeTreeNode.is(row.node) && (isFiltered || row.visibleChildren === 0)) || this.isOutsideSelectedCategory(row.node)) {
             renderer.hide();
             return true;
         } else {
@@ -197,27 +317,91 @@ export class PreferencesEditorWidget extends BaseWidget implements StatefulWidge
         }
     }
 
-    protected resetScroll(nodeIDToScrollTo?: string, filterWasCleared: boolean = false): void {
+    /**
+     * Pins category header rows to the top of the scroll container via `position: sticky`.
+     * The headers of the selected category and its ancestors are stacked on top of each
+     * other; the headers of its subsections all share the single slot below that stack, so
+     * the subsection currently scrolled into view replaces the previous one instead of the
+     * headers piling up. Clears the styles when no category filter is active.
+     */
+    protected pinCategoryHeaders(): void {
+        requestAnimationFrame(() => {
+            const categoryId = this.model.categoryFilterId;
+            const stackedHeaders = this.getStackedHeaderRenderers();
+            // Read all heights before writing any styles, so that the layout is computed only once.
+            const heights = stackedHeaders.map(renderer => renderer.node.offsetHeight);
+            const stackedTops = new Map<string, number>();
+            let stackHeight = 0;
+            stackedHeaders.forEach((renderer, index) => {
+                stackedTops.set(renderer.nodeId, stackHeight);
+                stackHeight += heights[index];
+            });
+            for (const [, renderer] of this.allRenderers()) {
+                if (!CompositeTreeNode.is(this.model.getNode(renderer.nodeId))) {
+                    continue;
+                }
+                const wrapper = renderer.node;
+                if (categoryId && renderer.visible) {
+                    wrapper.classList.add('theia-settings-pinned-category-header');
+                    wrapper.style.top = `${stackedTops.get(renderer.nodeId) ?? stackHeight}px`;
+                } else {
+                    wrapper.classList.remove('theia-settings-pinned-category-header');
+                    wrapper.style.top = '';
+                }
+            }
+        });
+    }
+
+    /**
+     * @returns the visible header renderers of the selected category and its ancestors,
+     * outermost first, i.e. in document order. Empty if no category filter is active.
+     */
+    protected getStackedHeaderRenderers(): GeneralPreferenceNodeRenderer[] {
+        const renderers: GeneralPreferenceNodeRenderer[] = [];
+        const categoryId = this.model.categoryFilterId;
+        if (!categoryId) {
+            return renderers;
+        }
+        for (let node = this.model.getNode(categoryId); node && Preference.TreeNode.is(node); node = node.parent) {
+            const { id, collection } = this.analyzeIDAndGetRendererGroup(node.id);
+            const renderer = collection.get(id);
+            if (renderer?.visible) {
+                renderers.unshift(renderer);
+            }
+        }
+        return renderers;
+    }
+
+    /**
+     * @returns the total height of the pinned header stack, i.e. the space at the top of the
+     * scroll container that is covered by the headers of the selected category and its ancestors.
+     */
+    protected getStackedHeaderHeight(stackedHeaders: GeneralPreferenceNodeRenderer[] = this.getStackedHeaderRenderers()): number {
+        return stackedHeaders.reduce((height, renderer) => height + renderer.node.offsetHeight, 0);
+    }
+
+    protected resetScroll(nodeIDToScrollTo?: string): void {
         if (this.scrollBar) { // Absent on widget creation
-            this.doResetScroll(nodeIDToScrollTo, filterWasCleared);
+            this.doResetScroll(nodeIDToScrollTo);
         } else {
             const interval = setInterval(() => {
                 if (this.scrollBar) {
                     clearInterval(interval);
-                    this.doResetScroll(nodeIDToScrollTo, filterWasCleared);
+                    this.doResetScroll(nodeIDToScrollTo);
                 }
             }, 500);
         }
     }
 
-    protected doResetScroll(nodeIDToScrollTo?: string, filterWasCleared: boolean = false): void {
+    protected doResetScroll(nodeIDToScrollTo?: string): void {
         requestAnimationFrame(() => {
             this.scrollBar?.update();
-            if (!filterWasCleared && nodeIDToScrollTo) {
+            if (nodeIDToScrollTo) {
                 const { id, collection } = this.analyzeIDAndGetRendererGroup(nodeIDToScrollTo);
                 const renderer = collection.get(id);
                 if (renderer?.visible) {
-                    renderer.node.scrollIntoView();
+                    // Place the target right below the pinned category headers, not behind them.
+                    this.scrollContainer.scrollTo(0, renderer.node.offsetTop - this.getStackedHeaderHeight());
                     return;
                 }
             }
@@ -241,38 +425,56 @@ export class PreferencesEditorWidget extends BaseWidget implements StatefulWidge
     onScroll = throttle(this.doOnScroll.bind(this), 50);
 
     protected findFirstVisibleChildID(): string | undefined {
-        const { scrollTop } = this.scrollContainer;
+        // The pinned headers of the selected category and its ancestors always sit at the top of
+        // the scroll container. Skip them and look for the first row right below the stack,
+        // otherwise the outermost ancestor would always be reported and the tree selection would
+        // jump from the selected sub-category to its parent.
+        const stackedHeaders = this.getStackedHeaderRenderers();
+        const stackBottom = this.scrollContainer.scrollTop + this.getStackedHeaderHeight(stackedHeaders);
         for (const [, renderer] of this.allRenderers()) {
-            const { offsetTop, offsetHeight } = renderer.node;
-            if (Math.abs(offsetTop - scrollTop) <= offsetHeight / 2) {
+            const { offsetTop, offsetHeight, offsetParent } = renderer.node;
+            // Skip hidden renderers (display:none): they report offsetTop/offsetHeight 0
+            // and would otherwise match scrollTop===0, hijacking the selection back to
+            // the first hidden category.
+            if (!offsetParent || stackedHeaders.includes(renderer)) {
+                continue;
+            }
+            if (Math.abs(offsetTop - stackBottom) <= offsetHeight / 2) {
                 return renderer.nodeId;
             }
         }
     }
 
+    protected shouldUpdateModelSelection = true;
+
     protected setFirstVisibleChildID(id?: string): void {
         if (id && id !== this.firstVisibleChildID) {
             this.firstVisibleChildID = id;
-            let currentNode = this.model.getNode(id);
-            let expansionAncestor;
-            let selectionAncestor;
-            while (currentNode && (!expansionAncestor || !selectionAncestor)) {
-                if (!selectionAncestor && SelectableTreeNode.is(currentNode)) {
-                    selectionAncestor = currentNode;
-                }
-                if (!expansionAncestor && ExpandableTreeNode.is(currentNode)) {
-                    expansionAncestor = currentNode;
-                }
-                currentNode = currentNode.parent;
+            if (!this.shouldUpdateModelSelection) { return; }
+            this.showInTree(id);
+        }
+    }
+
+    protected showInTree(id: string): void {
+        let currentNode = this.model.getNode(id);
+        let expansionAncestor;
+        let selectionAncestor;
+        while (currentNode && (!expansionAncestor || !selectionAncestor)) {
+            if (!selectionAncestor && SelectableTreeNode.is(currentNode)) {
+                selectionAncestor = currentNode;
             }
-            if (selectionAncestor) {
-                this.currentModelSelectionId = selectionAncestor.id;
-                expansionAncestor = expansionAncestor ?? selectionAncestor;
-                this.model.selectIfNotSelected(selectionAncestor);
-                if (!this.model.isFiltered && id !== this.lastUserSelection) {
-                    this.lastUserSelection = '';
-                    this.model.collapseAllExcept(expansionAncestor);
-                }
+            if (!expansionAncestor && ExpandableTreeNode.is(currentNode)) {
+                expansionAncestor = currentNode;
+            }
+            currentNode = currentNode.parent;
+        }
+        if (selectionAncestor) {
+            this.currentModelSelectionId = selectionAncestor.id;
+            expansionAncestor = expansionAncestor ?? selectionAncestor;
+            this.model.selectIfNotSelected(selectionAncestor);
+            if (!this.model.isFiltered && id !== this.lastUserSelection) {
+                this.lastUserSelection = '';
+                this.model.collapseAllExcept(expansionAncestor);
             }
         }
     }
@@ -289,16 +491,24 @@ export class PreferencesEditorWidget extends BaseWidget implements StatefulWidge
                     if (renderer?.visible) {
                         // When filtered, treat the first visible child as the selected node, since it will be the one scrolled to.
                         this.lastUserSelection = renderer.nodeId;
-                        renderer.node.scrollIntoView();
+                        this.scrollWithoutModelUpdate(renderer.node);
                         return;
                     }
                 }
             } else {
                 const { id, collection } = this.analyzeIDAndGetRendererGroup(node.id);
                 const renderer = collection.get(id);
-                renderer?.node.scrollIntoView();
+                this.scrollWithoutModelUpdate(renderer?.node);
             }
         }
+    }
+
+    /** Ensures that we don't set the model's selection while attempting to scroll in reaction to a model selection change. */
+    protected scrollWithoutModelUpdate(node?: HTMLElement): void {
+        if (!node) { return; }
+        this.shouldUpdateModelSelection = false;
+        this.scrollContainer.scrollTo(0, node.offsetTop);
+        requestAnimationFrame(() => this.shouldUpdateModelSelection = true);
     }
 
     protected analyzeIDAndGetRendererGroup(nodeID: string): { id: string, group: string, collection: Map<string, GeneralPreferenceNodeRenderer> } {
@@ -307,18 +517,7 @@ export class PreferencesEditorWidget extends BaseWidget implements StatefulWidge
         return { id, group, collection };
     }
 
-    protected getScrollContainer(): HTMLElement {
+    protected override getScrollContainer(): HTMLElement {
         return this.scrollContainer;
-    }
-
-    storeState(): PreferencesEditorState {
-        return {
-            firstVisibleChildID: this.firstVisibleChildID,
-        };
-    }
-
-    restoreState(oldState: PreferencesEditorState): void {
-        this.firstVisibleChildID = oldState.firstVisibleChildID;
-        this.resetScroll(this.firstVisibleChildID);
     }
 }

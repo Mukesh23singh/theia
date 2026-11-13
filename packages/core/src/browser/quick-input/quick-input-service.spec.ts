@@ -1,21 +1,21 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as chai from 'chai';
-import { filterItems, findMatches, QuickPickItem } from './quick-input-service';
+import { filterItems, findMatches, QuickPickItem } from './quick-input-service.js';
 
 const expect = chai.expect;
 
@@ -23,11 +23,14 @@ describe('quick-input-service', () => {
 
     describe('#findMatches', () => {
 
-        it('should return the proper highlights when matches are found', () => {
+        it('should return a single contiguous range for substring matches', () => {
             expect(findMatches('abc', 'a')).deep.equal([{ start: 0, end: 1 }]);
-            expect(findMatches('abc', 'ab')).deep.equal([{ start: 0, end: 1 }, { start: 1, end: 2 }]);
+            expect(findMatches('abc', 'ab')).deep.equal([{ start: 0, end: 2 }]);
+            expect(findMatches('abc', 'abc')).deep.equal([{ start: 0, end: 3 }]);
+        });
+
+        it('should return per-character ranges for fuzzy-only matches', () => {
             expect(findMatches('abc', 'ac')).deep.equal([{ start: 0, end: 1 }, { start: 2, end: 3 }]);
-            expect(findMatches('abc', 'abc')).deep.equal([{ start: 0, end: 1 }, { start: 1, end: 2 }, { start: 2, end: 3 }]);
         });
 
         it('should fail when out of order', () => {
@@ -67,13 +70,11 @@ describe('quick-input-service', () => {
                 label: 'abc',
                 highlights: {
                     label: [
-                        { start: 0, end: 1 },
-                        { start: 1, end: 2 },
-                        { start: 2, end: 3 }
+                        { start: 0, end: 3 }
                     ]
                 }
             };
-            const result = filterItems(items, 'abc');
+            const result = filterItems(items, 'abc').filter(QuickPickItem.is);
             expect(result).length(1);
             expect(result[0].label).equal(expectation.label);
             expect(result[0].highlights?.label).deep.equal(expectation.highlights?.label);
@@ -89,7 +90,7 @@ describe('quick-input-service', () => {
                     ]
                 }
             };
-            const result = filterItems(items, 'v');
+            const result = filterItems(items, 'v').filter(QuickPickItem.is);
             expect(result).length(1);
             expect(result[0].label).equal(expectation.label);
             expect(result[0].description).equal(expectation.description);
@@ -108,7 +109,7 @@ describe('quick-input-service', () => {
                     ]
                 }
             };
-            const result = filterItems(items, 'y');
+            const result = filterItems(items, 'y').filter(QuickPickItem.is);
             expect(result).length(1);
             expect(result[0].label).equal(expectation.label);
             expect(result[0].description).equal(expectation.description);
@@ -135,7 +136,7 @@ describe('quick-input-service', () => {
                     ]
                 }
             };
-            const result = filterItems(items, 'z');
+            const result = filterItems(items, 'z').filter(QuickPickItem.is);
             expect(result).length(1);
 
             expect(result[0].label).equal(expectation.label);
@@ -152,23 +153,71 @@ describe('quick-input-service', () => {
                 label: 'abc',
                 highlights: {
                     label: [
-                        { start: 0, end: 1 },
-                        { start: 1, end: 2 },
-                        { start: 2, end: 3 }
+                        { start: 0, end: 3 }
                     ]
                 }
             };
-            let result = filterItems(items, 'abc');
+            let result = filterItems(items, 'abc').filter(QuickPickItem.is);
             expect(result).length(1);
             expect(result[0].label).equal(expectation.label);
             expect(result[0].highlights?.label).deep.equal(expectation.highlights?.label);
 
-            result = filterItems(items, '');
+            result = filterItems(items, '').filter(QuickPickItem.is);
             expect(result[0].highlights?.label).equal(undefined);
         });
 
         it('should return an empty list when no matches are found', () => {
             expect(filterItems(items, 'yyy')).deep.equal([]);
+        });
+
+        it('should rank substring matches before fuzzy-only matches', () => {
+            const testItems: QuickPickItem[] = [
+                { label: 'reformatting' },
+                { label: 'fontSize' },
+                { label: 'fontFamily' },
+            ];
+            const result = filterItems(testItems, 'font').filter(QuickPickItem.is);
+            expect(result).length(2);
+            expect(result[0].label).equal('fontSize');
+            expect(result[1].label).equal('fontFamily');
+        });
+
+        it('should rank prefix matches before other substring matches', () => {
+            const testItems: QuickPickItem[] = [
+                { label: 'setFont' },
+                { label: 'fontSize' },
+                { label: 'fontFamily' },
+            ];
+            const result = filterItems(testItems, 'font').filter(QuickPickItem.is);
+            expect(result).length(3);
+            expect(result[0].label).equal('fontSize');
+            expect(result[1].label).equal('fontFamily');
+            expect(result[2].label).equal('setFont');
+        });
+
+        it('should treat segmented prefix matches as prefix matches', () => {
+            const testItems: QuickPickItem[] = [
+                { label: 'backend-workspace-service.ts' },
+                { label: 'workspace-backend-service.ts' },
+            ];
+            const result = filterItems(testItems, 'works-ser').filter(QuickPickItem.is);
+            expect(result).length(2);
+            expect(result[0].label).equal('workspace-backend-service.ts');
+            expect(result[1].label).equal('backend-workspace-service.ts');
+        });
+
+        it('should drop separators when their group has no matches', () => {
+            const testItems = [
+                { type: 'separator' as const, label: 'Group A' },
+                { label: 'fontSize' },
+                { type: 'separator' as const, label: 'Group B' },
+                { label: 'xyz' },
+            ];
+            const result = filterItems(testItems, 'font');
+            // Group B's only item "xyz" doesn't match, so Group B separator is dropped
+            expect(result).length(2);
+            expect(result[0]).to.have.property('type', 'separator');
+            expect(result[1]).to.have.property('label', 'fontSize');
         });
 
     });

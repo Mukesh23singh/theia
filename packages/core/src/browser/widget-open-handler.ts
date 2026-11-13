@@ -1,30 +1,35 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { inject, postConstruct, injectable } from 'inversify';
-import URI from '../common/uri';
-import { MaybePromise, Emitter, Event } from '../common';
-import { BaseWidget } from './widgets';
-import { ApplicationShell } from './shell';
-import { OpenHandler, OpenerOptions } from './opener-service';
-import { WidgetManager } from './widget-manager';
+import { inject, optional, postConstruct, injectable } from 'inversify';
+import URI from '../common/uri.js';
+import { MaybePromise, Emitter, Event } from '../common/index.js';
+import { BaseWidget, ExtractableWidget } from './widgets/index.js';
+import { ApplicationShell } from './shell/index.js';
+import { OpenHandler, OpenerOptions } from './opener-service.js';
+import { WidgetManager } from './widget-manager.js';
+import { extractSecondaryWindow } from './secondary-window-handler.js';
+import { WindowFocusService } from './window/window-focus-service.js';
 
 export type WidgetOpenMode = 'open' | 'reveal' | 'activate';
 /**
- * `WidgetOpenerOptions` define serializable generic options used by the {@link WidgetOpenHandler}.
+ * `WidgetOpenerOptions` define generic options used by the {@link WidgetOpenHandler}.
+ *
+ * _Note:_ This object may contain references to widgets (e.g. `widgetOptions.ref`);
+ * these need to be transformed before it can be serialized.
  */
 export interface WidgetOpenerOptions extends OpenerOptions {
     /**
@@ -50,6 +55,9 @@ export abstract class WidgetOpenHandler<W extends BaseWidget> implements OpenHan
 
     @inject(WidgetManager)
     protected readonly widgetManager: WidgetManager;
+
+    @inject(WindowFocusService) @optional()
+    protected readonly windowFocusService: WindowFocusService | undefined;
 
     protected readonly onCreatedEmitter = new Emitter<W>();
     /**
@@ -87,22 +95,38 @@ export abstract class WidgetOpenHandler<W extends BaseWidget> implements OpenHan
      */
     async open(uri: URI, options?: WidgetOpenerOptions): Promise<W> {
         const widget = await this.getOrCreateWidget(uri, options);
-        await this.doOpen(widget, options);
+        await this.doOpen(widget, uri, options);
         return widget;
     }
-    protected async doOpen(widget: W, options?: WidgetOpenerOptions): Promise<void> {
+    protected async doOpen(widget: W, uri: URI, options?: WidgetOpenerOptions): Promise<void> {
         const op: WidgetOpenerOptions = {
             mode: 'activate',
             ...options
         };
         if (!widget.isAttached) {
-            this.shell.addWidget(widget, op.widgetOptions || { area: 'main' });
+            await this.shell.addWidget(widget, op.widgetOptions || this.getDefaultWidgetOptions(widget));
         }
         if (op.mode === 'activate') {
             await this.shell.activateWidget(widget.id);
         } else if (op.mode === 'reveal') {
             await this.shell.revealWidget(widget.id);
         }
+    }
+
+    /**
+     * The options to add a widget with if the opener options don't specify any: widgets are added to the main area,
+     * unless the user works in a secondary window. Then widgets that can be moved to secondary windows are added there,
+     * next to the current widget, like editors are opened in the active editor group in VS Code.
+     *
+     * @param widget the widget to add, if known already
+     */
+    protected getDefaultWidgetOptions(widget?: W): ApplicationShell.WidgetOptions {
+        const current = this.shell.currentWidget;
+        const secondaryWindow = current && extractSecondaryWindow(current);
+        if (secondaryWindow && secondaryWindow === this.windowFocusService?.focusedWindow && (!widget || ExtractableWidget.is(widget))) {
+            return { area: 'secondaryWindow', ref: current };
+        }
+        return { area: 'main' };
     }
 
     /**
@@ -143,12 +167,12 @@ export abstract class WidgetOpenHandler<W extends BaseWidget> implements OpenHan
 
     protected getWidget(uri: URI, options?: WidgetOpenerOptions): Promise<W | undefined> {
         const widgetOptions = this.createWidgetOptions(uri, options);
-        return this.widgetManager.getWidget<W>(this.id, widgetOptions);
+        return this.widgetManager.getWidget(this.id, widgetOptions);
     }
 
     protected getOrCreateWidget(uri: URI, options?: WidgetOpenerOptions): Promise<W> {
         const widgetOptions = this.createWidgetOptions(uri, options);
-        return this.widgetManager.getOrCreateWidget<W>(this.id, widgetOptions);
+        return this.widgetManager.getOrCreateWidget(this.id, widgetOptions);
     }
 
     protected abstract createWidgetOptions(uri: URI, options?: WidgetOpenerOptions): Object;
@@ -160,8 +184,6 @@ export abstract class WidgetOpenHandler<W extends BaseWidget> implements OpenHan
      * @returns a promise of all closed widgets that resolves after they have been closed.
      */
     async closeAll(options?: ApplicationShell.CloseOptions): Promise<W[]> {
-        const closed = await Promise.all(this.all.map(widget => this.shell.closeWidget(widget.id, options)));
-        return closed.filter(widget => !!widget) as W[];
+        return this.shell.closeMany(this.all, options) as Promise<W[]>;
     }
-
 }

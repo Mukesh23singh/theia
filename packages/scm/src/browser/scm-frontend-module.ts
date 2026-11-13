@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2019 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import '../../src/browser/style/index.css';
 
@@ -21,33 +21,35 @@ import {
     bindViewContribution, FrontendApplicationContribution,
     WidgetFactory, ViewContainer,
     WidgetManager, ApplicationShellLayoutMigration,
-    createTreeContainer, TreeWidget, TreeModel, TreeModelImpl
+    createTreeContainer, TreeModel, TreeModelImpl, StylingParticipant
 } from '@theia/core/lib/browser';
-import { ScmService } from './scm-service';
-import { SCM_WIDGET_FACTORY_ID, ScmContribution, SCM_VIEW_CONTAINER_ID, SCM_VIEW_CONTAINER_TITLE_OPTIONS } from './scm-contribution';
-import { ScmWidget } from './scm-widget';
-import { ScmTreeWidget } from './scm-tree-widget';
-import { ScmCommitWidget } from './scm-commit-widget';
-import { ScmAmendWidget } from './scm-amend-widget';
-import { ScmNoRepositoryWidget } from './scm-no-repository-widget';
-import { ScmTreeModelProps } from './scm-tree-model';
-import { ScmGroupsTreeModel } from './scm-groups-tree-model';
-import { ScmQuickOpenService } from './scm-quick-open-service';
-import { bindDirtyDiff } from './dirty-diff/dirty-diff-module';
-import { NavigatorTreeDecorator } from '@theia/navigator/lib/browser';
-import { ScmNavigatorDecorator } from './decorations/scm-navigator-decorator';
-import { ScmDecorationsService } from './decorations/scm-decorations-service';
-import { ScmAvatarService } from './scm-avatar-service';
-import { ScmContextKeyService } from './scm-context-key-service';
-import { ScmLayoutVersion3Migration, ScmLayoutVersion5Migration } from './scm-layout-migrations';
-import { ScmTreeLabelProvider } from './scm-tree-label-provider';
+import { ScmService } from './scm-service.js';
+import { SCM_WIDGET_FACTORY_ID, ScmContribution, SCM_VIEW_CONTAINER_ID, SCM_VIEW_CONTAINER_TITLE_OPTIONS } from './scm-contribution.js';
+import { ScmWidget } from './scm-widget.js';
+import { ScmTreeWidget } from './scm-tree-widget.js';
+import { ScmCommitWidget } from './scm-commit-widget.js';
+import { ScmActionButtonWidget } from './scm-action-button-widget.js';
+import { ScmAmendWidget } from './scm-amend-widget.js';
+import { ScmTreeModelProps } from './scm-tree-model.js';
+import { ScmGroupsTreeModel } from './scm-groups-tree-model.js';
+import { ScmQuickOpenService } from './scm-quick-open-service.js';
+import { bindDirtyDiff } from './dirty-diff/dirty-diff-module.js';
+import { ScmDecorationsService } from './decorations/scm-decorations-service.js';
+import { ScmAvatarService } from './scm-avatar-service.js';
+import { ScmContextKeyService } from './scm-context-key-service.js';
+import { ScmLayoutVersion3Migration, ScmLayoutVersion5Migration } from './scm-layout-migrations.js';
+import { ScmTreeLabelProvider } from './scm-tree-label-provider.js';
 import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
 import { ColorContribution } from '@theia/core/lib/browser/color-application-contribution';
 import { LabelProviderContribution } from '@theia/core/lib/browser/label-provider';
-import { bindScmPreferences } from './scm-preferences';
-import { ScmTabBarDecorator } from './decorations/scm-tab-bar-decorator';
-import { TabBarDecorator } from '@theia/core/lib/browser/shell/tab-bar-decorator';
-import { OpenEditorsTreeDecorator } from '@theia/navigator/lib/browser/open-editors-widget/navigator-open-editors-decorator-service';
+import { bindScmPreferences } from '../common/scm-preferences.js';
+import { bindMergeEditor } from './merge-editor/merge-editor-module.js';
+import { bindMultiDiffEditor } from './multi-diff-editor/multi-diff-editor-module.js';
+import { ScmRepositoriesWidget } from './scm-repositories-widget.js';
+import { ScmHistoryGraphWidget } from './scm-history-graph-widget.js';
+import { ScmHistoryGraphModel, ScmHistoryGraphModelProvider } from './scm-history-graph-model.js';
+import { ScmHistoryGraphContribution } from './scm-history-graph-contribution.js';
+import { CommandContribution, MenuContribution } from '@theia/core';
 
 export default new ContainerModule(bind => {
     bind(ScmContextKeyService).toSelf().inSingletonScope();
@@ -68,6 +70,12 @@ export default new ContainerModule(bind => {
         createWidget: () => container.get(ScmCommitWidget)
     })).inSingletonScope();
 
+    bind(ScmActionButtonWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(({ container }) => ({
+        id: ScmActionButtonWidget.ID,
+        createWidget: () => container.get(ScmActionButtonWidget)
+    })).inSingletonScope();
+
     bind(WidgetFactory).toDynamicValue(({ container }) => ({
         id: ScmTreeWidget.ID,
         createWidget: () => container.get(ScmTreeWidget)
@@ -79,10 +87,21 @@ export default new ContainerModule(bind => {
         createWidget: () => container.get(ScmAmendWidget)
     })).inSingletonScope();
 
-    bind(ScmNoRepositoryWidget).toSelf();
+    bind(ScmRepositoriesWidget).toSelf().inSingletonScope();
     bind(WidgetFactory).toDynamicValue(({ container }) => ({
-        id: ScmNoRepositoryWidget.ID,
-        createWidget: () => container.get(ScmNoRepositoryWidget)
+        id: ScmRepositoriesWidget.ID,
+        createWidget: () => container.get(ScmRepositoriesWidget)
+    })).inSingletonScope();
+
+    bind(ScmHistoryGraphModel).toSelf().inSingletonScope();
+    bind(ScmHistoryGraphModelProvider).toFactory(ctx => () => ctx.container.get(ScmHistoryGraphModel));
+    bind(ScmHistoryGraphContribution).toSelf().inSingletonScope();
+    bind(CommandContribution).toService(ScmHistoryGraphContribution);
+    bind(MenuContribution).toService(ScmHistoryGraphContribution);
+    bind(ScmHistoryGraphWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(({ container }) => ({
+        id: ScmHistoryGraphWidget.ID,
+        createWidget: () => container.get(ScmHistoryGraphWidget)
     })).inSingletonScope();
 
     bind(WidgetFactory).toDynamicValue(({ container }) => ({
@@ -93,10 +112,25 @@ export default new ContainerModule(bind => {
                 progressLocationId: 'scm'
             });
             viewContainer.setTitleOptions(SCM_VIEW_CONTAINER_TITLE_OPTIONS);
-            const widget = await container.get(WidgetManager).getOrCreateWidget(SCM_WIDGET_FACTORY_ID);
-            viewContainer.addWidget(widget, {
+            const widgetManager = container.get(WidgetManager);
+            const repositoriesWidget = await widgetManager.getOrCreateWidget(ScmRepositoriesWidget.ID);
+            viewContainer.addWidget(repositoriesWidget, {
+                order: 0,
+                canHide: true,
+                initiallyCollapsed: false,
+                initiallyHidden: true
+            });
+            const scmWidget = await widgetManager.getOrCreateWidget(SCM_WIDGET_FACTORY_ID);
+            viewContainer.addWidget(scmWidget, {
+                order: 1,
                 canHide: false,
                 initiallyCollapsed: false
+            });
+            const graphWidget = await widgetManager.getOrCreateWidget(ScmHistoryGraphWidget.ID);
+            viewContainer.addWidget(graphWidget, {
+                order: 2,
+                canHide: true,
+                initiallyCollapsed: true
             });
             return viewContainer;
         }
@@ -109,10 +143,8 @@ export default new ContainerModule(bind => {
     bind(FrontendApplicationContribution).toService(ScmContribution);
     bind(TabBarToolbarContribution).toService(ScmContribution);
     bind(ColorContribution).toService(ScmContribution);
+    bind(StylingParticipant).toService(ScmContribution);
 
-    bind(ScmNavigatorDecorator).toSelf().inSingletonScope();
-    bind(NavigatorTreeDecorator).toService(ScmNavigatorDecorator);
-    bind(OpenEditorsTreeDecorator).toService(ScmNavigatorDecorator);
     bind(ScmDecorationsService).toSelf().inSingletonScope();
 
     bind(ScmAvatarService).toSelf().inSingletonScope();
@@ -124,22 +156,23 @@ export default new ContainerModule(bind => {
 
     bindScmPreferences(bind);
 
-    bind(ScmTabBarDecorator).toSelf().inSingletonScope();
-    bind(TabBarDecorator).toService(ScmTabBarDecorator);
+    bindMergeEditor(bind);
+
+    bindMultiDiffEditor(bind);
 });
 
 export function createScmTreeContainer(parent: interfaces.Container): Container {
     const child = createTreeContainer(parent, {
-        virtualized: true,
-        search: true,
-        multiSelect: true,
+        props: {
+            virtualized: true,
+            search: true,
+            multiSelect: true,
+        },
+        widget: ScmTreeWidget,
     });
 
-    child.unbind(TreeWidget);
     child.unbind(TreeModel);
     child.unbind(TreeModelImpl);
-
-    child.bind(ScmTreeWidget).toSelf();
 
     child.bind(ScmTreeModelProps).toConstantValue({
         defaultExpansion: 'expanded',

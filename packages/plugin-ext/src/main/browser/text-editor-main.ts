@@ -1,19 +1,22 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
+import * as monaco from '@theia/monaco-editor-core';
+import { StandaloneCodeEditor } from '@theia/monaco-editor-core/esm/vs/editor/standalone/browser/standaloneCodeEditor.js';
+import { type ILineChange } from '@theia/monaco-editor-core/esm/vs/editor/common/diff/legacyLinesDiffComputer.js';
 import { Disposable, DisposableCollection } from '@theia/core/lib/common/disposable';
 import { MonacoEditor } from '@theia/monaco/lib/browser/monaco-editor';
 import {
@@ -24,18 +27,22 @@ import {
     TextEditorRevealType,
     SingleEditOperation,
     ApplyEditsOptions,
-    UndoStopOptions,
+    SnippetEditOptions,
     DecorationOptions
-} from '../../common/plugin-api-rpc';
-import { Range } from '../../common/plugin-api-rpc-model';
+} from '../../common/plugin-api-rpc.js';
+import { Range } from '../../common/plugin-api-rpc-model.js';
 import { Emitter, Event } from '@theia/core';
-import { TextEditorCursorStyle, cursorStyleToString } from '../../common/editor-options';
-import { TextEditorLineNumbersStyle, EndOfLine } from '../../plugin/types-impl';
+import { TextEditorCursorStyle, cursorStyleToString } from '../../common/editor-options.js';
+import { TextEditorLineNumbersStyle, EndOfLine } from '../../plugin/types-impl.js';
+import { SimpleMonacoEditor } from '@theia/monaco/lib/browser/simple-monaco-editor';
+import { MonacoDiffEditor } from '@theia/monaco/lib/browser/monaco-diff-editor';
+import { EndOfLineSequence, ITextModel } from '@theia/monaco-editor-core/esm/vs/editor/common/model.js';
+import { EditorOption, RenderLineNumbersType } from '@theia/monaco-editor-core/esm/vs/editor/common/config/editorOptions.js';
 
 export class TextEditorMain implements Disposable {
 
     private properties: TextEditorPropertiesMain | undefined;
-    private editor: MonacoEditor | undefined;
+    private editor: MonacoEditor | SimpleMonacoEditor | undefined;
 
     private readonly onPropertiesChangedEmitter = new Emitter<EditorChangedPropertiesData>();
 
@@ -46,8 +53,8 @@ export class TextEditorMain implements Disposable {
 
     constructor(
         private id: string,
-        private model: monaco.editor.IModel,
-        editor: MonacoEditor
+        private model: monaco.editor.IModel | ITextModel,
+        editor: MonacoEditor | SimpleMonacoEditor
     ) {
         this.toDispose.push(this.model.onDidChangeOptions(() =>
             this.updateProperties(undefined)
@@ -74,7 +81,7 @@ export class TextEditorMain implements Disposable {
 
     protected readonly toDisposeOnEditor = new DisposableCollection();
 
-    private setEditor(editor?: MonacoEditor): void {
+    private setEditor(editor?: MonacoEditor | SimpleMonacoEditor): void {
         if (this.editor === editor) {
             return;
         }
@@ -84,23 +91,31 @@ export class TextEditorMain implements Disposable {
         this.toDisposeOnEditor.push(Disposable.create(() => this.editor = undefined));
 
         if (this.editor) {
-            const monaco = this.editor.getControl();
+            const monacoEditor = this.editor.getControl();
             this.toDisposeOnEditor.push(this.editor.onSelectionChanged(_ => {
                 this.updateProperties();
             }));
-            this.toDisposeOnEditor.push(monaco.onDidChangeModel(() => {
-                this.setEditor(undefined);
+            this.toDisposeOnEditor.push(monacoEditor.onDidChangeModel(e => {
+                // Ignore visibility-related model changes (null ↔ model) triggered by
+                // the setModel(null) workaround in MonacoEditor.handleVisibilityChanged().
+                // cf. https://github.com/eclipse-theia/theia/issues/14880
+                // Only react to genuine model swaps where both old and new models exist.
+                // In practice, this condition is never met because MonacoEditor instances
+                // are created with a fixed document and never swap to a different model.
+                if (e.oldModelUrl && e.newModelUrl) {
+                    this.setEditor(undefined);
+                }
             }));
-            this.toDisposeOnEditor.push(monaco.onDidChangeCursorSelection(e => {
+            this.toDisposeOnEditor.push(monacoEditor.onDidChangeCursorSelection(e => {
                 this.updateProperties(e.source);
             }));
-            this.toDisposeOnEditor.push(monaco.onDidChangeConfiguration(() => {
+            this.toDisposeOnEditor.push(monacoEditor.onDidChangeConfiguration(() => {
                 this.updateProperties();
             }));
-            this.toDisposeOnEditor.push(monaco.onDidLayoutChange(() => {
+            this.toDisposeOnEditor.push(monacoEditor.onDidLayoutChange(() => {
                 this.updateProperties();
             }));
-            this.toDisposeOnEditor.push(monaco.onDidScrollChange(() => {
+            this.toDisposeOnEditor.push(monacoEditor.onDidScrollChange(() => {
                 this.updateProperties();
             }));
 
@@ -113,7 +128,7 @@ export class TextEditorMain implements Disposable {
         return this.id;
     }
 
-    getModel(): monaco.editor.IModel {
+    getModel(): monaco.editor.IModel | ITextModel {
         return this.model;
     }
 
@@ -123,6 +138,17 @@ export class TextEditorMain implements Disposable {
 
     get onPropertiesChangedEvent(): Event<EditorChangedPropertiesData> {
         return this.onPropertiesChangedEmitter.event;
+    }
+
+    get diffInformation(): ILineChange[] | undefined {
+        if (!(this.editor instanceof MonacoDiffEditor)) {
+            return [];
+        }
+        return this.editor.diffInformation;
+    }
+
+    getDiffEditor(): MonacoDiffEditor | undefined {
+        return this.editor instanceof MonacoDiffEditor ? this.editor : undefined;
     }
 
     setSelections(selections: Selection[]): void {
@@ -149,13 +175,16 @@ export class TextEditorMain implements Disposable {
         }
 
         if (typeof newConfiguration.lineNumbers !== 'undefined') {
-            let lineNumbers: 'on' | 'off' | 'relative';
+            let lineNumbers: 'on' | 'off' | 'relative' | 'interval';
             switch (newConfiguration.lineNumbers) {
                 case TextEditorLineNumbersStyle.On:
                     lineNumbers = 'on';
                     break;
                 case TextEditorLineNumbersStyle.Relative:
                     lineNumbers = 'relative';
+                    break;
+                case TextEditorLineNumbersStyle.Interval:
+                    lineNumbers = 'interval';
                     break;
                 default:
                     lineNumbers = 'off';
@@ -192,11 +221,18 @@ export class TextEditorMain implements Disposable {
         if (typeof newConfiguration.tabSize !== 'undefined') {
             newOpts.tabSize = newConfiguration.tabSize;
         }
+        if (typeof newConfiguration.indentSize !== 'undefined') {
+            if (newConfiguration.indentSize === 'tabSize') {
+                newOpts.indentSize = newConfiguration.tabSize;
+            } else if (typeof newConfiguration.indentSize == 'number') {
+                newOpts.indentSize = newConfiguration.indentSize;
+            }
+        }
         this.model.updateOptions(newOpts);
     }
 
     revealRange(range: monaco.Range, revealType: TextEditorRevealType): void {
-        if (!this.editor) {
+        if (!this.editor || this.editor instanceof SimpleMonacoEditor) {
             return;
         }
         switch (revealType) {
@@ -228,10 +264,14 @@ export class TextEditorMain implements Disposable {
             return false;
         }
 
-        if (opts.setEndOfLine === EndOfLine.CRLF) {
+        if (opts.setEndOfLine === EndOfLine.CRLF && !this.isSimpleWidget(this.model)) {
             this.model.setEOL(monaco.editor.EndOfLineSequence.CRLF);
-        } else if (opts.setEndOfLine === EndOfLine.LF) {
+        } else if (opts.setEndOfLine === EndOfLine.LF && !this.isSimpleWidget(this.model)) {
             this.model.setEOL(monaco.editor.EndOfLineSequence.LF);
+        } else if (opts.setEndOfLine === EndOfLine.CRLF && this.isSimpleWidget(this.model)) {
+            this.model.setEOL(EndOfLineSequence.CRLF);
+        } else if (opts.setEndOfLine === EndOfLine.LF && this.isSimpleWidget(this.model)) {
+            this.model.setEOL(EndOfLineSequence.CRLF);
         }
 
         const editOperations: monaco.editor.IIdentifiedSingleEditOperation[] = [];
@@ -262,19 +302,22 @@ export class TextEditorMain implements Disposable {
         return true;
     }
 
-    insertSnippet(template: string, ranges: Range[], opts: UndoStopOptions): boolean {
+    insertSnippet(template: string, ranges: Range[], opts: SnippetEditOptions): boolean {
+        const snippetController: SnippetController2 | null | undefined = this.editor?.getControl().getContribution('snippetController2');
 
-        if (!this.editor) {
-            return false;
-        }
-
-        const snippetController: SnippetController2 = this.editor!.getControl().getContribution('snippetController2');
+        if (!snippetController || !this.editor) { return false; }
 
         const selections = ranges.map(r => new monaco.Selection(r.startLineNumber, r.startColumn, r.endLineNumber, r.endColumn));
         this.editor.getControl().setSelections(selections);
         this.editor.focus();
 
-        snippetController.insert(template, 0, 0, opts.undoStopBefore, opts.undoStopAfter);
+        snippetController.insert(template, {
+            undoStopBefore: opts.undoStopBefore,
+            undoStopAfter: opts.undoStopAfter,
+            adjustWhitespace: !opts.keepWhitespace,
+            overwriteBefore: 0,
+            overwriteAfter: 0
+        });
 
         return true;
     }
@@ -283,7 +326,8 @@ export class TextEditorMain implements Disposable {
         if (!this.editor) {
             return;
         }
-        this.editor.getControl().setDecorations(key, ranges.map(option => Object.assign(option, { color: undefined })));
+        (this.editor.getControl() as unknown as StandaloneCodeEditor)
+            .setDecorationsByType('Plugin decorations', key, ranges.map(option => Object.assign(option, { color: undefined })));
     }
 
     setDecorationsFast(key: string, _ranges: number[]): void {
@@ -295,20 +339,29 @@ export class TextEditorMain implements Disposable {
         for (let i = 0; i < len; i++) {
             ranges[i] = new monaco.Range(_ranges[4 * i], _ranges[4 * i + 1], _ranges[4 * i + 2], _ranges[4 * i + 3]);
         }
-
-        this.editor.getControl().setDecorationsFast(key, ranges);
+        (this.editor.getControl() as unknown as StandaloneCodeEditor).setDecorationsByTypeFast(key, ranges);
     }
 
     private static toMonacoSelections(selection: Selection): monaco.Selection {
         return new monaco.Selection(selection.selectionStartLineNumber, selection.selectionStartColumn, selection.positionLineNumber, selection.positionColumn);
     }
+
+    private isSimpleWidget(model: monaco.editor.IModel | ITextModel): model is ITextModel {
+        return !!(model as ITextModel).isForSimpleWidget;
+    }
+}
+
+interface SnippetInsertOptions {
+    overwriteBefore: number,
+    overwriteAfter: number,
+    undoStopBefore: boolean,
+    undoStopAfter: boolean,
+    adjustWhitespace: boolean
 }
 
 // TODO move to monaco typings!
 interface SnippetController2 extends monaco.editor.IEditorContribution {
-    insert(template: string,
-        overwriteBefore: number, overwriteAfter: number,
-        undoStopBefore: boolean, undoStopAfter: boolean): void;
+    insert(template: string, options?: Partial<SnippetInsertOptions>): void;
     finish(): void;
     cancel(): void;
     dispose(): void;
@@ -353,17 +406,31 @@ export class TextEditorPropertiesMain {
         return undefined;
     }
 
-    static readFromEditor(prevProperties: TextEditorPropertiesMain | undefined, model: monaco.editor.IModel, editor: MonacoEditor): TextEditorPropertiesMain {
+    static readFromEditor(prevProperties: TextEditorPropertiesMain | undefined,
+        model: monaco.editor.IModel | ITextModel,
+        editor: MonacoEditor | SimpleMonacoEditor): TextEditorPropertiesMain {
+
         const selections = TextEditorPropertiesMain.getSelectionsFromEditor(prevProperties, editor);
         const options = TextEditorPropertiesMain.getOptionsFromEditor(prevProperties, model, editor);
         const visibleRanges = TextEditorPropertiesMain.getVisibleRangesFromEditor(prevProperties, editor);
         return new TextEditorPropertiesMain(selections, options, visibleRanges);
     }
 
-    private static getSelectionsFromEditor(prevProperties: TextEditorPropertiesMain | undefined, editor: MonacoEditor): monaco.Selection[] {
+    private static getSelectionsFromEditor(prevProperties: TextEditorPropertiesMain | undefined, editor: MonacoEditor | SimpleMonacoEditor): monaco.Selection[] {
         let result: monaco.Selection[] | undefined = undefined;
-        if (editor) {
+        if (editor && editor instanceof MonacoEditor) {
             result = editor.getControl().getSelections() || undefined;
+        } else if (editor && editor instanceof SimpleMonacoEditor) {
+            result = editor.getControl().getSelections()?.map(selection => {
+                const monacoSelection = new monaco.Selection(
+                    selection.selectionStartLineNumber,
+                    selection.selectionStartColumn,
+                    selection.positionLineNumber,
+                    selection.positionColumn);
+                monacoSelection.setStartPosition(selection.startLineNumber, selection.startColumn);
+                monacoSelection.setEndPosition(selection.endLineNumber, selection.endColumn);
+                return monacoSelection;
+            });
         }
 
         if (!result && prevProperties) {
@@ -376,14 +443,16 @@ export class TextEditorPropertiesMain {
         return result;
     }
 
-    private static getOptionsFromEditor(prevProperties: TextEditorPropertiesMain | undefined, model: monaco.editor.IModel, editor: MonacoEditor): TextEditorConfiguration {
+    private static getOptionsFromEditor(prevProperties: TextEditorPropertiesMain | undefined,
+        model: monaco.editor.IModel | ITextModel,
+        editor: MonacoEditor | SimpleMonacoEditor): TextEditorConfiguration {
         if (model.isDisposed()) {
             return prevProperties!.options;
         }
 
         let cursorStyle: TextEditorCursorStyle;
         let lineNumbers: TextEditorLineNumbersStyle;
-        if (editor) {
+        if (editor && editor instanceof MonacoEditor) {
             const editorOptions = editor.getControl().getOptions();
             const lineNumbersOpts = editorOptions.get(monaco.editor.EditorOption.lineNumbers);
             cursorStyle = editorOptions.get(monaco.editor.EditorOption.cursorStyle);
@@ -394,10 +463,32 @@ export class TextEditorPropertiesMain {
                 case monaco.editor.RenderLineNumbersType.Relative:
                     lineNumbers = TextEditorLineNumbersStyle.Relative;
                     break;
+                case monaco.editor.RenderLineNumbersType.Interval:
+                    lineNumbers = TextEditorLineNumbersStyle.Interval;
+                    break;
                 default:
                     lineNumbers = TextEditorLineNumbersStyle.On;
                     break;
             }
+        } else if (editor && editor instanceof SimpleMonacoEditor) {
+            const editorOptions = editor.getControl().getOptions();
+            const lineNumbersOpts = editorOptions.get(EditorOption.lineNumbers);
+            cursorStyle = editorOptions.get(EditorOption.cursorStyle);
+            switch (lineNumbersOpts.renderType) {
+                case RenderLineNumbersType.Off:
+                    lineNumbers = TextEditorLineNumbersStyle.Off;
+                    break;
+                case RenderLineNumbersType.Relative:
+                    lineNumbers = TextEditorLineNumbersStyle.Relative;
+                    break;
+                case RenderLineNumbersType.Interval:
+                    lineNumbers = TextEditorLineNumbersStyle.Interval;
+                    break;
+                default:
+                    lineNumbers = TextEditorLineNumbersStyle.On;
+                    break;
+            }
+
         } else if (prevProperties) {
             cursorStyle = prevProperties.options.cursorStyle;
             lineNumbers = prevProperties.options.lineNumbers;
@@ -409,13 +500,14 @@ export class TextEditorPropertiesMain {
         const modelOptions = model.getOptions();
         return {
             insertSpaces: modelOptions.insertSpaces,
+            indentSize: modelOptions.indentSize,
             tabSize: modelOptions.tabSize,
             cursorStyle,
             lineNumbers,
         };
     }
 
-    private static getVisibleRangesFromEditor(prevProperties: TextEditorPropertiesMain | undefined, editor: MonacoEditor): monaco.Range[] {
+    private static getVisibleRangesFromEditor(prevProperties: TextEditorPropertiesMain | undefined, editor: MonacoEditor | SimpleMonacoEditor): monaco.Range[] {
         if (editor) {
             return editor.getControl().getVisibleRanges();
         }
@@ -444,6 +536,7 @@ export class TextEditorPropertiesMain {
         return (
             a.tabSize === b.tabSize
             && a.insertSpaces === b.insertSpaces
+            && a.indentSize === b.indentSize
             && a.cursorStyle === b.cursorStyle
             && a.lineNumbers === b.lineNumbers
         );

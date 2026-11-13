@@ -1,0 +1,367 @@
+// *****************************************************************************
+// Copyright (C) 2019 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+
+import { enableJSDOM } from '../../test/jsdom.js';
+
+let disableJSDOM = enableJSDOM();
+import { expect } from 'chai';
+import { renderToStaticMarkup } from 'react-dom/server';
+import {
+    CommandMenu, CommandRegistry, CompoundMenuNode, Group, GroupImpl, MenuAction, MenuModelRegistry, MenuNode, MenuNodeFactory, MutableCompoundMenuNode,
+    Submenu, SubmenuImpl, SubMenuLink
+} from '../../../common/index.js';
+import { ContextKeyServiceDummyImpl, ContextMatcher } from '../../context-key-service.js';
+import { ContextMenuRenderer } from '../../context-menu-renderer.js';
+import { Widget } from '../../widgets/index.js';
+import URI from '../../../common/uri.js';
+import { ResourceContextKey } from '../../resource-context-key.js';
+import { WidgetContextKeyContribution } from '../../widget-context-key-contribution.js';
+import { TabBarToolbar } from './tab-bar-toolbar.js';
+import { TOOLBAR_WRAPPER_ID_SUFFIX } from './tab-bar-toolbar-menu-adapters.js';
+import { TabBarToolbarRegistry } from './tab-bar-toolbar-registry.js';
+import { TAB_BAR_TOOLBAR_CONTEXT_MENU, TabBarToolbarAction } from './tab-bar-toolbar-types.js';
+
+disableJSDOM();
+
+describe('tab-bar-toolbar', () => {
+
+    describe('comparator', () => {
+
+        before(() => {
+            disableJSDOM = enableJSDOM();
+        });
+
+        after(() => {
+            disableJSDOM();
+        });
+
+        const testMe = TabBarToolbarAction.PRIORITY_COMPARATOR;
+
+        it("should favour the 'navigation' group before everything else", () => {
+            expect(testMe({ group: 'navigation' }, { group: 'other' })).to.be.equal(-1);
+        });
+
+        it("should treat 'undefined' groups as 'navigation'", () => {
+            expect(testMe({}, {})).to.be.equal(0);
+            expect(testMe({ group: 'navigation' }, {})).to.be.equal(0);
+            expect(testMe({}, { group: 'navigation' })).to.be.equal(0);
+            expect(testMe({}, { group: 'other' })).to.be.equal(-1);
+        });
+
+        it("should fall back to 'priority' if the groups are the same", () => {
+            expect(testMe({ priority: 1 }, { priority: 2 })).to.be.equal(-1);
+            expect(testMe({ group: 'navigation', priority: 1 }, { priority: 2 })).to.be.equal(-1);
+            expect(testMe({ priority: 1 }, { group: 'navigation', priority: 2 })).to.be.equal(-1);
+            expect(testMe({ priority: 1, group: 'other' }, { priority: 2 })).to.be.equal(1);
+            expect(testMe({ group: 'other', priority: 1 }, { priority: 2, group: 'other' })).to.be.equal(-1);
+            expect(testMe({ priority: 10 }, { group: 'other', priority: 2 })).to.be.equal(-1);
+            expect(testMe({ group: 'other', priority: 10 }, { group: 'other', priority: 10 })).to.be.equal(0);
+        });
+
+    });
+
+    describe('menu delegates', () => {
+
+        const TEST_MENU_PATH = ['test-toolbar-delegate'];
+        const TEST_COMMAND = 'test.toolbar.command';
+        const TEST_SUBMENU_COMMAND = 'test.toolbar.submenu.command';
+
+        let contextKeyService: ContextKeyServiceDummyImpl;
+
+        before(() => {
+            disableJSDOM = enableJSDOM();
+        });
+
+        beforeEach(() => {
+            contextKeyService = new ContextKeyServiceDummyImpl();
+        });
+
+        after(() => {
+            disableJSDOM();
+        });
+
+        it('passes the delegated widget to command visibility', () => {
+            const testWidget = new TestToolbarWidget();
+            const commands = createCommandRegistry();
+            commands.registerCommand({ id: TEST_COMMAND, label: 'Test Command' }, {
+                execute: () => { },
+                isVisible: widget => TestToolbarWidget.is(widget) && widget === testWidget
+            });
+            const menuRegistry = createMenuRegistry(commands);
+            menuRegistry.registerMenuAction([...TEST_MENU_PATH, 'other'], { commandId: TEST_COMMAND });
+            const registry = createToolbarRegistry(commands, menuRegistry, contextKeyService);
+            registry.registerMenuDelegate(TEST_MENU_PATH, TestToolbarWidget.is);
+
+            const commandItem = registry.visibleItems(testWidget).find(item => item.id === `${TEST_COMMAND}${TOOLBAR_WRAPPER_ID_SUFFIX}`);
+
+            expect(commandItem).to.exist;
+            testWidget.dispose();
+        });
+
+        it('preserves the widget for wrapped command menu visibility, enablement, toggled state, and execution', async () => {
+            const testWidget = new TestToolbarWidget();
+            let executedWith: unknown;
+            const commands = createCommandRegistry();
+            commands.registerCommand({ id: TEST_COMMAND, label: 'Test Command' }, {
+                execute: widget => executedWith = widget,
+                isVisible: widget => TestToolbarWidget.is(widget) && widget === testWidget,
+                isEnabled: widget => TestToolbarWidget.is(widget) && widget === testWidget,
+                isToggled: widget => TestToolbarWidget.is(widget) && widget === testWidget
+            });
+            const menuRegistry = createMenuRegistry(commands);
+            menuRegistry.registerMenuAction([...TEST_MENU_PATH, 'other'], { commandId: TEST_COMMAND });
+            const registry = createToolbarRegistry(commands, menuRegistry, contextKeyService);
+            registry.registerMenuDelegate(TEST_MENU_PATH, TestToolbarWidget.is);
+            const commandItem = registry.visibleItems(testWidget).find(item => item.id === `${TEST_COMMAND}${TOOLBAR_WRAPPER_ID_SUFFIX}`);
+            const node = commandItem?.toMenuNode?.();
+
+            expect(CommandMenu.is(node)).to.be.true;
+            if (!CommandMenu.is(node)) {
+                throw new Error('Expected a command menu node.');
+            }
+            expect(node.isVisible(TAB_BAR_TOOLBAR_CONTEXT_MENU, contextKeyService, testWidget.node, testWidget)).to.be.true;
+            expect(node.isEnabled(TAB_BAR_TOOLBAR_CONTEXT_MENU, testWidget)).to.be.true;
+            expect(node.isToggled(TAB_BAR_TOOLBAR_CONTEXT_MENU, testWidget)).to.be.true;
+            await node.run(TAB_BAR_TOOLBAR_CONTEXT_MENU, testWidget);
+            expect(executedWith).to.equal(testWidget);
+            testWidget.dispose();
+        });
+
+        it('evaluates delegated items against the resource of the widget that owns the toolbar', () => {
+            const testWidget = new TestToolbarWidget(new URI('probe:/a.probe'));
+            const commands = createCommandRegistry();
+            commands.registerCommand({ id: TEST_COMMAND, label: 'Test Command' }, { execute: () => { } });
+            const menuRegistry = createMenuRegistry(commands);
+            menuRegistry.registerMenuAction([...TEST_MENU_PATH, 'other'], { commandId: TEST_COMMAND, when: 'resourceScheme == probe' });
+            const registry = createToolbarRegistry(commands, menuRegistry, new TestContextKeyService());
+            registry.registerMenuDelegate(TEST_MENU_PATH, TestToolbarWidget.is);
+
+            const commandItem = registry.visibleItems(testWidget).find(item => item.id === `${TEST_COMMAND}${TOOLBAR_WRAPPER_ID_SUFFIX}`);
+
+            const otherWidget = new TestToolbarWidget(new URI('file:/a.txt'));
+
+            expect(commandItem).to.exist;
+            expect(registry.visibleItems(otherWidget)).to.be.empty;
+            testWidget.dispose();
+            otherWidget.dispose();
+        });
+
+        it('evaluates registered items against the keys contributed for the widget that owns the toolbar', () => {
+            const testWidget = new TestToolbarWidget(new URI('probe:/a.probe'));
+            const otherWidget = new TestToolbarWidget(new URI('probe:/b.probe'));
+            const commands = createCommandRegistry();
+            commands.registerCommand({ id: TEST_COMMAND, label: 'Test Command' }, { execute: () => { } });
+            const menuRegistry = createMenuRegistry(commands);
+            const contribution: WidgetContextKeyContribution = {
+                getContextKeyValues: widget => [['activeCustomEditorId', widget === testWidget ? 'test.probeEditor' : '']]
+            };
+            const registry = createToolbarRegistry(commands, menuRegistry, new TestContextKeyService(), [contribution]);
+            registry.registerItem({ id: 'test-item', command: TEST_COMMAND, when: 'activeCustomEditorId == test.probeEditor' });
+
+            expect(registry.visibleItems(testWidget).map(item => item.id)).to.deep.equal(['test-item']);
+            expect(registry.visibleItems(otherWidget)).to.be.empty;
+            testWidget.dispose();
+            otherWidget.dispose();
+        });
+
+        it('renders the submenu chevron against the widget that owns the toolbar', () => {
+            const testWidget = new TestToolbarWidget();
+            const otherWidget = new TestToolbarWidget();
+            const commands = createCommandRegistry();
+            commands.registerCommand({ id: TEST_SUBMENU_COMMAND, label: 'Test Submenu Command' }, { execute: () => { } });
+            const menuRegistry = createMenuRegistry(commands);
+            menuRegistry.registerSubmenu([...TEST_MENU_PATH, 'other', 'test-submenu'], 'Test Submenu');
+            menuRegistry.registerMenuAction([...TEST_MENU_PATH, 'other', 'test-submenu'],
+                { commandId: TEST_SUBMENU_COMMAND, when: 'activeCustomEditorId == test.probeEditor' });
+            const contribution: WidgetContextKeyContribution = {
+                getContextKeyValues: widget => [['activeCustomEditorId', widget === testWidget ? 'test.probeEditor' : '']]
+            };
+            const registry = createToolbarRegistry(commands, menuRegistry, new TestContextKeyService(), [contribution]);
+            registry.registerMenuDelegate(TEST_MENU_PATH, TestToolbarWidget.is);
+            const submenuItem = registry.visibleItems(testWidget).find(item => item.id === `test-submenu${TOOLBAR_WRAPPER_ID_SUFFIX}`);
+
+            expect(submenuItem).to.exist;
+            expect(renderToStaticMarkup(submenuItem!.render(testWidget, registry.contextMatcherFor(testWidget)))).to.contain('chevron');
+            expect(renderToStaticMarkup(submenuItem!.render(testWidget, registry.contextMatcherFor(otherWidget)))).to.not.contain('chevron');
+            testWidget.dispose();
+            otherWidget.dispose();
+        });
+
+        it('opens the More Actions menu against the widget that owns the toolbar', () => {
+            const testWidget = new TestToolbarWidget();
+            const otherWidget = new TestToolbarWidget();
+            const commands = createCommandRegistry();
+            commands.registerCommand({ id: TEST_SUBMENU_COMMAND, label: 'Test Submenu Command' }, { execute: () => { } });
+            const menuRegistry = createMenuRegistry(commands);
+            menuRegistry.registerSubmenu([...TEST_MENU_PATH, 'other', 'test-submenu'], 'Test Submenu');
+            menuRegistry.registerMenuAction([...TEST_MENU_PATH, 'other', 'test-submenu'],
+                { commandId: TEST_SUBMENU_COMMAND, when: 'activeCustomEditorId == test.probeEditor' });
+            const contribution: WidgetContextKeyContribution = {
+                getContextKeyValues: widget => [['activeCustomEditorId', widget === testWidget ? 'test.probeEditor' : '']]
+            };
+            const ambient = new TestContextKeyService();
+            const registry = createToolbarRegistry(commands, menuRegistry, ambient, [contribution]);
+            registry.registerMenuDelegate(TEST_MENU_PATH, TestToolbarWidget.is);
+
+            let rendered: { contextKeyService?: ContextMatcher } | undefined;
+            const toolbar = new TabBarToolbar();
+            Reflect.set(toolbar, 'contextKeyService', ambient);
+            Reflect.set(toolbar, 'toolbarRegistry', registry);
+            Reflect.set(toolbar, 'contextMenuRenderer', {
+                render: (options: { contextKeyService?: ContextMatcher }) => {
+                    rendered = options;
+                    return { dispose: () => { } };
+                }
+            });
+            const setCurrent = Reflect.get(toolbar, 'setCurrent') as (widget: Widget) => void;
+
+            setCurrent.call(toolbar, testWidget);
+            toolbar.renderMoreContextMenu({ x: 0, y: 0 });
+            expect(rendered?.contextKeyService?.match('activeCustomEditorId == test.probeEditor')).to.be.true;
+
+            setCurrent.call(toolbar, otherWidget);
+            toolbar.renderMoreContextMenu({ x: 0, y: 0 });
+            expect(rendered?.contextKeyService?.match('activeCustomEditorId == test.probeEditor')).to.be.false;
+
+            testWidget.dispose();
+            otherWidget.dispose();
+        });
+
+        it('preserves the widget for wrapped submenu emptiness checks', () => {
+            const testWidget = new TestToolbarWidget();
+            const commands = createCommandRegistry();
+            commands.registerCommand({ id: TEST_SUBMENU_COMMAND, label: 'Test Submenu Command' }, {
+                execute: () => { },
+                isVisible: widget => TestToolbarWidget.is(widget) && widget === testWidget
+            });
+            const menuRegistry = createMenuRegistry(commands);
+            menuRegistry.registerSubmenu([...TEST_MENU_PATH, 'other', 'test-submenu'], 'Test Submenu');
+            menuRegistry.registerMenuAction([...TEST_MENU_PATH, 'other', 'test-submenu'], { commandId: TEST_SUBMENU_COMMAND });
+            const registry = createToolbarRegistry(commands, menuRegistry, contextKeyService);
+            registry.registerMenuDelegate(TEST_MENU_PATH, TestToolbarWidget.is);
+            const submenuItem = registry.visibleItems(testWidget).find(item => item.id === `test-submenu${TOOLBAR_WRAPPER_ID_SUFFIX}`);
+            const node = submenuItem?.toMenuNode?.();
+
+            expect(CompoundMenuNode.is(node)).to.be.true;
+            if (!CompoundMenuNode.is(node)) {
+                throw new Error('Expected a compound menu node.');
+            }
+            expect(node.isEmpty(TAB_BAR_TOOLBAR_CONTEXT_MENU, contextKeyService, testWidget.node, testWidget)).to.be.false;
+            testWidget.dispose();
+        });
+
+    });
+
+});
+
+class TestToolbarWidget extends Widget {
+    static is(candidate?: Widget): candidate is TestToolbarWidget {
+        return candidate instanceof TestToolbarWidget;
+    }
+
+    constructor(protected readonly resourceUri?: URI) {
+        super();
+    }
+
+    getResourceUri(): URI | undefined {
+        return this.resourceUri;
+    }
+
+    createMoveToUri(resourceUri: URI): URI | undefined {
+        return resourceUri;
+    }
+}
+
+/**
+ * Evaluates `key == value` clauses against the overlay alone, so that a visible item can only come from the
+ * values the registry attributed to the widget.
+ */
+class TestContextKeyService extends ContextKeyServiceDummyImpl {
+    override match(expression: string): boolean {
+        return false;
+    }
+
+    override createOverlay(overlay: Iterable<[string, unknown]>): ContextMatcher {
+        const values = new Map(overlay);
+        return {
+            match: (expression: string) => {
+                const [key, value] = expression.split(' == ');
+                return values.get(key) === value;
+            }
+        };
+    }
+}
+
+class TestMenuNodeFactory implements MenuNodeFactory {
+
+    constructor(protected readonly commands: CommandRegistry) { }
+
+    createGroup(id: string, orderString?: string, when?: string): Group & MutableCompoundMenuNode {
+        return new GroupImpl(id, orderString, when);
+    }
+
+    createSubmenu(id: string, label: string, contextKeyOverlays: Record<string, string> | undefined, orderString?: string, icon?: string, when?: string):
+        Submenu & MutableCompoundMenuNode {
+        return new SubmenuImpl(id, label, contextKeyOverlays, orderString, icon, when);
+    }
+
+    createSubmenuLink(delegate: Submenu, sortString?: string, when?: string): MenuNode {
+        return new SubMenuLink(delegate, sortString, when);
+    }
+
+    createCommandMenu(item: MenuAction): CommandMenu {
+        return {
+            isVisible: (_path, contextMatcher, context, ...args) =>
+                (!item.when || contextMatcher.match(item.when, context)) && this.commands.isVisible(item.commandId, ...args),
+            isEnabled: (_path, ...args) => this.commands.isEnabled(item.commandId, ...args),
+            isToggled: (_path, ...args) => this.commands.isToggled(item.commandId, ...args),
+            id: item.commandId,
+            label: item.label || this.commands.getCommand(item.commandId)?.label || '',
+            icon: item.icon,
+            when: item.when,
+            sortString: item.order || '',
+            run: async (_path, ...args) => { await this.commands.executeCommand(item.commandId, ...args); }
+        };
+    }
+}
+
+function createCommandRegistry(): CommandRegistry {
+    return new CommandRegistry({ getContributions: () => [] });
+}
+
+function createMenuRegistry(commands: CommandRegistry): MenuModelRegistry {
+    return new MenuModelRegistry({ getContributions: () => [] }, commands, new TestMenuNodeFactory(commands));
+}
+
+function createToolbarRegistry(
+    commands: CommandRegistry,
+    menuRegistry: MenuModelRegistry,
+    contextKeyService: ContextKeyServiceDummyImpl,
+    contextKeyContributions: WidgetContextKeyContribution[] = []
+): TabBarToolbarRegistry {
+    const registry = new TabBarToolbarRegistry();
+    Reflect.set(registry, 'commandRegistry', commands);
+    Reflect.set(registry, 'contextKeyService', contextKeyService);
+    Reflect.set(registry, 'menuRegistry', menuRegistry);
+    Reflect.set(registry, 'keybindingRegistry', {});
+    Reflect.set(registry, 'labelParser', {});
+    Reflect.set(registry, 'contextMenuRenderer', { render: () => undefined } as unknown as ContextMenuRenderer);
+    const resourceContextKey = new ResourceContextKey();
+    Reflect.set(resourceContextKey, 'languages', { languages: [] });
+    Reflect.set(registry, 'resourceContextKey', resourceContextKey);
+    Reflect.set(registry, 'contextKeyContributionProvider', { getContributions: () => contextKeyContributions });
+    return registry;
+}

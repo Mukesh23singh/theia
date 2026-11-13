@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 // eslint-disable-next-line import/no-extraneous-dependencies
 import { JSDOM } from 'jsdom';
@@ -43,16 +43,32 @@ export function enableJSDOM(): () => void {
     });
     (global as any)['document'] = dom.window.document;
     (global as any)['window'] = dom.window;
-    (global as any)['navigator'] = { userAgent: 'node.js', platform: 'Mac' };
+    try {
+        (global as any)['navigator'] = { userAgent: 'node.js', platform: 'Mac' };
+
+    } catch (e) {
+        // node 21+ already has a navigator object
+    }
 
     const toCleanup: string[] = [];
     Object.getOwnPropertyNames((dom.window as any)).forEach(property => {
-        if (typeof (global as any)[property] === 'undefined') {
+        if (!(property in global)) {
             (global as any)[property] = (dom.window as any)[property];
             toCleanup.push(property);
         }
     });
     (dom.window.document as any)['queryCommandSupported'] = function (): void { };
+    dom.window.matchMedia = () => ({
+        matches: false,
+        media: '',
+        // eslint-disable-next-line no-null/no-null
+        onchange: null,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        dispatchEvent: () => false
+    });
 
     const disableJSDOM = (global as any)['_disableJSDOM'] = () => {
         let property: string | undefined;
@@ -66,4 +82,22 @@ export function enableJSDOM(): () => void {
         delete (global as any)['_disableJSDOM'];
     };
     return disableJSDOM;
+}
+
+/**
+ * Enables React's act test environment and restores the previous value when disposed.
+ */
+export function enableReactActEnvironment(): () => void {
+    const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const hadReactActEnvironment = Object.prototype.hasOwnProperty.call(reactActEnvironment, 'IS_REACT_ACT_ENVIRONMENT');
+    const previousReactActEnvironment = reactActEnvironment.IS_REACT_ACT_ENVIRONMENT;
+    reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+
+    return () => {
+        if (hadReactActEnvironment) {
+            reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = previousReactActEnvironment;
+        } else {
+            delete reactActEnvironment.IS_REACT_ACT_ENVIRONMENT;
+        }
+    };
 }

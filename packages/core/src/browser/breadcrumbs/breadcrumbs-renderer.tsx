@@ -1,32 +1,31 @@
-/********************************************************************************
- * Copyright (C) 2019 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as React from 'react';
 import { injectable, inject, postConstruct } from 'inversify';
-import { ReactRenderer } from '../widgets';
-import { BreadcrumbsService } from './breadcrumbs-service';
-import { BreadcrumbRenderer } from './breadcrumb-renderer';
-import PerfectScrollbar from 'perfect-scrollbar';
-import URI from '../../common/uri';
-import { Emitter, Event } from '../../common';
-import { BreadcrumbPopupContainer } from './breadcrumb-popup-container';
-import { DisposableCollection } from '../../common/disposable';
-import { CorePreferences } from '../core-preferences';
-import { Breadcrumb, Styles } from './breadcrumbs-constants';
-import { LabelProvider } from '../label-provider';
+import { ReactRenderer } from '../widgets/index.js';
+import { BreadcrumbsService } from './breadcrumbs-service.js';
+import { BreadcrumbRenderer } from './breadcrumb-renderer.js';
+import { PerfectScrollbar } from '../widgets/perfect-scrollbar.js';
+import URI from '../../common/uri.js';
+import { Emitter, Event } from '../../common/index.js';
+import { BreadcrumbPopupContainer } from './breadcrumb-popup-container.js';
+import { CorePreferences } from '../../common/core-preferences.js';
+import { Breadcrumb, Styles } from './breadcrumbs-constants.js';
+import { LabelProvider } from '../label-provider.js';
 
 interface Cancelable {
     canceled: boolean;
@@ -56,7 +55,6 @@ export class BreadcrumbsRenderer extends ReactRenderer {
     protected breadcrumbs: Breadcrumb[] = [];
     protected popup: BreadcrumbPopupContainer | undefined;
     protected scrollbar: PerfectScrollbar | undefined;
-    protected toDispose: DisposableCollection = new DisposableCollection();
 
     get active(): boolean {
         return !!this.breadcrumbs.length;
@@ -84,7 +82,7 @@ export class BreadcrumbsRenderer extends ReactRenderer {
         this.toDispose.push(this.labelProvider.onDidChange(() => this.refresh(this.uri)));
     }
 
-    dispose(): void {
+    override dispose(): void {
         super.dispose();
         this.toDispose.dispose();
         if (this.popup) { this.popup.dispose(); }
@@ -149,7 +147,7 @@ export class BreadcrumbsRenderer extends ReactRenderer {
         }
     }
 
-    protected doRender(): React.ReactNode {
+    protected override doRender(): React.ReactNode {
         return <ul className={Styles.BREADCRUMBS}>{this.renderBreadcrumbs()}</ul>;
     }
 

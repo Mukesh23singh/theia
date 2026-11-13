@@ -1,28 +1,28 @@
-/********************************************************************************
- * Copyright (c) 2021 SAP SE or an SAP affiliate company and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 SAP SE or an SAP affiliate company and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { inject, injectable } from 'inversify';
-import { filterItems, QuickPickItem, QuickPicks } from '..';
-import { CancellationToken, Disposable } from '../../common';
-import { ContextKeyService } from '../context-key-service';
-import { QuickAccessProvider, QuickAccessRegistry } from './quick-access';
-import { QuickAccessContribution } from './quick-access';
+import { CancellationToken, Disposable } from '../../common/index.js';
+import { ContextKeyService } from '../context-key-service.js';
+import { QuickAccessContribution, QuickAccessProvider, QuickAccessRegistry } from './quick-access.js';
+import { filterItems, QuickPickItem, QuickPicks } from './quick-input-service.js';
 
 export interface QuickViewItem {
     readonly label: string;
+    readonly description?: string;
     readonly when?: string;
     readonly open: () => void;
 }
@@ -43,6 +43,7 @@ export class QuickViewService implements QuickAccessContribution, QuickAccessPro
     registerItem(item: QuickViewItem): Disposable {
         const quickOpenItem = {
             label: item.label,
+            description: item.description,
             execute: () => item.open(),
             when: item.when
         };
@@ -76,6 +77,9 @@ export class QuickViewService implements QuickAccessContribution, QuickAccessPro
 
     getPicks(filter: string, token: CancellationToken): QuickPicks {
         const items = this.items.filter(item =>
+            // Some contributions register entries without a label (e.g. an empty view name);
+            // those would otherwise sort to the top and appear as a blank row.
+            item.label.trim().length > 0 &&
             (item.when === undefined || this.contextKexService.match(item.when)) &&
             (!this.hiddenItemLabels.has(item.label))
         );

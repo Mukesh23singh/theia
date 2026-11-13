@@ -1,18 +1,19 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+
 
 // @ts-check
 describe('Undo, Redo and Select All', function () {
@@ -20,7 +21,7 @@ describe('Undo, Redo and Select All', function () {
 
     const { assert } = chai;
 
-    const { animationFrame } = require('@theia/core/lib/browser/browser');
+    const { timeout } = require('@theia/core/lib/common/promise-util');
     const { DisposableCollection } = require('@theia/core/lib/common/disposable');
     const { CommonCommands } = require('@theia/core/lib/browser/common-frontend-contribution');
     const { EditorManager } = require('@theia/editor/lib/browser/editor-manager');
@@ -31,6 +32,8 @@ describe('Undo, Redo and Select All', function () {
     const { ApplicationShell } = require('@theia/core/lib/browser/shell/application-shell');
     const { MonacoEditor } = require('@theia/monaco/lib/browser/monaco-editor');
     const { ScmContribution } = require('@theia/scm/lib/browser/scm-contribution');
+    const { Range } = require('@theia/monaco-editor-core/esm/vs/editor/common/core/range');
+    const { PreferenceService, PreferenceScope } = require('@theia/core/lib/browser');
 
     const container = window.theia.container;
     const editorManager = container.get(EditorManager);
@@ -40,28 +43,41 @@ describe('Undo, Redo and Select All', function () {
     const navigatorContribution = container.get(FileNavigatorContribution);
     const shell = container.get(ApplicationShell);
     const scmContribution = container.get(ScmContribution);
+    /** @type {PreferenceService} */
+    const preferenceService = container.get(PreferenceService)
 
     const rootUri = workspaceService.tryGetRoots()[0].resource;
-    const fileUri = rootUri.resolve('webpack.config.js');
+    const fileUri = rootUri.resolve('esbuild.mjs');
 
     const toTearDown = new DisposableCollection();
 
     /**
-     * @template T
-     * @param {() => Promise<T> | T} condition
-     * @returns {Promise<T>}
-     */
-    function waitForAnimation(condition) {
-        return new Promise(async (resolve, dispose) => {
-            toTearDown.push({ dispose });
-            do {
-                await animationFrame();
-            } while (!condition());
-            resolve();
-        });
+         * @param {() => unknown} condition
+         * @param {number | undefined} [maxWait]
+         * @param {string | undefined} [message]
+         * @returns {Promise<void>}
+         */
+    async function waitForAnimation(condition, maxWait, message) {
+        if (maxWait === undefined) {
+            maxWait = 100000;
+        }
+        const endTime = Date.now() + maxWait;
+        do {
+            await (timeout(100));
+            if (condition()) {
+                return true;
+            }
+            if (Date.now() > endTime) {
+                throw new reject(new Error(message ?? 'Wait for animation timed out.'));
+            }
+        } while (true);
     }
 
-    before(() => {
+    const originalValue = preferenceService.get('files.autoSave', { resource: rootUri.toString() });
+    before(async () => {
+        await preferenceService.set('files.autoSave', 'off', undefined, rootUri.toString());
+        await preferenceService.set('git.autoRepositoryDetection', true);
+        await preferenceService.set('git.openRepositoryInParentFolders', 'always');
         shell.leftPanelHandler.collapse();
     });
 
@@ -78,7 +94,8 @@ describe('Undo, Redo and Select All', function () {
         await editorManager.closeAll({ save: false });
     });
 
-    after(() => {
+    after(async () => {
+        await preferenceService.set('files.autoSave', originalValue, undefined, rootUri.toString());
         shell.leftPanelHandler.collapse();
     });
 
@@ -87,10 +104,10 @@ describe('Undo, Redo and Select All', function () {
      */
     async function assertInEditor(widget) {
         const originalContent = widget.editor.document.getText();
-        const editor = /** @type {MonacoEditor} */ (MonacoEditor.get(widget));
+        const editor = /** @type {MonacoEditor} */ (MonacoEditor.get(widget));
         editor.getControl().pushUndoStop();
         editor.getControl().executeEdits('test', [{
-            range: new monaco.Range(1, 1, 1, 1),
+            range: new Range(1, 1, 1, 1),
             text: 'A'
         }]);
         editor.getControl().pushUndoStop();
@@ -151,25 +168,25 @@ describe('Undo, Redo and Select All', function () {
 
         keybindings.dispatchCommand(CommonCommands.UNDO.id);
         await waitForAnimation(() => scmInput.value === originalValue);
-        assert.equal(scmInput.value, originalValue);
+        assert.equal(scmInput.value, originalValue, 'value equal');
 
         keybindings.dispatchCommand(CommonCommands.REDO.id);
         await waitForAnimation(() => scmInput.value === modifiedValue);
-        assert.equal(scmInput.value, modifiedValue);
+        assert.equal(scmInput.value, modifiedValue, 'value not equal');
 
         const selection = document.getSelection();
         if (!selection) {
-            assert.isDefined(selection);
+            assert.isDefined(selection, 'selection defined');
             return;
         }
 
         selection.empty();
-        assert.equal(selection.rangeCount, 0);
+        assert.equal(selection.rangeCount, 0, 'rangeCount equal');
 
         keybindings.dispatchCommand(CommonCommands.SELECT_ALL.id);
         await waitForAnimation(() => !!selection.rangeCount);
-        assert.notEqual(selection.rangeCount, 0);
-        assert.isTrue(selection.containsNode(scmInput));
+        assert.notEqual(selection.rangeCount, 0, 'rangeCount not equal');
+        assert.isTrue(selection.containsNode(scmInput), 'selection contains');
     }
 
     it('in the active scm in workspace without the current editor', async function () {

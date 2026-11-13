@@ -1,27 +1,26 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
-import { InMemoryResources } from '@theia/core';
-import { JsonSchemaContribution, JsonSchemaRegisterContext } from '@theia/core/lib/browser/json-schema-store';
+import { JsonSchemaContribution, JsonSchemaDataStore, JsonSchemaRegisterContext } from '@theia/core/lib/browser/json-schema-store';
 import { IJSONSchema } from '@theia/core/lib/common/json-schema';
 import URI from '@theia/core/lib/common/uri';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
+import { extensionsSchemaID } from '../../common/recommended-extensions-preference-contribution.js';
 
-export const extensionsSchemaID = 'vscode://schemas/extensions';
 export const extensionsConfigurationSchema: IJSONSchema = {
     $id: extensionsSchemaID,
     default: { recommendations: [] },
@@ -48,18 +47,20 @@ export const extensionsConfigurationSchema: IJSONSchema = {
             },
             default: [],
         }
-    }
+    },
+    allowComments: true,
+    allowTrailingCommas: true,
 };
 
 @injectable()
 export class ExtensionSchemaContribution implements JsonSchemaContribution {
     protected readonly uri = new URI(extensionsSchemaID);
-    @inject(InMemoryResources) protected readonly inmemoryResources: InMemoryResources;
+    @inject(JsonSchemaDataStore) protected readonly schemaStore: JsonSchemaDataStore;
     @inject(WorkspaceService) protected readonly workspaceService: WorkspaceService;
 
     @postConstruct()
     protected init(): void {
-        this.inmemoryResources.add(this.uri, JSON.stringify(extensionsConfigurationSchema));
+        this.schemaStore.setSchema(this.uri, extensionsConfigurationSchema);
     }
 
     registerSchemas(context: JsonSchemaRegisterContext): void {

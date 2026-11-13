@@ -1,282 +1,218 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
-import { JsonRpcServer } from '@theia/core/lib/common/messaging/proxy-factory';
-import { RPCProtocol } from './rpc-protocol';
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+import { RpcServer } from '@theia/core/lib/common/messaging/proxy-factory';
+import { RPCProtocol } from './rpc-protocol.js';
 import { Disposable } from '@theia/core/lib/common/disposable';
-import { LogPart, KeysToAnyValues, KeysToKeysToAnyValue } from './types';
-import { CharacterPair, CommentRule, PluginAPIFactory, Plugin } from './plugin-api-rpc';
-import { ExtPluginApi } from './plugin-ext-api-contribution';
-import { IJSONSchema, IJSONSchemaSnippet } from '@theia/core/lib/common/json-schema';
-import { RecursivePartial } from '@theia/core/lib/common/types';
-import { PreferenceSchema, PreferenceSchemaProperties } from '@theia/core/lib/common/preferences/preference-schema';
+import { LogPart, KeysToAnyValues, KeysToKeysToAnyValue } from './types.js';
+import { PluginAPIFactory, Plugin } from './plugin-api-rpc.js';
+import { ExtPluginApi } from './plugin-ext-api-contribution.js';
 import { ProblemMatcherContribution, ProblemPatternContribution, TaskDefinition } from '@theia/task/lib/common';
-// eslint-disable-next-line @theia/runtime-import-check
-import { ColorDefinition } from '@theia/core/lib/browser/color-registry';
+import { ColorDefinition } from '@theia/core/lib/common/color';
 import { ResourceLabelFormatter } from '@theia/core/lib/common/label-protocol';
+import { PreferenceSchema } from '@theia/core';
+import { PluginIdentifiers } from './plugin-identifiers.js';
+import {
+    getPluginId,
+    toPluginUrl as toPluginUrlFromUtils
+} from '@theia/plugin-utils/lib/common/plugin-model';
+import {
+    PLUGIN_HOST_BACKEND,
+    PLUGIN_HOST_FRONTEND,
+    PluginEntryPoint,
+    PluginLifecycle,
+    PluginManifest,
+    PluginMetadata,
+    PluginModel,
+    PluginPackageCapabilities,
+    PluginType,
+    DeployedPlugin as DeployedPluginBase,
+} from '@theia/plugin-utils/lib/common/manifest-types';
+import {
+    AutoClosingPair,
+    AutoClosingPairConditional,
+    CustomEditorPriority,
+    CustomEditorSelector,
+    EnterAction,
+    FoldingMarkers,
+    FoldingRules,
+    IndentationRules,
+    OnEnterRule,
+    PluginColorContribution,
+    PluginIconContribution,
+    PluginIconThemeContribution,
+    PluginJsonValidationContribution,
+    PluginManifestContribution,
+    PluginNotebookRendererContribution,
+    PluginPackageAuthenticationProvider,
+    PluginPackageCommand,
+    PluginPackageCustomEditor,
+    PluginPackageDebuggersContribution,
+    PluginPackageGrammarsContribution,
+    PluginPackageKeybinding,
+    PluginPackageLanguageContribution,
+    PluginPackageLanguageContributionConfiguration,
+    PluginPackageLanguageModelToolContribution,
+    PluginPackageLocalization,
+    PluginPackageMcpServerDefinitionProviderContribution,
+    PluginPackageMenu,
+    PluginPackageNotebook,
+    PluginPackageNotebookPreload,
+    PluginPackageSnippetsContribution,
+    PluginPackageSubmenu,
+    PluginPackageTerminal,
+    PluginPackageTerminalProfile,
+    PluginPackageTranslation,
+    PluginPackageView,
+    PluginPackageViewContainer,
+    PluginPackageViewWelcome,
+    PluginPackageWalkthrough,
+    PluginPackageWalkthroughStep,
+    PluginPackageWalkthroughStepMedia,
+    PluginTaskDefinitionContribution,
+    PluginThemeContribution,
+    PluginUiTheme,
+    PluginViewType,
+    PlatformSpecificAdapterContribution,
+    RegExpOptions,
+    ScopeMap,
+    type GrammarsContribution,
+    type IconUrl,
+    type JSONObject,
+    type NormalizedCommand,
+    type NormalizedCustomEditor,
+    type NormalizedIcon,
+    type NormalizedIconTheme,
+    type NormalizedKeybinding,
+    type NormalizedLanguage,
+    type NormalizedLanguageConfiguration,
+    type NormalizedLocalization,
+    type NormalizedPluginContribution,
+    type NormalizedSnippet,
+    type NormalizedSubmenu,
+    type NormalizedTerminalProfile,
+    type NormalizedTheme,
+    type NormalizedTranslation,
+    type NormalizedViewContainer,
+    type NormalizedViewWelcome,
+    type WalkthroughContribution,
+    type WalkthroughStepContribution,
+    type WalkthroughStepMedia,
+} from '@theia/plugin-utils/lib/common/contribution-types';
 
+export { PluginIdentifiers };
+export { getPluginId };
+export { toPluginUrlFromUtils as toPluginUrl };
+export {
+    PLUGIN_HOST_BACKEND,
+    PLUGIN_HOST_FRONTEND,
+    PluginEntryPoint,
+    PluginLifecycle,
+    PluginManifest,
+    PluginModel,
+    PluginPackageCapabilities,
+    PluginMetadata,
+    PluginType
+};
 export const hostedServicePath = '/services/hostedPlugin';
 
 /**
- * Plugin engine (API) type, i.e. 'theiaPlugin', 'vscode', etc.
+ * Plugin engine (API) type, i.e. 'theiaPlugin', 'vscode', 'theiaHeadlessPlugin', etc.
  */
 export type PluginEngine = string;
 
 /**
- * This interface describes a package.json object.
+ * Loaded plugin package with stricter fields used by `@theia/plugin-ext`.
  */
-export interface PluginPackage {
-    name: string;
-    publisher: string;
-    version: string;
+export interface PluginPackage extends PluginManifest {
+    // The publisher is not guaranteed to be defined for unpublished plugins. https://github.com/microsoft/vscode-vsce/commit/a38657ece04c20e4fbde15d5ac1ed39ca51cb856
+    publisher: string | undefined;
     engines: {
         [type in PluginEngine]: string;
     };
-    theiaPlugin?: {
-        frontend?: string;
-        backend?: string;
-    };
-    main?: string;
     displayName: string;
     description: string;
     contributes?: PluginPackageContribution;
-    packagePath: string;
-    activationEvents?: string[];
-    extensionDependencies?: string[];
-    extensionPack?: string[];
-    icon?: string;
 }
 export namespace PluginPackage {
-    export function toPluginUrl(pck: PluginPackage | PluginModel, relativePath: string): string {
-        return `hostedPlugin/${getPluginId(pck)}/${encodeURIComponent(relativePath)}`;
-    }
+    export const toPluginUrl = toPluginUrlFromUtils;
 }
 
+export {
+    AutoClosingPair,
+    AutoClosingPairConditional,
+    CustomEditorPriority,
+    CustomEditorSelector,
+    EnterAction,
+    FoldingMarkers,
+    FoldingRules,
+    type GrammarsContribution,
+    IndentationRules,
+    OnEnterRule,
+    PluginColorContribution,
+    PluginIconContribution,
+    PluginIconThemeContribution,
+    PluginJsonValidationContribution,
+    PluginManifestContribution,
+    PluginNotebookRendererContribution,
+    PluginPackageAuthenticationProvider,
+    PluginPackageCommand,
+    PluginPackageCustomEditor,
+    PluginPackageDebuggersContribution,
+    PluginPackageGrammarsContribution,
+    PluginPackageKeybinding,
+    PluginPackageLanguageContribution,
+    PluginPackageLanguageContributionConfiguration,
+    PluginPackageLanguageModelToolContribution,
+    PluginPackageLocalization,
+    PluginPackageMcpServerDefinitionProviderContribution,
+    PluginPackageMenu,
+    PluginPackageNotebook,
+    PluginPackageNotebookPreload,
+    PluginPackageSnippetsContribution,
+    PluginPackageSubmenu,
+    PluginPackageTerminal,
+    PluginPackageTerminalProfile,
+    PluginPackageTranslation,
+    PluginPackageView,
+    PluginPackageViewContainer,
+    PluginPackageViewWelcome,
+    PluginPackageWalkthrough,
+    PluginPackageWalkthroughStep,
+    PluginPackageWalkthroughStepMedia,
+    PluginTaskDefinitionContribution,
+    PluginThemeContribution,
+    PluginUiTheme,
+    PluginViewType,
+    PlatformSpecificAdapterContribution,
+    RegExpOptions,
+    ScopeMap,
+    type IconUrl,
+    type JSONObject,
+    type WalkthroughContribution,
+    type WalkthroughStepContribution,
+    type WalkthroughStepMedia,
+};
+
 /**
- * This interface describes a package.json contribution section object.
+ * Strict `contributes` typing for scanned plugin packages.
  */
-export interface PluginPackageContribution {
-    configuration?: RecursivePartial<PreferenceSchema> | RecursivePartial<PreferenceSchema>[];
-    configurationDefaults?: RecursivePartial<PreferenceSchemaProperties>;
-    languages?: PluginPackageLanguageContribution[];
-    grammars?: PluginPackageGrammarsContribution[];
-    customEditors?: PluginPackageCustomEditor[];
-    viewsContainers?: { [location: string]: PluginPackageViewContainer[] };
-    views?: { [location: string]: PluginPackageView[] };
-    viewsWelcome?: PluginPackageViewWelcome[];
-    commands?: PluginPackageCommand | PluginPackageCommand[];
-    menus?: { [location: string]: PluginPackageMenu[] };
-    submenus?: PluginPackageSubmenu[];
-    keybindings?: PluginPackageKeybinding | PluginPackageKeybinding[];
-    debuggers?: PluginPackageDebuggersContribution[];
-    snippets?: PluginPackageSnippetsContribution[];
-    themes?: PluginThemeContribution[];
-    iconThemes?: PluginIconThemeContribution[];
-    colors?: PluginColorContribution[];
-    taskDefinitions?: PluginTaskDefinitionContribution[];
+export interface PluginPackageContribution extends PluginManifestContribution {
     problemMatchers?: PluginProblemMatcherContribution[];
     problemPatterns?: PluginProblemPatternContribution[];
-    jsonValidation?: PluginJsonValidationContribution[];
     resourceLabelFormatters?: ResourceLabelFormatter[];
-    localizations?: PluginPackageLocalization[];
-}
-
-export interface PluginPackageLocalization {
-    languageId: string;
-    languageName?: string;
-    localizedLanguageName?: string;
-    translations: PluginPackageTranslation[];
-    minimalTranslations?: { [key: string]: string };
-}
-
-export interface PluginPackageTranslation {
-    id: string;
-    path: string;
-}
-
-export interface PluginPackageCustomEditor {
-    viewType: string;
-    displayName: string;
-    selector?: CustomEditorSelector[];
-    priority?: CustomEditorPriority;
-}
-
-export interface CustomEditorSelector {
-    readonly filenamePattern?: string;
-}
-
-export enum CustomEditorPriority {
-    default = 'default',
-    builtin = 'builtin',
-    option = 'option',
-}
-
-export interface PluginPackageViewContainer {
-    id: string;
-    title: string;
-    icon: string;
-}
-
-export interface PluginPackageView {
-    id: string;
-    name: string;
-    when?: string;
-}
-
-export interface PluginPackageViewWelcome {
-    view: string;
-    contents: string;
-    when?: string;
-}
-
-export interface PluginPackageCommand {
-    command: string;
-    title: string;
-    original?: string;
-    category?: string;
-    icon?: string | { light: string; dark: string; };
-    enablement?: string;
-}
-
-export interface PluginPackageMenu {
-    command?: string;
-    submenu?: string;
-    alt?: string;
-    group?: string;
-    when?: string;
-}
-
-export interface PluginPackageSubmenu {
-    id: string;
-    label: string;
-}
-
-export interface PluginPackageKeybinding {
-    key?: string;
-    command: string;
-    when?: string;
-    mac?: string;
-    linux?: string;
-    win?: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    args?: any;
-}
-
-export interface PluginPackageGrammarsContribution {
-    language?: string;
-    scopeName: string;
-    path: string;
-    embeddedLanguages?: ScopeMap;
-    tokenTypes?: ScopeMap;
-    injectTo?: string[];
-}
-
-export interface ScopeMap {
-    [scopeName: string]: string;
-}
-
-export interface PluginPackageSnippetsContribution {
-    language?: string;
-    path?: string;
-}
-
-export interface PluginColorContribution {
-    id?: string;
-    description?: string;
-    defaults?: { light?: string, dark?: string, highContrast?: string };
-}
-
-export type PluginUiTheme = 'vs' | 'vs-dark' | 'hc-black';
-
-export interface PluginThemeContribution {
-    id?: string;
-    label?: string;
-    description?: string;
-    path?: string;
-    uiTheme?: PluginUiTheme;
-}
-
-export interface PluginIconThemeContribution {
-    id?: string;
-    label?: string;
-    description?: string;
-    path?: string;
-    uiTheme?: PluginUiTheme;
-}
-
-export interface PlatformSpecificAdapterContribution {
-    program?: string;
-    args?: string[];
-    runtime?: string;
-    runtimeArgs?: string[];
-}
-
-/**
- * This interface describes a package.json debuggers contribution section object.
- */
-export interface PluginPackageDebuggersContribution extends PlatformSpecificAdapterContribution {
-    type: string;
-    label?: string;
-    languages?: string[];
-    enableBreakpointsFor?: { languageIds: string[] };
-    configurationAttributes: { [request: string]: IJSONSchema };
-    configurationSnippets: IJSONSchemaSnippet[];
-    variables?: ScopeMap;
-    adapterExecutableCommand?: string;
-    win?: PlatformSpecificAdapterContribution;
-    winx86?: PlatformSpecificAdapterContribution;
-    windows?: PlatformSpecificAdapterContribution;
-    osx?: PlatformSpecificAdapterContribution;
-    linux?: PlatformSpecificAdapterContribution;
-}
-
-/**
- * This interface describes a package.json languages contribution section object.
- */
-export interface PluginPackageLanguageContribution {
-    id: string;
-    extensions?: string[];
-    filenames?: string[];
-    filenamePatterns?: string[];
-    firstLine?: string;
-    aliases?: string[];
-    mimetypes?: string[];
-    configuration?: string;
-}
-
-export interface PluginPackageLanguageContributionConfiguration {
-    comments?: CommentRule;
-    brackets?: CharacterPair[];
-    autoClosingPairs?: (CharacterPair | AutoClosingPairConditional)[];
-    surroundingPairs?: (CharacterPair | AutoClosingPair)[];
-    wordPattern?: string;
-    indentationRules?: IndentationRules;
-    folding?: FoldingRules;
-}
-
-export interface PluginTaskDefinitionContribution {
-    type: string;
-    required: string[];
-    properties?: {
-        [name: string]: {
-            type: string;
-            description?: string;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            [additionalProperty: string]: any;
-        }
-    }
 }
 
 export interface PluginProblemMatcherContribution extends ProblemMatcherContribution {
@@ -285,11 +221,6 @@ export interface PluginProblemMatcherContribution extends ProblemMatcherContribu
 
 export interface PluginProblemPatternContribution extends ProblemPatternContribution {
     name: string;
-}
-
-export interface PluginJsonValidationContribution {
-    fileMatch: string | string[];
-    url: string;
 }
 
 export const PluginScanner = Symbol('PluginScanner');
@@ -317,7 +248,7 @@ export interface PluginScanner {
      */
     getLifecycle(plugin: PluginPackage): PluginLifecycle;
 
-    getContribution(plugin: PluginPackage): PluginContribution | undefined;
+    getContribution(plugin: PluginPackage): Promise<PluginContribution | undefined>;
 
     /**
      * A mapping between a dependency as its defined in package.json
@@ -339,13 +270,13 @@ export interface PluginDeployerResolver {
 
     accept(pluginSourceId: string): boolean;
 
-    resolve(pluginResolverContext: PluginDeployerResolverContext): Promise<void>;
+    resolve(pluginResolverContext: PluginDeployerResolverContext, options?: PluginDeployOptions): Promise<void>;
 
 }
 
 export const PluginDeployerDirectoryHandler = Symbol('PluginDeployerDirectoryHandler');
 export interface PluginDeployerDirectoryHandler {
-    accept(pluginDeployerEntry: PluginDeployerEntry): boolean;
+    accept(pluginDeployerEntry: PluginDeployerEntry): Promise<boolean>;
 
     handle(context: PluginDeployerDirectoryHandlerContext): Promise<void>;
 }
@@ -353,7 +284,7 @@ export interface PluginDeployerDirectoryHandler {
 export const PluginDeployerFileHandler = Symbol('PluginDeployerFileHandler');
 export interface PluginDeployerFileHandler {
 
-    accept(pluginDeployerEntry: PluginDeployerEntry): boolean;
+    accept(pluginDeployerEntry: PluginDeployerEntry): Promise<boolean>;
 
     handle(context: PluginDeployerFileHandlerContext): Promise<void>;
 }
@@ -380,7 +311,7 @@ export interface PluginDeployerStartContext {
 export const PluginDeployer = Symbol('PluginDeployer');
 export interface PluginDeployer {
 
-    start(): void;
+    start(): Promise<void>;
 
 }
 
@@ -396,16 +327,15 @@ export enum PluginDeployerEntryType {
 
     FRONTEND,
 
-    BACKEND
+    BACKEND,
+
+    HEADLESS // Deployed in the Theia Node server outside the context of a frontend/backend connection
 }
 
-/**
- * Whether a plugin installed by a user or system.
- */
-export enum PluginType {
-    System,
-    User
-};
+export interface UnresolvedPluginEntry {
+    id: string;
+    type?: PluginType;
+}
 
 export interface PluginDeployerEntry {
 
@@ -441,9 +371,9 @@ export interface PluginDeployerEntry {
 
     getChanges(): string[];
 
-    isFile(): boolean;
+    isFile(): Promise<boolean>;
 
-    isDirectory(): boolean;
+    isDirectory(): Promise<boolean>;
 
     /**
      * Resolved if a resolver has handle this plugin
@@ -481,288 +411,103 @@ export interface PluginDeployerFileHandlerContext {
 
 export interface PluginDeployerDirectoryHandlerContext {
 
+    copy(origin: string, target: string): Promise<void>;
+
     pluginEntry(): PluginDeployerEntry;
 
 }
 
 /**
- * This interface describes a plugin model object, which is populated from package.json.
+ * Static plugin contributions after normalization.
+ * Narrows shim/`unknown` fields from {@link NormalizedPluginContribution} to core/task types.
  */
-export interface PluginModel {
-    id: string;
-    name: string;
-    publisher: string;
-    version: string;
-    displayName: string;
-    description: string;
-    engine: {
-        type: PluginEngine;
-        version: string;
-    };
-    entryPoint: PluginEntryPoint;
-    packageUri: string;
-    /**
-     * @deprecated since 1.1.0 - because it lead to problems with getting a relative path
-     * needed by Icon Themes to correctly load Fonts, use packageUri instead.
-     */
-    packagePath: string;
-    iconUrl?: string;
-    readmeUrl?: string;
-    licenseUrl?: string;
-}
-
-export interface PluginEntryPoint {
-    frontend?: string;
-    backend?: string;
-}
-
-/**
- * This interface describes some static plugin contributions.
- */
-export interface PluginContribution {
-    activationEvents?: string[];
+export type PluginContribution = Omit<NormalizedPluginContribution,
+    'configuration' | 'colors' | 'taskDefinitions' | 'problemMatchers' | 'problemPatterns' | 'resourceLabelFormatters'
+> & {
     configuration?: PreferenceSchema[];
-    configurationDefaults?: PreferenceSchemaProperties;
-    languages?: LanguageContribution[];
-    grammars?: GrammarsContribution[];
-    customEditors?: CustomEditor[];
-    viewsContainers?: { [location: string]: ViewContainer[] };
-    views?: { [location: string]: View[] };
-    viewsWelcome?: ViewWelcome[];
-    commands?: PluginCommand[];
-    menus?: { [location: string]: Menu[] };
-    submenus?: Submenu[];
-    keybindings?: Keybinding[];
-    debuggers?: DebuggerContribution[];
-    snippets?: SnippetContribution[];
-    themes?: ThemeContribution[];
-    iconThemes?: IconThemeContribution[];
     colors?: ColorDefinition[];
     taskDefinitions?: TaskDefinition[];
     problemMatchers?: ProblemMatcherContribution[];
     problemPatterns?: ProblemPatternContribution[];
     resourceLabelFormatters?: ResourceLabelFormatter[];
-    localizations?: Localization[];
-}
+};
 
-export interface Localization {
-    languageId: string;
-    languageName?: string;
-    localizedLanguageName?: string;
-    translations: Translation[];
-    minimalTranslations?: { [key: string]: string };
-}
+export type NotebookContribution = PluginPackageNotebook;
 
-export interface Translation {
-    id: string;
-    version: string;
-    contents: { [scope: string]: { [key: string]: string } }
-}
+export type NotebookRendererContribution = PluginNotebookRendererContribution;
 
-export interface SnippetContribution {
-    uri: string
-    source: string
-    language?: string
-}
+export type notebookPreloadContribution = PluginPackageNotebookPreload;
 
-export type UiTheme = 'vs' | 'vs-dark' | 'hc-black';
+export type AuthenticationProviderInformation = PluginPackageAuthenticationProvider;
 
-export interface ThemeContribution {
-    id?: string;
-    label?: string;
-    description?: string;
-    uri: string;
-    uiTheme?: UiTheme;
-}
+export type TerminalProfile = NormalizedTerminalProfile;
 
-export interface IconThemeContribution {
-    id: string;
-    label?: string;
-    description?: string;
-    uri: string;
-    uiTheme?: UiTheme;
-}
+export type Localization = NormalizedLocalization;
 
-export interface GrammarsContribution {
-    format: 'json' | 'plist';
-    language?: string;
-    scope: string;
-    grammar?: string | object;
-    grammarLocation?: string;
-    embeddedLanguages?: ScopeMap;
-    tokenTypes?: ScopeMap;
-    injectTo?: string[];
+export type Translation = NormalizedTranslation;
+
+export type SnippetContribution = NormalizedSnippet;
+
+export type UiTheme = PluginUiTheme;
+
+export type ThemeContribution = NormalizedTheme;
+
+export type IconThemeContribution = NormalizedIconTheme;
+
+export type IconDefinition = Extract<NormalizedIcon['defaults'], { fontCharacter: string }>;
+
+export type IconDefaults = NormalizedIcon['defaults'];
+
+export type IconContribution = NormalizedIcon;
+
+export namespace IconContribution {
+    export function isIconDefinition(defaults: IconDefaults): defaults is IconDefinition {
+        return 'fontCharacter' in defaults;
+    }
 }
 
 /**
  * The language contribution
  */
-export interface LanguageContribution {
-    id: string;
-    extensions?: string[];
-    filenames?: string[];
-    filenamePatterns?: string[];
-    firstLine?: string;
-    aliases?: string[];
-    mimetypes?: string[];
-    configuration?: LanguageConfiguration;
-}
+export type LanguageContribution = NormalizedLanguage;
 
-export interface LanguageConfiguration {
-    brackets?: CharacterPair[];
-    indentationRules?: IndentationRules;
-    surroundingPairs?: AutoClosingPair[];
-    autoClosingPairs?: AutoClosingPairConditional[];
-    comments?: CommentRule;
-    folding?: FoldingRules;
-    wordPattern?: string;
-}
+export type LanguageConfiguration = NormalizedLanguageConfiguration;
 
-/**
- * This interface describes a package.json debuggers contribution section object.
- */
-export interface DebuggerContribution extends PlatformSpecificAdapterContribution {
-    type: string,
-    label?: string,
-    languages?: string[],
-    enableBreakpointsFor?: {
-        languageIds: string[]
-    },
-    configurationAttributes?: IJSONSchema[],
-    configurationSnippets?: IJSONSchemaSnippet[],
-    variables?: ScopeMap,
-    adapterExecutableCommand?: string
-    win?: PlatformSpecificAdapterContribution;
-    winx86?: PlatformSpecificAdapterContribution;
-    windows?: PlatformSpecificAdapterContribution;
-    osx?: PlatformSpecificAdapterContribution;
-    linux?: PlatformSpecificAdapterContribution;
-}
-
-export interface IndentationRules {
-    increaseIndentPattern: string;
-    decreaseIndentPattern: string;
-    unIndentedLinePattern?: string;
-    indentNextLinePattern?: string;
-}
-export interface AutoClosingPair {
-    close: string;
-    open: string;
-}
-
-export interface AutoClosingPairConditional extends AutoClosingPair {
-    notIn?: string[];
-}
-
-export interface FoldingMarkers {
-    start: string;
-    end: string;
-}
-
-export interface FoldingRules {
-    offSide?: boolean;
-    markers?: FoldingMarkers;
-}
+export type DebuggerContribution = PluginPackageDebuggersContribution;
 
 /**
  * Custom Editors contribution
  */
-export interface CustomEditor {
-    viewType: string;
-    displayName: string;
-    selector: CustomEditorSelector[];
-    priority: CustomEditorPriority;
-}
+export type CustomEditor = NormalizedCustomEditor;
 
 /**
  * Views Containers contribution
  */
-export interface ViewContainer {
-    id: string;
-    title: string;
-    iconUrl: string;
-}
+export type ViewContainer = NormalizedViewContainer;
 
 /**
  * View contribution
  */
-export interface View {
-    id: string;
-    name: string;
-    when?: string;
-}
+export type View = PluginPackageView;
 
 /**
  * View Welcome contribution
  */
-export interface ViewWelcome {
-    view: string;
-    content: string;
-    when?: string;
-    order: number;
-}
+export type ViewWelcome = NormalizedViewWelcome;
 
-export interface PluginCommand {
-    command: string;
-    title: string;
-    originalTitle?: string;
-    category?: string;
-    iconUrl?: IconUrl;
-    themeIcon?: string;
-    enablement?: string;
-}
-
-export type IconUrl = string | { light: string; dark: string; };
+export type PluginCommand = NormalizedCommand;
 
 /**
  * Menu contribution
  */
-export interface Menu {
-    command?: string;
-    submenu?: string
-    alt?: string;
-    group?: string;
-    when?: string;
-}
+export type Menu = PluginPackageMenu;
 
-export interface Submenu {
-    id: string;
-    label: string;
-}
+export type Submenu = NormalizedSubmenu;
 
 /**
  * Keybinding contribution
  */
-export interface Keybinding {
-    keybinding?: string;
-    command: string;
-    when?: string;
-    mac?: string;
-    linux?: string;
-    win?: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    args?: any;
-}
-
-/**
- * This interface describes a plugin lifecycle object.
- */
-export interface PluginLifecycle {
-    startMethod: string;
-    stopMethod: string;
-    /**
-     * Frontend module name, frontend plugin should expose this name.
-     */
-    frontendModuleName?: string;
-    /**
-     * Path to the script which should do some initialization before frontend plugin is loaded.
-     */
-    frontendInitPath?: string;
-    /**
-     * Path to the script which should do some initialization before backend plugin is loaded.
-     */
-    backendInitPath?: string;
-}
+export type Keybinding = NormalizedKeybinding;
 
 /**
  * The export function of initialization module of backend plugin.
@@ -783,28 +528,14 @@ export interface ExtensionContext {
     subscriptions: Disposable[];
 }
 
-export interface PluginMetadata {
-    host: string;
-    model: PluginModel;
-    lifecycle: PluginLifecycle;
-}
-
 export const MetadataProcessor = Symbol('MetadataProcessor');
 export interface MetadataProcessor {
     process(pluginMetadata: PluginMetadata): void;
 }
 
-export function getPluginId(plugin: PluginPackage | PluginModel): string {
-    return `${plugin.publisher}_${plugin.name}`.replace(/\W/g, '_');
-}
-
-export function buildFrontendModuleName(plugin: PluginPackage | PluginModel): string {
-    return `${plugin.publisher}_${plugin.name}`.replace(/\W/g, '_');
-}
-
 export const HostedPluginClient = Symbol('HostedPluginClient');
 export interface HostedPluginClient {
-    postMessage(pluginHost: string, message: string): Promise<void>;
+    postMessage(pluginHost: string, buffer: Uint8Array): Promise<void>;
 
     log(logPart: LogPart): void;
 
@@ -813,46 +544,83 @@ export interface HostedPluginClient {
 
 export interface PluginDependencies {
     metadata: PluginMetadata
+    /**
+     * Actual listing of plugin dependencies.
+     * Mapping from {@link PluginIdentifiers.UnversionedId external representation} of plugin identity to a string
+     * that can be used to identify the resolver for the specific plugin case, e.g. with scheme `vscode://<id>`.
+     */
     mapping?: Map<string, string>
 }
 
 export const PluginDeployerHandler = Symbol('PluginDeployerHandler');
 export interface PluginDeployerHandler {
-    deployFrontendPlugins(frontendPlugins: PluginDeployerEntry[]): Promise<void>;
-    deployBackendPlugins(backendPlugins: PluginDeployerEntry[]): Promise<void>;
-
-    undeployPlugin(pluginId: string): Promise<boolean>;
-
-    getPluginDependencies(pluginToBeInstalled: PluginDeployerEntry): Promise<PluginDependencies | undefined>
-}
-
-export interface GetDeployedPluginsParams {
-    pluginIds: string[]
-}
-
-export interface DeployedPlugin {
     /**
-     * defaults to system
+     * May be called concurrently with {@link deployBackendPlugins}. Implementations must ensure
+     * the two calls can run in parallel.
      */
-    type?: PluginType;
-    metadata: PluginMetadata;
-    contributes?: PluginContribution;
+    deployFrontendPlugins(frontendPlugins: PluginDeployerEntry[]): Promise<number | undefined>;
+    /**
+     * May be called concurrently with {@link deployFrontendPlugins}. Implementations must ensure
+     * the two calls can run in parallel.
+     */
+    deployBackendPlugins(backendPlugins: PluginDeployerEntry[]): Promise<number | undefined>;
+    getDeployedPluginIds(): Promise<readonly PluginIdentifiers.VersionedId[]>;
+
+    getDeployedPlugins(): Promise<DeployedPlugin[]>;
+    getDeployedPluginsById(pluginId: string): DeployedPlugin[];
+
+    getDeployedPlugin(pluginId: PluginIdentifiers.VersionedId): DeployedPlugin | undefined;
+    /**
+     * Removes the plugin from the location it originally resided on disk.
+     * Unless `--uncompressed-plugins-in-place` is passed to the CLI, this operation is safe.
+     */
+    uninstallPlugin(pluginId: PluginIdentifiers.VersionedId): Promise<boolean>;
+
+    /**
+     * Removes the plugin from the locations to which it had been deployed.
+     * This operation is not safe - references to deleted assets may remain.
+     */
+    undeployPlugin(pluginId: PluginIdentifiers.VersionedId): Promise<boolean>;
+
+    getPluginDependencies(pluginToBeInstalled: PluginDeployerEntry): Promise<PluginDependencies | undefined>;
+
+    /**
+     * Marks the given plugins as "disabled". While the plugin remains installed, it will no longer
+     * be used. Has no effect if the plugin is not installed
+     * @param pluginId the plugin to disable
+     * @returns whether the plugin was installed, enabled and could be disabled
+     */
+    disablePlugin(pluginId: PluginIdentifiers.UnversionedId): Promise<boolean>;
+
+    /**
+     * Marks the given plugins as "enabled". Has no effect if the plugin is not installed.
+     * @param pluginId the plugin to enabled
+     * @returns whether the plugin was installed, disabled and could be enabled
+     */
+    enablePlugin(pluginId: PluginIdentifiers.UnversionedId): Promise<boolean>;
+
 }
+
+export type DeployedPlugin = DeployedPluginBase<PluginContribution>;
 
 export const HostedPluginServer = Symbol('HostedPluginServer');
-export interface HostedPluginServer extends JsonRpcServer<HostedPluginClient> {
+export interface HostedPluginServer extends RpcServer<HostedPluginClient> {
 
-    getDeployedPluginIds(): Promise<string[]>;
+    getDeployedPluginIds(): Promise<PluginIdentifiers.VersionedId[]>;
 
-    getDeployedPlugins(params: GetDeployedPluginsParams): Promise<DeployedPlugin[]>;
+    getInstalledPluginIds(): Promise<PluginIdentifiers.VersionedId[]>;
+
+    getUninstalledPluginIds(): Promise<readonly PluginIdentifiers.VersionedId[]>;
+
+    getDisabledPluginIds(): Promise<readonly PluginIdentifiers.UnversionedId[]>;
+
+    getDeployedPlugins(ids: PluginIdentifiers.VersionedId[]): Promise<DeployedPlugin[]>;
 
     getExtPluginAPI(): Promise<ExtPluginApi[]>;
 
-    onMessage(targetHost: string, message: string): Promise<void>;
+    onMessage(targetHost: string, message: Uint8Array): Promise<void>;
 
 }
-
-export const PLUGIN_HOST_BACKEND = 'main';
 
 export interface WorkspaceStorageKind {
     workspace?: string | undefined;
@@ -861,9 +629,30 @@ export interface WorkspaceStorageKind {
 export type GlobalStorageKind = undefined;
 export type PluginStorageKind = GlobalStorageKind | WorkspaceStorageKind;
 
+export interface PluginDeployOptions {
+    version: string;
+    /** Instructs the deployer to ignore any existing plugins with different versions */
+    ignoreOtherVersions?: boolean;
+}
+
 /**
- * The JSON-RPC workspace interface.
+ * Thrown by a {@link PluginDeployerResolver} when the plugin it resolves is already installed.
+ * Identified by its `name`, which survives the RPC boundary.
  */
+export namespace DuplicateExtensionError {
+    export const NAME = 'DuplicateExtensionError';
+
+    export function create(message: string): Error {
+        const error = new Error(message);
+        error.name = NAME;
+        return error;
+    }
+
+    export function is(error: unknown): error is Error {
+        return error instanceof Error && error.name === NAME;
+    }
+}
+
 export const pluginServerJsonRpcPath = '/services/plugin-ext';
 export const PluginServer = Symbol('PluginServer');
 export interface PluginServer {
@@ -873,9 +662,15 @@ export interface PluginServer {
      *
      * @param type whether a plugin is installed by a system or a user, defaults to a user
      */
-    deploy(pluginEntry: string, type?: PluginType): Promise<void>;
+    install(pluginEntry: string, type?: PluginType, options?: PluginDeployOptions): Promise<void>;
+    uninstall(pluginId: PluginIdentifiers.VersionedId): Promise<void>;
 
-    undeploy(pluginId: string): Promise<void>;
+    enablePlugin(pluginId: PluginIdentifiers.UnversionedId): Promise<boolean>;
+    disablePlugin(pluginId: PluginIdentifiers.UnversionedId): Promise<boolean>;
+
+    getInstalledPlugins(): Promise<readonly PluginIdentifiers.VersionedId[]>;
+    getUninstalledPlugins(): Promise<readonly PluginIdentifiers.VersionedId[]>;
+    getDisabledPlugins(): Promise<readonly PluginIdentifiers.UnversionedId[]>;
 
     setStorageValue(key: string, value: KeysToAnyValues, kind: PluginStorageKind): Promise<boolean>;
     getStorageValue(key: string, kind: PluginStorageKind): Promise<KeysToAnyValues>;
@@ -885,23 +680,12 @@ export interface PluginServer {
 export const ServerPluginRunner = Symbol('ServerPluginRunner');
 export interface ServerPluginRunner {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    acceptMessage(pluginHostId: string, jsonMessage: string): boolean;
+    acceptMessage(pluginHostId: string, jsonMessage: Uint8Array): boolean;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    onMessage(pluginHostId: string, jsonMessage: string): void;
+    onMessage(pluginHostId: string, jsonMessage: Uint8Array): void;
     setClient(client: HostedPluginClient): void;
     setDefault(defaultRunner: ServerPluginRunner): void;
     clientClosed(): void;
-
-    /**
-     * Provides additional deployed plugins.
-     */
-    getExtraDeployedPlugins(): Promise<DeployedPlugin[]>;
-
-    /**
-     * Provides additional plugin ids.
-     */
-    getExtraDeployedPluginIds(): Promise<string[]>;
-
 }
 
 export const PluginHostEnvironmentVariable = Symbol('PluginHostEnvironmentVariable');

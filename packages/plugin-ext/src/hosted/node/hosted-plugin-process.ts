@@ -1,29 +1,32 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import * as cp from 'child_process';
-import { injectable, inject, named } from '@theia/core/shared/inversify';
-import { ILogger, ConnectionErrorHandler, ContributionProvider, MessageService } from '@theia/core/lib/common';
-import { createIpcEnv } from '@theia/core/lib/node/messaging/ipc-protocol';
-import { HostedPluginClient, ServerPluginRunner, PluginHostEnvironmentVariable, DeployedPlugin, PLUGIN_HOST_BACKEND } from '../../common/plugin-protocol';
-import { MessageType } from '../../common/rpc-protocol';
-import { HostedPluginCliContribution } from './hosted-plugin-cli-contribution';
-import * as psTree from 'ps-tree';
+import { ConnectionErrorHandler, ContributionProvider, ILogger, MessageService } from '@theia/core/lib/common';
 import { Deferred } from '@theia/core/lib/common/promise-util';
-import { LocalizationProvider } from '@theia/core/lib/node/i18n/localization-provider';
+import { BinaryMessagePipe } from '@theia/core/lib/node/messaging/binary-message-pipe';
+import { createIpcEnv } from '@theia/core/lib/node/messaging/ipc-protocol';
+import { inject, injectable, named } from '@theia/core/shared/inversify';
+import * as cp from 'child_process';
+import { Duplex } from 'stream';
+import { HostedPluginClient, PLUGIN_HOST_BACKEND, PluginHostEnvironmentVariable, ServerPluginRunner } from '../../common/plugin-protocol.js';
+import { PluginHostNavigatorState } from '../../main/common/plugin-host-environment-preferences.js';
+import { HostedPluginCliContribution } from './hosted-plugin-cli-contribution.js';
+import { HostedPluginLocalizationService } from './hosted-plugin-localization-service.js';
+import { ProcessTerminateMessage, ProcessTerminatedMessage } from './hosted-plugin-protocol.js';
+import { ProcessUtils } from '@theia/core/lib/node/process-utils';
 
 export interface IPCConnectionOptions {
     readonly serverName: string;
@@ -43,7 +46,7 @@ export class HostedPluginProcess implements ServerPluginRunner {
     @inject(HostedPluginProcessConfiguration)
     protected configuration: HostedPluginProcessConfiguration;
 
-    @inject(ILogger)
+    @inject(ILogger) @named('plugin-ext:HostedPluginProcess')
     protected readonly logger: ILogger;
 
     @inject(HostedPluginCliContribution)
@@ -56,10 +59,17 @@ export class HostedPluginProcess implements ServerPluginRunner {
     @inject(MessageService)
     protected readonly messageService: MessageService;
 
-    @inject(LocalizationProvider)
-    protected readonly localizationProvider: LocalizationProvider;
+    @inject(HostedPluginLocalizationService)
+    protected readonly localizationService: HostedPluginLocalizationService;
+
+    @inject(ProcessUtils)
+    protected readonly processUtils: ProcessUtils;
+
+    @inject(PluginHostNavigatorState)
+    protected readonly navigatorState: PluginHostNavigatorState;
 
     private childProcess: cp.ChildProcess | undefined;
+    private messagePipe?: BinaryMessagePipe;
     private client: HostedPluginClient;
 
     private terminatingPluginServer = false;
@@ -82,14 +92,14 @@ export class HostedPluginProcess implements ServerPluginRunner {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    public acceptMessage(pluginHostId: string, message: string): boolean {
+    public acceptMessage(pluginHostId: string, message: Uint8Array): boolean {
         return pluginHostId === 'main';
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    public onMessage(pluginHostId: string, jsonMessage: string): void {
-        if (this.childProcess) {
-            this.childProcess.send(jsonMessage);
+    public onMessage(pluginHostId: string, message: Uint8Array): void {
+        if (this.messagePipe) {
+            this.messagePipe.send(message);
         }
     }
 
@@ -105,13 +115,13 @@ export class HostedPluginProcess implements ServerPluginRunner {
 
         const waitForTerminated = new Deferred<void>();
         cp.on('message', message => {
-            const msg = JSON.parse(message);
-            if ('type' in msg && msg.type === MessageType.Terminated) {
+            const msg = JSON.parse(message as string);
+            if (ProcessTerminatedMessage.is(msg)) {
                 waitForTerminated.resolve();
             }
         });
         const stopTimeout = this.cli.pluginHostStopTimeout;
-        cp.send(JSON.stringify({ type: MessageType.Terminate, stopTimeout }));
+        cp.send(JSON.stringify({ type: ProcessTerminateMessage.TYPE, stopTimeout }));
 
         const terminateTimeout = this.cli.pluginHostTerminateTimeout;
         if (terminateTimeout) {
@@ -123,42 +133,28 @@ export class HostedPluginProcess implements ServerPluginRunner {
             await waitForTerminated.promise;
         }
 
-        this.killProcessTree(cp.pid);
+        this.killProcessTree(cp.pid!);
     }
 
     killProcessTree(parentPid: number): void {
-        psTree(parentPid, (_, childProcesses) => {
-            childProcesses.forEach(childProcess =>
-                this.killProcess(parseInt(childProcess.PID))
-            );
-            this.killProcess(parentPid);
-        });
+        this.processUtils.terminateProcessTree(parentPid);
     }
 
-    protected killProcess(pid: number): void {
-        try {
-            process.kill(pid);
-        } catch (e) {
-            if (e && 'code' in e && e.code === 'ESRCH') {
-                return;
-            }
-            this.logger.error(`[${pid}] failed to kill`, e);
-        }
-    }
-
-    public runPluginServer(): void {
+    public runPluginServer(serverName?: string): void {
         if (this.childProcess) {
             this.terminatePluginServer();
         }
         this.terminatingPluginServer = false;
         this.childProcess = this.fork({
-            serverName: 'hosted-plugin',
+            serverName: serverName ?? 'hosted-plugin',
             logger: this.logger,
             args: []
         });
-        this.childProcess.on('message', message => {
+
+        this.messagePipe = new BinaryMessagePipe(this.childProcess.stdio[4] as Duplex);
+        this.messagePipe.onMessage(buffer => {
             if (this.client) {
-                this.client.postMessage(PLUGIN_HOST_BACKEND, message);
+                this.client.postMessage(PLUGIN_HOST_BACKEND, buffer);
             }
         });
     }
@@ -173,11 +169,12 @@ export class HostedPluginProcess implements ServerPluginRunner {
                 delete env[key];
             }
         }
-        const availableLanguages = ['en', ...this.localizationProvider.getAvailableLanguages()];
-        const locale = this.localizationProvider.getCurrentLanguage();
-        env['VSCODE_NLS_CONFIG'] = JSON.stringify({ locale, availableLanguages });
+        env['VSCODE_NLS_CONFIG'] = JSON.stringify(this.localizationService.getNlsConfig());
         // apply external env variables
         this.pluginHostEnvironmentVariables.getContributions().forEach(envVar => envVar.process(env));
+        if (this.navigatorState.supportNodeGlobalNavigator) {
+            env['THEIA_SUPPORT_NODE_GLOBAL_NAVIGATOR'] = 'true';
+        }
         if (this.cli.extensionTestsPath) {
             env.extensionTestsPath = this.cli.extensionTestsPath;
         }
@@ -186,12 +183,15 @@ export class HostedPluginProcess implements ServerPluginRunner {
             silent: true,
             env: env,
             execArgv: [],
-            stdio: ['pipe', 'pipe', 'pipe', 'ipc']
+            // 5th element MUST be 'overlapped' for it to work properly on Windows.
+            // 'overlapped' works just like 'pipe' on non-Windows platforms.
+            // See: https://nodejs.org/docs/latest-v14.x/api/child_process.html#child_process_options_stdio
+            stdio: ['pipe', 'pipe', 'pipe', 'ipc', 'overlapped']
         };
         const inspectArgPrefix = `--${options.serverName}-inspect`;
         const inspectArg = process.argv.find(v => v.startsWith(inspectArgPrefix));
         if (inspectArg !== undefined) {
-            forkOptions.execArgv = ['--nolazy', `--inspect${inspectArg.substr(inspectArgPrefix.length)}`];
+            forkOptions.execArgv = ['--nolazy', `--inspect${inspectArg.substring(inspectArgPrefix.length)}`];
         }
 
         const childProcess = cp.fork(this.configuration.path, options.args, forkOptions);
@@ -199,7 +199,7 @@ export class HostedPluginProcess implements ServerPluginRunner {
         childProcess.stderr!.on('data', data => this.logger.error(`[${options.serverName}: ${childProcess.pid}] ${data.toString().trim()}`));
 
         this.logger.debug(`[${options.serverName}: ${childProcess.pid}] IPC started`);
-        childProcess.once('exit', (code: number, signal: string) => this.onChildProcessExit(options.serverName, childProcess.pid, code, signal));
+        childProcess.once('exit', (code: number, signal: string) => this.onChildProcessExit(options.serverName, childProcess.pid!, code, signal));
         childProcess.on('error', err => this.onChildProcessError(err));
         return childProcess;
     }
@@ -222,20 +222,6 @@ export class HostedPluginProcess implements ServerPluginRunner {
 
     private onChildProcessError(err: Error): void {
         this.logger.error(`Error from plugin host: ${err.message}`);
-    }
-
-    /**
-     * Provides additional plugin ids.
-     */
-    public async getExtraDeployedPluginIds(): Promise<string[]> {
-        return [];
-    }
-
-    /**
-     * Provides additional deployed plugins.
-     */
-    public async getExtraDeployedPlugins(): Promise<DeployedPlugin[]> {
-        return [];
     }
 
 }

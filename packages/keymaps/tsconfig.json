@@ -16,10 +16,10 @@
       "path": "../monaco"
     },
     {
-      "path": "../userstorage"
+      "path": "../preferences"
     },
     {
-      "path": "../workspace"
+      "path": "../userstorage"
     }
   ]
 }

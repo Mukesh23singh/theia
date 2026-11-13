@@ -1,37 +1,39 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import '../../src/browser/style/output.css';
 import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
-import { toArray } from '@theia/core/shared/@phosphor/algorithm';
-import { IDragEvent } from '@theia/core/shared/@phosphor/dragdrop';
 import { EditorWidget } from '@theia/editor/lib/browser';
 import { MonacoEditor } from '@theia/monaco/lib/browser/monaco-editor';
 import { SelectionService } from '@theia/core/lib/common/selection-service';
 import { MonacoEditorProvider } from '@theia/monaco/lib/browser/monaco-editor-provider';
 import { Disposable, DisposableCollection } from '@theia/core/lib/common/disposable';
-import { Message, BaseWidget, DockPanel, Widget, MessageLoop, StatefulWidget, codicon } from '@theia/core/lib/browser';
-import { OutputUri } from '../common/output-uri';
-import { OutputChannelManager, OutputChannel } from '../common/output-channel';
+import { Message, BaseWidget, DockPanel, Widget, MessageLoop, StatefulWidget, codicon, StorageService } from '@theia/core/lib/browser';
+import { OutputUri } from '../common/output-uri.js';
+import { OutputChannelManager, OutputChannel } from './output-channel.js';
 import { Emitter, Event, deepClone } from '@theia/core';
+import { nls } from '@theia/core/lib/common/nls';
+import * as monaco from '@theia/monaco-editor-core';
 
 @injectable()
 export class OutputWidget extends BaseWidget implements StatefulWidget {
 
     static readonly ID = 'outputView';
+    static readonly LABEL = nls.localizeByDefault('Output');
+    static readonly SELECTED_CHANNEL_STORAGE_KEY = 'output-widget-selected-channel';
 
     @inject(SelectionService)
     protected readonly selectionService: SelectionService;
@@ -42,6 +44,9 @@ export class OutputWidget extends BaseWidget implements StatefulWidget {
     @inject(OutputChannelManager)
     protected readonly outputChannelManager: OutputChannelManager;
 
+    @inject(StorageService)
+    protected readonly storageService: StorageService;
+
     protected _state: OutputWidget.State = { locked: false };
     protected readonly editorContainer: DockPanel;
     protected readonly toDisposeOnSelectedChannelChanged = new DisposableCollection();
@@ -50,8 +55,8 @@ export class OutputWidget extends BaseWidget implements StatefulWidget {
     constructor() {
         super();
         this.id = OutputWidget.ID;
-        this.title.label = 'Output';
-        this.title.caption = 'Output';
+        this.title.label = OutputWidget.LABEL;
+        this.title.caption = OutputWidget.LABEL;
         this.title.iconClass = codicon('output');
         this.title.closable = true;
         this.addClass('theia-output');
@@ -64,23 +69,118 @@ export class OutputWidget extends BaseWidget implements StatefulWidget {
     @postConstruct()
     protected init(): void {
         this.toDispose.pushAll([
+            this.outputChannelManager.onChannelAdded(({ name }) => {
+                this.tryRestorePendingChannel(name);
+                this.refreshEditorWidget();
+            }),
+            this.outputChannelManager.onChannelDeleted(() => this.refreshEditorWidget()),
             this.outputChannelManager.onChannelWasHidden(() => this.refreshEditorWidget()),
-            this.outputChannelManager.onChannelWasShown(({ preserveFocus }) => this.refreshEditorWidget({ preserveFocus: !!preserveFocus })),
+            this.outputChannelManager.onChannelWasShown(({ preserveFocus }) => {
+                // User explicitly showed a channel, clear any pending restoration
+                // so we don't override their choice when the pending channel is registered later
+                this.clearPendingChannelRestore();
+                this.refreshEditorWidget({ preserveFocus: !!preserveFocus });
+            }),
+            this.outputChannelManager.onSelectedChannelChanged(() => this.refreshEditorWidget()),
             this.toDisposeOnSelectedChannelChanged,
             this.onStateChangedEmitter,
             this.onStateChanged(() => this.update())
         ]);
+        this.restoreSelectedChannelFromStorage();
         this.refreshEditorWidget();
     }
 
+    /**
+     * Restore the selected channel from storage. This handles the case where the
+     * Output widget was closed before the application shut down, so the widget was
+     * not in the layout and `storeState`/`restoreState` never ran.
+     *
+     * Only applies if the manager doesn't already have a selected channel — if it
+     * does, something (e.g. a `channel.show()` call) already set the selection
+     * before this widget was created, and we should not override it.
+     */
+    protected async restoreSelectedChannelFromStorage(): Promise<void> {
+        const storedChannelName = await this.storageService.getData<string>(OutputWidget.SELECTED_CHANNEL_STORAGE_KEY);
+        if (storedChannelName
+            && !this._state.selectedChannelName
+            && !this._state.pendingSelectedChannelName
+            && !this.outputChannelManager.selectedChannel
+        ) {
+            const channel = this.outputChannelManager.getVisibleChannels().find(ch => ch.name === storedChannelName);
+            if (channel) {
+                this.outputChannelManager.selectedChannel = channel;
+                this.refreshEditorWidget();
+            } else {
+                this._state = { ...this._state, pendingSelectedChannelName: storedChannelName };
+            }
+        }
+        // If no restoration occurred and nothing else has set a selection,
+        // fall back to the first visible channel so the widget isn't empty.
+        this.ensureChannelSelected();
+    }
+
+    override dispose(): void {
+        const channelName = this.selectedChannel?.name;
+        if (channelName) {
+            this.storageService.setData(OutputWidget.SELECTED_CHANNEL_STORAGE_KEY, channelName);
+        }
+        super.dispose();
+    }
+
+    /**
+     * Try to restore the pending channel if it matches the newly added channel.
+     */
+    protected tryRestorePendingChannel(addedChannelName: string): void {
+        const pendingName = this._state.pendingSelectedChannelName;
+        if (pendingName && pendingName === addedChannelName) {
+            const channel = this.outputChannelManager.getVisibleChannels().find(ch => ch.name === pendingName);
+            if (channel) {
+                this.outputChannelManager.selectedChannel = channel;
+                this.clearPendingChannelRestore();
+            }
+        }
+    }
+
+    /**
+     * Clear any pending channel restoration.
+     * Called when the user explicitly selects a channel, so we don't override their choice.
+     */
+    protected clearPendingChannelRestore(): void {
+        if (this._state.pendingSelectedChannelName) {
+            this._state = { ...this._state, pendingSelectedChannelName: undefined };
+        }
+    }
+
     storeState(): object {
-        return this.state;
+        const { locked, selectedChannelName } = this.state;
+        const result: OutputWidget.State = { locked };
+        // Store the selected channel name, preferring the actual current selection
+        // over any pending restoration that hasn't completed yet
+        if (this.selectedChannel) {
+            result.selectedChannelName = this.selectedChannel.name;
+        } else if (selectedChannelName) {
+            result.selectedChannelName = selectedChannelName;
+        }
+        return result;
     }
 
     restoreState(oldState: object & Partial<OutputWidget.State>): void {
         const copy = deepClone(this.state);
         if (oldState.locked) {
             copy.locked = oldState.locked;
+        }
+        if (oldState.selectedChannelName) {
+            copy.selectedChannelName = oldState.selectedChannelName;
+            // Try to restore the selected channel in the manager if it exists
+            const channels = this.outputChannelManager.getVisibleChannels();
+            const channel = channels.find(ch => ch.name === oldState.selectedChannelName);
+            if (channel) {
+                this.outputChannelManager.selectedChannel = channel;
+            } else {
+                // Channel not yet available (e.g., registered by an extension that loads later).
+                // Store as pending and wait for it to be added.
+                copy.pendingSelectedChannelName = oldState.selectedChannelName;
+            }
         }
         this.state = copy;
     }
@@ -94,7 +194,11 @@ export class OutputWidget extends BaseWidget implements StatefulWidget {
         this.onStateChangedEmitter.fire(this._state);
     }
 
-    protected async refreshEditorWidget({ preserveFocus }: { preserveFocus: boolean } = { preserveFocus: false }): Promise<void> {
+    /**
+     * Only an explicit `OutputChannel.show()` activates the widget: channel selection, creation and
+     * deletion refresh it in the background, and a selection change precedes even a `preserveFocus` show.
+     */
+    protected async refreshEditorWidget({ preserveFocus }: { preserveFocus: boolean } = { preserveFocus: true }): Promise<void> {
         const { selectedChannel } = this;
         const editorWidget = this.editorWidget;
         if (selectedChannel && editorWidget) {
@@ -124,13 +228,13 @@ export class OutputWidget extends BaseWidget implements StatefulWidget {
         }
     }
 
-    protected onAfterAttach(message: Message): void {
+    protected override onAfterAttach(message: Message): void {
         super.onAfterAttach(message);
         Widget.attach(this.editorContainer, this.node);
         this.toDisposeOnDetach.push(Disposable.create(() => Widget.detach(this.editorContainer)));
     }
 
-    protected onActivateRequest(message: Message): void {
+    protected override onActivateRequest(message: Message): void {
         super.onActivateRequest(message);
         if (this.editor) {
             this.editor.focus();
@@ -139,15 +243,15 @@ export class OutputWidget extends BaseWidget implements StatefulWidget {
         }
     }
 
-    protected onResize(message: Widget.ResizeMessage): void {
+    protected override onResize(message: Widget.ResizeMessage): void {
         super.onResize(message);
         MessageLoop.sendMessage(this.editorContainer, Widget.ResizeMessage.UnknownSize);
-        for (const widget of toArray(this.editorContainer.widgets())) {
+        for (const widget of this.editorContainer.widgets()) {
             MessageLoop.sendMessage(widget, Widget.ResizeMessage.UnknownSize);
         }
     }
 
-    protected onAfterShow(msg: Message): void {
+    protected override onAfterShow(msg: Message): void {
         super.onAfterShow(msg);
         this.onResize(Widget.ResizeMessage.UnknownSize); // Triggers an editor widget resize. (#8361)
     }
@@ -201,6 +305,19 @@ export class OutputWidget extends BaseWidget implements StatefulWidget {
         }
     }
 
+    /**
+     * If no channel is currently selected, select the first visible channel
+     * as a default so the widget shows content rather than an empty view.
+     */
+    protected ensureChannelSelected(): void {
+        if (!this.outputChannelManager.selectedChannel) {
+            const firstVisible = this.outputChannelManager.getVisibleChannels()[0];
+            if (firstVisible) {
+                this.outputChannelManager.selectedChannel = firstVisible;
+            }
+        }
+    }
+
     private get selectedChannel(): OutputChannel | undefined {
         return this.outputChannelManager.selectedChannel;
     }
@@ -215,7 +332,7 @@ export class OutputWidget extends BaseWidget implements StatefulWidget {
     }
 
     private get editorWidget(): EditorWidget | undefined {
-        for (const widget of toArray(this.editorContainer.children())) {
+        for (const widget of this.editorContainer.children()) {
             if (widget instanceof EditorWidget) {
                 return widget;
             }
@@ -224,13 +341,7 @@ export class OutputWidget extends BaseWidget implements StatefulWidget {
     }
 
     private get editor(): MonacoEditor | undefined {
-        const widget = this.editorWidget;
-        if (widget instanceof EditorWidget) {
-            if (widget.editor instanceof MonacoEditor) {
-                return widget.editor;
-            }
-        }
-        return undefined;
+        return MonacoEditor.get(this.editorWidget);
     }
 
     getText(): string | undefined {
@@ -242,27 +353,16 @@ export class OutputWidget extends BaseWidget implements StatefulWidget {
 export namespace OutputWidget {
     export interface State {
         locked?: boolean;
+        selectedChannelName?: string;
+        /** Channel name waiting to be restored when it becomes available */
+        pendingSelectedChannelName?: string;
     }
 }
-
-/**
- * @deprecated Use `OutputWidget.ID` instead.
- */
-export const OUTPUT_WIDGET_KIND = OutputWidget.ID;
 
 /**
  * Customized `DockPanel` that does not allow dropping widgets into it.
- * Intercepts `'p-dragover'` events, and sets the desired drop action to `'none'`.
  */
-class NoopDragOverDockPanel extends DockPanel {
-
-    constructor(options?: DockPanel.IOptions) {
-        super(options);
-        NoopDragOverDockPanel.prototype['_evtDragOver'] = (event: IDragEvent) => {
-            event.preventDefault();
-            event.stopPropagation();
-            event.dropAction = 'none';
-        };
-    }
-
-}
+class NoopDragOverDockPanel extends DockPanel { }
+NoopDragOverDockPanel.prototype['_evtDragOver'] = () => { };
+NoopDragOverDockPanel.prototype['_evtDrop'] = () => { };
+NoopDragOverDockPanel.prototype['_evtDragLeave'] = () => { };

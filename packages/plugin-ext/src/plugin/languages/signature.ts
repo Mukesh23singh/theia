@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -22,10 +22,10 @@
 
 import { URI } from '@theia/core/shared/vscode-uri';
 import * as theia from '@theia/plugin';
-import { DocumentsExtImpl } from '../documents';
-import * as Converter from '../type-converters';
-import { Position } from '../../common/plugin-api-rpc';
-import { SignatureHelp, SignatureHelpContext } from '../../common/plugin-api-rpc-model';
+import { DocumentsExtImpl } from '../documents.js';
+import * as Converter from '../type-converters.js';
+import { Position } from '../../common/plugin-api-rpc.js';
+import { SignatureHelp, SignatureHelpContext } from '../../common/plugin-api-rpc-model.js';
 
 export class SignatureHelpAdapter {
 
@@ -52,6 +52,7 @@ export class SignatureHelpAdapter {
         if (!value) {
             return undefined;
         }
+        value.activeParameter = value.signatures[value.activeSignature].activeParameter ?? value.activeParameter;
         const id = this.idSequence++;
         this.cache.set(id, value);
         return Converter.SignatureHelp.from(id, value);
@@ -65,7 +66,8 @@ export class SignatureHelpAdapter {
             if (saved) {
                 activeSignatureHelp = saved;
                 activeSignatureHelp.activeSignature = revivedSignatureHelp.activeSignature;
-                activeSignatureHelp.activeParameter = revivedSignatureHelp.activeParameter;
+                const { activeSignature } = revivedSignatureHelp;
+                activeSignatureHelp.activeParameter = revivedSignatureHelp.signatures[activeSignature].activeParameter ?? revivedSignatureHelp.activeParameter;
             } else {
                 activeSignatureHelp = revivedSignatureHelp;
             }

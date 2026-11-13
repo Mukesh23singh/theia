@@ -1,21 +1,24 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable } from '@theia/core/shared/inversify';
-import { PreferenceLeafNodeRenderer } from './preference-node-renderer';
+import { nls, isBoolean, isNumber } from '@theia/core';
+import { injectable, interfaces } from '@theia/core/shared/inversify';
+import { Preference } from '../../util/preference-types.js';
+import { PreferenceLeafNodeRenderer, PreferenceNodeRenderer } from './preference-node-renderer.js';
+import { PreferenceLeafNodeRendererContribution } from './preference-node-renderer-creator.js';
 
 interface PreferenceNumberInputValidation {
     /**
@@ -50,8 +53,9 @@ export class PreferenceNumberInputRenderer extends PreferenceLeafNodeRenderer<nu
         const interactable = document.createElement('input');
         this.interactable = interactable;
         interactable.type = 'number';
+        interactable.step = this.preferenceNode.preference.data.type === 'integer' ? '1' : 'any';
         interactable.classList.add('theia-input');
-        interactable.defaultValue = this.getValue().toString();
+        interactable.defaultValue = this.getValue()?.toString() ?? '';
         interactable.oninput = this.handleUserInteraction.bind(this);
         interactable.onblur = this.handleBlur.bind(this);
         interactableWrapper.appendChild(interactable);
@@ -83,10 +87,10 @@ export class PreferenceNumberInputRenderer extends PreferenceLeafNodeRenderer<nu
         const currentValue = value.length ? Number(value) : NaN;
         this.updateInspection();
         const newValue = this.getValue();
-        this.updateModificationStatus(newValue);
+        this.updateModificationStatus();
         if (newValue !== currentValue) {
             if (document.activeElement !== this.interactable) {
-                this.interactable.value = newValue.toString();
+                this.interactable.value = (newValue ?? this.getDefaultValue()).toString();
             } else {
                 this.handleUserInteraction(); // give priority to the value of the input if it is focused.
             }
@@ -99,16 +103,52 @@ export class PreferenceNumberInputRenderer extends PreferenceLeafNodeRenderer<nu
         const errorMessages: string[] = [];
 
         if (input === '' || isNaN(inputValue)) {
-            return { value: NaN, message: 'Value must be a number.' };
+            return { value: NaN, message: nls.localizeByDefault('Value must be a number.') };
         }
-        if (data.minimum && inputValue < data.minimum) {
-            errorMessages.push(`Value must be greater than or equal to ${data.minimum}.`);
-        };
-        if (data.maximum && inputValue > data.maximum) {
-            errorMessages.push(`Value must be less than or equal to ${data.maximum}.`);
-        };
         if (data.type === 'integer' && !Number.isInteger(inputValue)) {
-            errorMessages.push('Value must be an integer.');
+            errorMessages.push(nls.localizeByDefault('Value must be an integer.'));
+        }
+        if (data.minimum !== undefined && isFinite(data.minimum)) {
+            // https://json-schema.org/understanding-json-schema/reference/numeric
+            // "In JSON Schema Draft 4, exclusiveMinimum and exclusiveMaximum work differently.
+            // There they are boolean values, that indicate whether minimum and maximum are exclusive of the value"
+            if (isBoolean(data.exclusiveMinimum) && data.exclusiveMinimum) {
+                if (inputValue <= data.minimum) {
+                    errorMessages.push(nls.localizeByDefault('Value must be strictly greater than {0}.', data.minimum));
+                }
+            } else {
+                if (inputValue < data.minimum) {
+                    errorMessages.push(nls.localizeByDefault('Value must be greater than or equal to {0}.', data.minimum));
+                }
+            }
+        }
+        if (data.maximum !== undefined && isFinite(data.maximum)) {
+            // https://json-schema.org/understanding-json-schema/reference/numeric
+            // "In JSON Schema Draft 4, exclusiveMinimum and exclusiveMaximum work differently.
+            // There they are boolean values, that indicate whether minimum and maximum are exclusive of the value"
+            if (isBoolean(data.exclusiveMaximum) && data.exclusiveMaximum) {
+                if (inputValue >= data.maximum) {
+                    errorMessages.push(nls.localizeByDefault('Value must be strictly less than {0}.', data.maximum));
+                }
+            } else {
+                if (inputValue > data.maximum) {
+                    errorMessages.push(nls.localizeByDefault('Value must be less than or equal to {0}.', data.maximum));
+                }
+            }
+        }
+        // Using JSON Schema before Draft 4 both exclusive and non-exclusive variants can be set
+        if (isNumber(data.exclusiveMinimum) && isFinite(data.exclusiveMinimum)) {
+            if (inputValue <= data.exclusiveMinimum) {
+                errorMessages.push(nls.localizeByDefault('Value must be strictly greater than {0}.', data.exclusiveMinimum));
+            }
+        }
+        if (isNumber(data.exclusiveMaximum) && isFinite(data.exclusiveMaximum)) {
+            if (inputValue >= data.exclusiveMaximum) {
+                errorMessages.push(nls.localizeByDefault('Value must be strictly less than {0}.', data.exclusiveMaximum));
+            }
+        }
+        if (isNumber(data.multipleOf) && data.multipleOf !== 0 && !Number.isInteger(inputValue / data.multipleOf)) {
+            errorMessages.push(nls.localizeByDefault('Value must be a multiple of {0}.', data.multipleOf));
         }
 
         return {
@@ -124,5 +164,20 @@ export class PreferenceNumberInputRenderer extends PreferenceLeafNodeRenderer<nu
 
     protected hideErrorMessage(): void {
         this.errorMessage.remove();
+    }
+}
+
+@injectable()
+export class PreferenceNumberInputRendererContribution extends PreferenceLeafNodeRendererContribution {
+    static ID = 'preference-number-input-renderer';
+    id = PreferenceNumberInputRendererContribution.ID;
+
+    canHandleLeafNode(node: Preference.LeafNode): number {
+        const type = Preference.LeafNode.getType(node);
+        return type === 'integer' || type === 'number' ? 2 : 0;
+    }
+
+    createLeafNodeRenderer(container: interfaces.Container): PreferenceNodeRenderer {
+        return container.get(PreferenceNumberInputRenderer);
     }
 }

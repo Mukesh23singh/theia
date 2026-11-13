@@ -1,31 +1,31 @@
-/********************************************************************************
- * Copyright (C) 2019 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as path from 'path';
-import { URI } from './types-impl';
-import { IconUrl, PluginPackage } from '../common/plugin-protocol';
-import { Plugin } from '../common/plugin-api-rpc';
+import { URI } from './types-impl.js';
+import { IconUrl, PluginPackage } from '../common/plugin-protocol.js';
+import { Plugin } from '../common/plugin-api-rpc.js';
 
 export type PluginIconPath = string | URI | {
     light: string | URI,
     dark: string | URI
 };
 export namespace PluginIconPath {
-    export function toUrl(iconPath: PluginIconPath | undefined, plugin: Plugin): IconUrl | undefined {
-        if (!iconPath) {
+    export function toUrl(iconPath: unknown, plugin: Plugin): IconUrl | undefined {
+        if (!is(iconPath)) {
             return undefined;
         }
         if (typeof iconPath === 'object' && 'light' in iconPath) {
@@ -35,6 +35,9 @@ export namespace PluginIconPath {
             };
         }
         return asString(iconPath, plugin);
+    }
+    export function is(item: unknown): item is PluginIconPath {
+        return typeof item === 'string' || item instanceof URI || typeof item === 'object' && !!item && 'light' in item && 'dark' in item;
     }
     export function asString(arg: string | URI, plugin: Plugin): string {
         arg = arg instanceof URI && arg.scheme === 'file' ? arg.fsPath : arg;

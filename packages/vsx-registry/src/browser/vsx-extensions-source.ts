@@ -1,22 +1,29 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
-import { TreeSource, TreeElement } from '@theia/core/lib/browser/source-tree';
-import { VSXExtensionsModel } from './vsx-extensions-model';
+import { injectable, inject, postConstruct, named } from '@theia/core/shared/inversify';
+import { ILogger } from '@theia/core/lib/common/logger';
+import { TreeElement, TreeSource } from '@theia/core/lib/browser/source-tree';
+import { ContributionProvider } from '@theia/core/lib/common/contribution-provider';
+import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
+import { FuzzySearch } from '@theia/core/lib/common/fuzzy-search';
+import { VSXExtensionsModel } from './vsx-extensions-model.js';
+import { ExtensionsSourceContribution, SearchContext, SearchResult } from './extensions-source-contribution.js';
+import { VSXExtensionsSearchModel } from './vsx-extensions-search-model.js';
+import debounce from '@theia/core/shared/lodash.debounce';
 
 @injectable()
 export class VSXExtensionsSourceOptions {
@@ -36,41 +43,118 @@ export class VSXExtensionsSource extends TreeSource {
     @inject(VSXExtensionsModel)
     protected readonly model: VSXExtensionsModel;
 
+    @inject(ContributionProvider) @named(ExtensionsSourceContribution)
+    protected readonly contributions: ContributionProvider<ExtensionsSourceContribution>;
+
+    @inject(VSXExtensionsSearchModel)
+    protected readonly searchModel: VSXExtensionsSearchModel;
+
+    @inject(PreferenceService)
+    protected readonly preferenceService: PreferenceService;
+
+    @inject(FuzzySearch)
+    protected readonly fuzzySearch: FuzzySearch;
+
+    @inject(ILogger) @named('vsx-registry:VSXExtensionsSource')
+    protected readonly logger: ILogger;
+
     @postConstruct()
-    protected async init(): Promise<void> {
+    protected init(): void {
         this.fireDidChange();
-        this.toDispose.push(this.model.onDidChange(() => this.fireDidChange()));
+        for (const contribution of this.contributions.getContributions()) {
+            this.toDispose.push(contribution.onDidChange(() => this.scheduleFireDidChange()));
+        }
+        // The query carries both the search text and the per-contribution-type filter (via
+        // `@`-prefixed tokens), so any query change must re-collect the entries.
+        this.toDispose.push(this.searchModel.onDidChangeQuery(() => this.scheduleFireDidChange()));
     }
 
-    *getElements(): IterableIterator<TreeElement> {
-        for (const id of this.doGetElements()) {
-            const extension = this.model.getExtension(id);
-            if (!extension) {
+    protected scheduleFireDidChange = debounce(() => this.fireDidChange(), 100, { leading: false, trailing: true });
+
+    getModel(): VSXExtensionsModel {
+        return this.model;
+    }
+
+    async getElements(): Promise<IterableIterator<TreeElement>> {
+        const ordered = [...this.contributions.getContributions()]
+            .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+        // Apply the type-token filter to every section, not just search results, so the two
+        // filtering mechanisms compose (e.g. `@installed @mcp` only lists installed MCP servers).
+        const enabled = ordered.filter(c => this.searchModel.isTokenEnabled(c.searchToken));
+
+        if (this.options.id === VSXExtensionsSourceOptions.SEARCH_RESULT) {
+            return this.collectSearchResults(enabled);
+        }
+
+        // Resolve concurrently and isolate each contribution: a section is shared between all of
+        // them, so one that is slow (e.g. waiting on a remote registry) must not hold up the
+        // others, and one that rejects must not empty the whole section.
+        const resolved = await Promise.all(enabled.map(contribution => this.safeResolveForSection(contribution)));
+        const entries: TreeElement[] = [];
+        for (const iter of resolved) {
+            if (!iter) {
                 continue;
             }
-            if (this.options.id === VSXExtensionsSourceOptions.RECOMMENDED) {
-                if (this.model.isInstalled(id)) {
-                    continue;
-                }
+            for (const entry of iter) {
+                entries.push(entry);
             }
-            if (this.options.id === VSXExtensionsSourceOptions.BUILT_IN) {
-                if (extension.builtin) {
-                    yield extension;
-                }
-            } else if (!extension.builtin) {
-                yield extension;
-            }
+        }
+        return entries.values();
+    }
+
+    /**
+     * Sort the combined hits globally by fuzzy match so the best results surface first
+     * regardless of which contribution produced them.
+     */
+    protected async collectSearchResults(contributions: ExtensionsSourceContribution[]): Promise<IterableIterator<TreeElement>> {
+        // Contributions only see the free-text portion of the query - the `@`-prefixed mode and
+        // type tokens have already been consumed by `parseQuery` to pick the mode and the
+        // contribution filter, so they would otherwise leak into substring matching.
+        const { freeText } = this.searchModel.parseQuery();
+        const ctx: SearchContext = {
+            verifiedOnly: this.preferenceService.get<boolean>('extensions.onlyShowVerifiedExtensions', false)
+        };
+        const results = await Promise.all(contributions.map(c => this.safeResolveSearchResults(c, freeText, ctx)));
+        const all = results.flatMap(r => [...r]);
+        const trimmed = freeText.trim();
+        if (!trimmed || all.length <= 1) {
+            return all.map(r => r.element).values();
+        }
+        const matches = await this.fuzzySearch.filter({
+            pattern: trimmed,
+            items: all,
+            transform: r => r.searchableText
+        });
+        return matches.map(m => m.item.element).values();
+    }
+
+    protected async safeResolveForSection(contribution: ExtensionsSourceContribution): Promise<Iterable<TreeElement> | undefined> {
+        try {
+            return await this.resolveForSection(contribution);
+        } catch (error) {
+            this.logger.warn(`Failed to resolve '${this.options.id}' entries of contribution '${contribution.type}'.`, error);
+            return undefined;
         }
     }
 
-    protected doGetElements(): IterableIterator<string> {
-        if (this.options.id === VSXExtensionsSourceOptions.SEARCH_RESULT) {
-            return this.model.searchResult;
+    protected async safeResolveSearchResults(contribution: ExtensionsSourceContribution, query: string, context: SearchContext): Promise<Iterable<SearchResult>> {
+        try {
+            return await (contribution.resolveSearchResults?.(query, context) ?? []);
+        } catch (error) {
+            this.logger.warn(`Failed to resolve search results of contribution '${contribution.type}'.`, error);
+            return [];
         }
-        if (this.options.id === VSXExtensionsSourceOptions.RECOMMENDED) {
-            return this.model.recommended;
-        }
-        return this.model.installed;
     }
 
+    protected async resolveForSection(contribution: ExtensionsSourceContribution): Promise<Iterable<TreeElement> | undefined> {
+        switch (this.options.id) {
+            case VSXExtensionsSourceOptions.INSTALLED:
+                return contribution.resolveInstalled?.();
+            case VSXExtensionsSourceOptions.RECOMMENDED:
+                return contribution.resolveRecommended?.();
+            case VSXExtensionsSourceOptions.BUILT_IN:
+                return contribution.resolveBuiltIn?.();
+        }
+        return undefined;
+    }
 }

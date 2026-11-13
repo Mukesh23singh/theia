@@ -1,42 +1,45 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
-import { DisposableCollection, Emitter, Event, MessageService, ProgressService, WaitUntilEvent } from '@theia/core';
-import { LabelProvider, ApplicationShell } from '@theia/core/lib/browser';
+import { DisposableCollection, Emitter, Event, MessageService, nls, ProgressService, WaitUntilEvent, ILogger } from '@theia/core';
+import { ApplicationShell, ConfirmDialog } from '@theia/core/lib/browser';
 import { ContextKey, ContextKeyService } from '@theia/core/lib/browser/context-key-service';
+import { WindowService } from '@theia/core/lib/browser/window/window-service';
 import URI from '@theia/core/lib/common/uri';
-import { EditorManager } from '@theia/editor/lib/browser';
+import { deepClone } from '@theia/core/lib/common/objects';
+import { inject, injectable, postConstruct, named } from '@theia/core/shared/inversify';
+import deepEqual from 'fast-deep-equal';
+import * as monaco from '@theia/monaco-editor-core';
 import { QuickOpenTask } from '@theia/task/lib/browser/quick-open-task';
-import { TaskService, TaskEndedInfo, TaskEndedTypes } from '@theia/task/lib/browser/task-service';
-import { VariableResolverService } from '@theia/variable-resolver/lib/browser';
-import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
-import { DebugConfiguration } from '../common/debug-common';
-import { DebugError, DebugService } from '../common/debug-service';
-import { BreakpointManager } from './breakpoint/breakpoint-manager';
-import { DebugConfigurationManager } from './debug-configuration-manager';
-import { DebugSession, DebugState } from './debug-session';
-import { DebugSessionContributionRegistry, DebugSessionFactory } from './debug-session-contribution';
-import { DebugSessionOptions, InternalDebugSessionOptions } from './debug-session-options';
-import { DebugStackFrame } from './model/debug-stack-frame';
-import { DebugThread } from './model/debug-thread';
+import { TaskEndedInfo, TaskEndedTypes, TaskService } from '@theia/task/lib/browser/task-service';
 import { TaskIdentifier } from '@theia/task/lib/common';
-import { DebugSourceBreakpoint } from './model/debug-source-breakpoint';
-import { DebugFunctionBreakpoint } from './model/debug-function-breakpoint';
+import { VariableResolverService } from '@theia/variable-resolver/lib/browser';
+import { WorkspaceTrustService } from '@theia/workspace/lib/browser';
+import { DebugConfiguration } from '../common/debug-common.js';
+import { DebugPreferences } from '../common/debug-preferences.js';
+import { DebugError, DebugService } from '../common/debug-service.js';
+import { BreakpointManager } from './breakpoint/breakpoint-manager.js';
+import { DebugVariable } from './console/debug-console-items.js';
+import { DebugConfigurationManager } from './debug-configuration-manager.js';
+import { DebugSession, DebugState, debugStateContextValue } from './debug-session.js';
+import { DebugSessionConfigurationLabelProvider } from './debug-session-configuration-label-provider.js';
+import { DebugSessionContributionRegistry, DebugSessionFactory } from './debug-session-contribution.js';
+import { DebugCompoundRoot, DebugCompoundSessionOptions, DebugConfigurationSessionOptions, DebugSessionOptions, InternalDebugSessionOptions } from './debug-session-options.js';
+import { DebugStackFrame } from './model/debug-stack-frame.js';
+import { DebugThread } from './model/debug-thread.js';
 
 export interface WillStartDebugSession extends WaitUntilEvent {
 }
@@ -55,8 +58,13 @@ export interface DidChangeBreakpointsEvent {
     uri: URI
 }
 
+export interface DidResolveLazyVariableEvent {
+    readonly session: DebugSession
+    readonly variable: DebugVariable
+}
+
 export interface DebugSessionCustomEvent {
-    readonly body?: any
+    readonly body?: any // eslint-disable-line @typescript-eslint/no-explicit-any
     readonly event: string
     readonly session: DebugSession
 }
@@ -89,30 +97,31 @@ export class DebugSessionManager {
     protected readonly onDidReceiveDebugSessionCustomEventEmitter = new Emitter<DebugSessionCustomEvent>();
     readonly onDidReceiveDebugSessionCustomEvent: Event<DebugSessionCustomEvent> = this.onDidReceiveDebugSessionCustomEventEmitter.event;
 
-    protected readonly onDidChangeBreakpointsEmitter = new Emitter<DidChangeBreakpointsEvent>();
-    readonly onDidChangeBreakpoints: Event<DidChangeBreakpointsEvent> = this.onDidChangeBreakpointsEmitter.event;
-    protected fireDidChangeBreakpoints(event: DidChangeBreakpointsEvent): void {
-        this.onDidChangeBreakpointsEmitter.fire(event);
-    }
+    protected readonly onDidFocusStackFrameEmitter = new Emitter<DebugStackFrame | undefined>();
+    readonly onDidFocusStackFrame = this.onDidFocusStackFrameEmitter.event;
+
+    protected readonly onDidFocusThreadEmitter = new Emitter<DebugThread | undefined>();
+    readonly onDidFocusThread = this.onDidFocusThreadEmitter.event;
 
     protected readonly onDidChangeEmitter = new Emitter<DebugSession | undefined>();
     readonly onDidChange: Event<DebugSession | undefined> = this.onDidChangeEmitter.event;
     protected fireDidChange(current: DebugSession | undefined): void {
+        this.debugTypeKey.set(current?.configuration.type);
         this.inDebugModeKey.set(this.inDebugMode);
+        this.debugStateKey.set(debugStateContextValue(this.state));
+        this.restartFrameSupportedKey.set(!!this.currentSession?.capabilities.supportsRestartFrame);
+        this.stackFrameSupportsRestartKey.set(!!this.currentFrame?.isRestartable);
         this.onDidChangeEmitter.fire(current);
     }
+
+    protected readonly onDidResolveLazyVariableEmitter = new Emitter<DidResolveLazyVariableEvent>();
+    readonly onDidResolveLazyVariable: Event<DidResolveLazyVariableEvent> = this.onDidResolveLazyVariableEmitter.event;
 
     @inject(DebugSessionFactory)
     protected readonly debugSessionFactory: DebugSessionFactory;
 
     @inject(DebugService)
     protected readonly debug: DebugService;
-
-    @inject(LabelProvider)
-    protected readonly labelProvider: LabelProvider;
-
-    @inject(EditorManager)
-    protected readonly editorManager: EditorManager;
 
     @inject(BreakpointManager)
     protected readonly breakpoints: BreakpointManager;
@@ -144,22 +153,36 @@ export class DebugSessionManager {
     @inject(ApplicationShell)
     protected readonly shell: ApplicationShell;
 
+    @inject(DebugSessionConfigurationLabelProvider)
+    protected readonly sessionConfigurationLabelProvider: DebugSessionConfigurationLabelProvider;
+
+    @inject(ILogger) @named('debug:DebugSessionManager')
+    protected readonly logger: ILogger;
+
+    @inject(WorkspaceTrustService)
+    protected readonly workspaceTrustService: WorkspaceTrustService;
+
+    @inject(DebugPreferences)
+    protected readonly debugPreferences: DebugPreferences;
+
+    @inject(WindowService)
+    protected readonly windowService: WindowService;
+
     protected debugTypeKey: ContextKey<string>;
     protected inDebugModeKey: ContextKey<boolean>;
+    protected debugStateKey: ContextKey<string>;
+    /** Whether the current session supports `restartFrame` requests, as in VS Code. */
+    protected restartFrameSupportedKey: ContextKey<boolean>;
+    /** Whether the current stack frame can be restarted, as in VS Code. */
+    protected stackFrameSupportsRestartKey: ContextKey<boolean>;
 
     @postConstruct()
     protected init(): void {
         this.debugTypeKey = this.contextKeyService.createKey<string>('debugType', undefined);
         this.inDebugModeKey = this.contextKeyService.createKey<boolean>('inDebugMode', this.inDebugMode);
-        this.breakpoints.onDidChangeMarkers(uri => this.fireDidChangeBreakpoints({ uri }));
-        this.labelProvider.onDidChange(event => {
-            for (const uriString of this.breakpoints.getUris()) {
-                const uri = new URI(uriString);
-                if (event.affects(uri)) {
-                    this.fireDidChangeBreakpoints({ uri });
-                }
-            }
-        });
+        this.debugStateKey = this.contextKeyService.createKey<string>('debugState', debugStateContextValue(this.state));
+        this.restartFrameSupportedKey = this.contextKeyService.createKey<boolean>('restartFrameSupported', false);
+        this.stackFrameSupportsRestartKey = this.contextKeyService.createKey<boolean>('stackFrameSupportsRestart', false);
     }
 
     get inDebugMode(): boolean {
@@ -167,7 +190,15 @@ export class DebugSessionManager {
     }
 
     isCurrentEditorFrame(uri: URI | string | monaco.Uri): boolean {
-        return this.currentFrame?.source?.uri.toString() === (uri instanceof URI ? uri : new URI(uri)).toString();
+        return this.currentFrame?.source?.uri.toString() === (uri instanceof URI ? uri : new URI(uri.toString())).toString();
+    }
+
+    protected saveBeforeStart(configuration: DebugConfiguration): Promise<boolean> {
+        // If a parent session is available saving should be handled by the parent
+        if (configuration.parentSessionId || configuration.suppressSaveBeforeStart) {
+            return Promise.resolve(true);
+        }
+        return this.saveAll();
     }
 
     protected async saveAll(): Promise<boolean> {
@@ -178,19 +209,64 @@ export class DebugSessionManager {
             await this.shell.saveAll();
             return true;
         } catch (error) {
-            console.error('saveAll failed:', error);
+            this.logger.error('saveAll failed:', error);
             return false;
         }
     }
 
-    async start(options: DebugSessionOptions): Promise<DebugSession | undefined> {
-        return this.progressService.withProgress('Start...', 'debug', async () => {
+    async start(options: DebugCompoundSessionOptions): Promise<boolean | undefined>;
+    async start(options: DebugConfigurationSessionOptions): Promise<DebugSession | undefined>;
+    async start(options: DebugSessionOptions): Promise<DebugSession | boolean | undefined>;
+    async start(name: string): Promise<DebugSession | boolean | undefined>;
+    async start(optionsOrName: DebugSessionOptions | string): Promise<DebugSession | boolean | undefined> {
+        if (typeof optionsOrName === 'string') {
+            const options = this.debugConfigurationManager.find(optionsOrName);
+            return !!options && this.start(options);
+        }
+        return optionsOrName.configuration ? this.startConfiguration(optionsOrName) : this.startCompound(optionsOrName);
+    }
+
+    protected async startConfiguration(options: DebugConfigurationSessionOptions): Promise<DebugSession | undefined> {
+        // Check workspace trust before starting debug session
+        const trust = await this.workspaceTrustService.requestWorkspaceTrust();
+        if (!trust) {
+            return undefined;
+        }
+
+        return this.progressService.withProgress(nls.localizeByDefault('Starting...'), 'debug', async () => {
             try {
-                if (!await this.saveAll()) {
+                if (!await this.saveBeforeStart(options.configuration)) {
                     return undefined;
                 }
                 await this.fireWillStartDebugSession();
                 const resolved = await this.resolveConfiguration(options);
+
+                if (!resolved || !resolved.configuration) {
+                    // As per vscode API: https://code.visualstudio.com/api/references/vscode-api#DebugConfigurationProvider
+                    // "Returning the value 'undefined' prevents the debug session from starting.
+                    // Returning the value 'null' prevents the debug session from starting and opens the
+                    // underlying debug configuration instead."
+
+                    // eslint-disable-next-line no-null/no-null
+                    if (resolved === null) {
+                        this.debugConfigurationManager.openConfiguration();
+                    }
+                    return undefined;
+                }
+
+                const sessionConfigurationLabel = this.sessionConfigurationLabelProvider.getLabel(resolved);
+                if (options?.startedByUser
+                    && options.configuration.suppressMultipleSessionWarning !== true
+                    && this.sessions.some(s => this.sessionConfigurationLabelProvider.getLabel(s.options) === sessionConfigurationLabel)
+                ) {
+                    const yes = await new ConfirmDialog({
+                        title: nls.localizeByDefault('Debug'),
+                        msg: nls.localizeByDefault("'{0}' is already running. Do you want to start another instance?", sessionConfigurationLabel)
+                    }).open();
+                    if (!yes) {
+                        return undefined;
+                    }
+                }
 
                 // preLaunchTask isn't run in case of auto restart as well as postDebugTask
                 if (!options.configuration.__restart) {
@@ -200,19 +276,89 @@ export class DebugSessionManager {
                     }
                 }
 
-                const sessionId = await this.debug.createDebugSession(resolved.configuration);
+                const sessionId = await this.debug.createDebugSession(resolved.configuration, options.workspaceFolderUri);
                 return this.doStart(sessionId, resolved);
             } catch (e) {
                 if (DebugError.NotFound.is(e)) {
-                    this.messageService.error(`The debug session type "${e.data.type}" is not supported.`);
+                    this.messageService.error(nls.localize('theia/debug/debugSessionTypeNotSupported', 'The debug session type "{0}" is not supported.', e.data.type));
                     return undefined;
                 }
 
-                this.messageService.error('There was an error starting the debug session, check the logs for more details.');
-                console.error('Error starting the debug session', e);
+                this.messageService.error(nls.localize('theia/debug/errorStartingDebugSession', 'There was an error starting the debug session, check the logs for more details.'));
+                this.logger.error('Error starting the debug session', e);
                 throw e;
             }
         });
+    }
+
+    protected async startCompound(options: DebugCompoundSessionOptions): Promise<boolean | undefined> {
+        // Check workspace trust before starting compound debug session
+        const trust = await this.workspaceTrustService.requestWorkspaceTrust();
+        if (!trust) {
+            return false;
+        }
+
+        let configurations: DebugConfigurationSessionOptions[] = [];
+        const compoundRoot = options.compound.stopAll ? new DebugCompoundRoot() : undefined;
+        try {
+            configurations = this.getCompoundConfigurations(options, compoundRoot);
+        } catch (error) {
+            this.messageService.error(error.message);
+            return;
+        }
+
+        if (options.compound.preLaunchTask) {
+            const taskRun = await this.runTask(options.workspaceFolderUri, options.compound.preLaunchTask, true);
+            if (!taskRun) {
+                return undefined;
+            }
+        }
+
+        // Compound launch is a success only if each configuration launched successfully
+        const values = await Promise.all(configurations.map(async configuration => {
+            const newSession = await this.startConfiguration(configuration);
+            if (newSession) {
+                compoundRoot?.onDidSessionStop(() => newSession.stop(false, () => this.debug.terminateDebugSession(newSession.id)));
+            }
+            return newSession;
+        }));
+        const result = values.every(success => !!success);
+        return result;
+    }
+
+    protected getCompoundConfigurations(options: DebugCompoundSessionOptions, compoundRoot: DebugCompoundRoot | undefined): DebugConfigurationSessionOptions[] {
+        const compound = options.compound;
+        if (!compound.configurations) {
+            throw new Error(nls.localizeByDefault('Compound must have "configurations" attribute set in order to start multiple configurations.'));
+        }
+
+        const configurations: DebugConfigurationSessionOptions[] = [];
+
+        for (const configData of compound.configurations) {
+            const name = typeof configData === 'string' ? configData : configData.name;
+            if (name === compound.name) {
+                throw new Error(nls.localize('theia/debug/compound-cycle', "Launch configuration '{0}' contains a cycle with itself", name));
+            }
+
+            const workspaceFolderUri = typeof configData === 'string' ? options.workspaceFolderUri : configData.folder;
+            const matchingOptions = [...this.debugConfigurationManager.all]
+                .filter(option => option.name === name && !!option.configuration && option.workspaceFolderUri === workspaceFolderUri);
+            if (matchingOptions.length === 1) {
+                const match = matchingOptions[0];
+                if (DebugSessionOptions.isConfiguration(match)) {
+                    configurations.push({ ...match, compoundRoot, configuration: { ...match.configuration, noDebug: options.noDebug } });
+                } else {
+                    throw new Error(nls.localizeByDefault("Could not find launch configuration '{0}' in the workspace.", name));
+                }
+            } else {
+                throw new Error(matchingOptions.length === 0
+                    ? workspaceFolderUri
+                        ? nls.localizeByDefault("Can not find folder with name '{0}' for configuration '{1}' in compound '{2}'.", workspaceFolderUri, name, compound.name)
+                        : nls.localizeByDefault("Could not find launch configuration '{0}' in the workspace.", name)
+                    : nls.localizeByDefault("There are multiple launch configurations '{0}' in the workspace. Use folder name to qualify the configuration.", name));
+            }
+        }
+        return configurations;
     }
 
     protected async fireWillStartDebugSession(): Promise<void> {
@@ -220,44 +366,98 @@ export class DebugSessionManager {
     }
 
     protected configurationIds = new Map<string, number>();
-    protected async resolveConfiguration(options: Readonly<DebugSessionOptions>): Promise<InternalDebugSessionOptions> {
+    protected async resolveConfiguration(
+        options: Readonly<DebugConfigurationSessionOptions>
+    ): Promise<InternalDebugSessionOptions | undefined | null> {
         if (InternalDebugSessionOptions.is(options)) {
             return options;
         }
-        const { workspaceFolderUri } = options;
-        let configuration = await this.resolveDebugConfiguration(options.configuration, workspaceFolderUri);
-        configuration = await this.variableResolver.resolve(configuration, {
-            context: options.workspaceFolderUri ? new URI(options.workspaceFolderUri) : undefined,
-            configurationSection: 'launch'
-        });
-        configuration = await this.resolveDebugConfigurationWithSubstitutedVariables(configuration, workspaceFolderUri);
-        const key = configuration.name + workspaceFolderUri;
+        const resolved = await this.resolveSessionOptions(options);
+        if (!resolved) {
+            return resolved;
+        }
+        const key = resolved.configuration.name + options.workspaceFolderUri;
         const id = this.configurationIds.has(key) ? this.configurationIds.get(key)! + 1 : 0;
         this.configurationIds.set(key, id);
+        return { id, ...resolved };
+    }
+
+    protected async resolveSessionOptions(
+        options: Readonly<DebugConfigurationSessionOptions>
+    ): Promise<Omit<InternalDebugSessionOptions, 'id'> & DebugConfigurationSessionOptions | undefined | null> {
+        const { workspaceFolderUri } = options;
+        let configuration = await this.resolveDebugConfiguration(options.configuration, workspaceFolderUri);
+
+        if (configuration) {
+            // Resolve command variables provided by the debugger
+            const commandIdVariables = await this.debug.provideDebuggerVariables(configuration.type);
+            configuration = await this.variableResolver.resolve(configuration, {
+                context: options.workspaceFolderUri ? new URI(options.workspaceFolderUri) : undefined,
+                configurationSection: 'launch',
+                commandIdVariables,
+                configuration
+            });
+
+            if (configuration) {
+                configuration = await this.resolveDebugConfigurationWithSubstitutedVariables(
+                    configuration,
+                    workspaceFolderUri
+                );
+            }
+        }
+
+        if (!configuration) {
+            return configuration;
+        }
+
         return {
-            id,
+            ...options,
+            name: configuration.name,
             configuration,
-            workspaceFolderUri
+            unresolvedConfiguration: options.configuration,
+            launchConfiguration: this.launchConfigurationOf(options)
         };
     }
 
-    protected async resolveDebugConfiguration(configuration: DebugConfiguration, workspaceFolderUri: string | undefined): Promise<DebugConfiguration> {
+    /**
+     * The launch configuration the options were made from, if any. Options can add keys to it, such as `noDebug`.
+     */
+    protected launchConfigurationOf(options: Readonly<DebugConfigurationSessionOptions>): DebugConfiguration | undefined {
+        if (DebugSessionOptions.isDynamic(options)) {
+            return undefined;
+        }
+        const { configuration } = options;
+        const launch = this.debugConfigurationManager.findConfiguration(configuration.name, options.workspaceFolderUri);
+        if (launch && Object.keys(launch).every(key => deepEqual(launch[key], configuration[key]))) {
+            return deepClone(launch);
+        }
+        return undefined;
+    }
+
+    protected async resolveDebugConfiguration(
+        configuration: DebugConfiguration,
+        workspaceFolderUri: string | undefined
+    ): Promise<DebugConfiguration | undefined | null> {
         await this.fireWillResolveDebugConfiguration(configuration.type);
         return this.debug.resolveDebugConfiguration(configuration, workspaceFolderUri);
     }
+
     protected async fireWillResolveDebugConfiguration(debugType: string): Promise<void> {
         await WaitUntilEvent.fire(this.onWillResolveDebugConfigurationEmitter, { debugType });
     }
 
-    protected async resolveDebugConfigurationWithSubstitutedVariables(configuration: DebugConfiguration, workspaceFolderUri: string | undefined): Promise<DebugConfiguration> {
+    protected async resolveDebugConfigurationWithSubstitutedVariables(
+        configuration: DebugConfiguration,
+        workspaceFolderUri: string | undefined
+    ): Promise<DebugConfiguration | undefined | null> {
         return this.debug.resolveDebugConfigurationWithSubstitutedVariables(configuration, workspaceFolderUri);
     }
 
-    protected async doStart(sessionId: string, options: DebugSessionOptions): Promise<DebugSession> {
-        const parentSession = options.configuration.parentSession && this._sessions.get(options.configuration.parentSession.id);
+    protected async doStart(sessionId: string, options: DebugConfigurationSessionOptions): Promise<DebugSession> {
+        const parentSession = options.configuration.parentSessionId ? this._sessions.get(options.configuration.parentSessionId) : undefined;
         const contrib = this.sessionContributionRegistry.get(options.configuration.type);
         const sessionFactory = contrib ? contrib.debugSessionFactory() : this.debugSessionFactory;
-        const session = sessionFactory.get(sessionId, options, parentSession);
+        const session = sessionFactory.createSession(sessionId, options, parentSession);
         this._sessions.set(sessionId, session);
 
         this.debugTypeKey.set(session.configuration.type);
@@ -269,60 +469,163 @@ export class DebugSessionManager {
                 state = session.state;
                 if (state === DebugState.Stopped) {
                     this.onDidStopDebugSessionEmitter.fire(session);
+                    // Only switch to this session if a thread actually stopped (not just state change)
+                    if (session.currentThread && session.currentThread.stopped) {
+                        this.updateCurrentSession(session);
+                    }
                 }
             }
-            this.updateCurrentSession(session);
+            // Always fire change event to update views (threads, variables, etc.)
+            // The selection logic in widgets will handle not jumping to non-stopped threads
+            this.fireDidChange(session);
         });
-        session.onDidChangeBreakpoints(uri => this.fireDidChangeBreakpoints({ session, uri }));
+        // e.g. for the `restartFrameSupported` context key, which is only read from the current session
+        session.onDidChangeCapabilities(() => {
+            if (session === this.currentSession) {
+                this.fireDidChange(session);
+            }
+        });
         session.on('terminated', async event => {
             const restart = event.body && event.body.restart;
             if (restart) {
                 // postDebugTask isn't run in case of auto restart as well as preLaunchTask
-                this.doRestart(session, restart);
+                this.doRestart(session, !!restart, false);
             } else {
-                session.terminate();
+                await session.disconnect(false, () => this.debug.terminateDebugSession(session.id));
                 await this.runTask(session.options.workspaceFolderUri, session.configuration.postDebugTask);
             }
         });
-        session.on('exited', () => this.destroy(session.id));
-        session.start().then(() => this.onDidStartDebugSessionEmitter.fire(session));
+
+        session.on('exited', async event => {
+            await session.disconnect(false, () => this.debug.terminateDebugSession(session.id));
+        });
+
+        session.onDispose(() => this.cleanup(session));
+        session.start().then(() => {
+            this.onDidStartDebugSessionEmitter.fire(session);
+            // Set as current session if no current session exists
+            // This ensures the UI shows the running session and buttons are enabled
+            if (!this.currentSession) {
+                this.updateCurrentSession(session);
+            }
+        }).catch(e => {
+            session.stop(false, () => {
+                this.debug.terminateDebugSession(session.id);
+            });
+        });
         session.onDidCustomEvent(({ event, body }) =>
             this.onDidReceiveDebugSessionCustomEventEmitter.fire({ event, body, session })
         );
         return session;
     }
 
-    restart(): Promise<DebugSession | undefined>;
-    restart(session: DebugSession): Promise<DebugSession>;
-    async restart(session: DebugSession | undefined = this.currentSession): Promise<DebugSession | undefined> {
-        return session && this.doRestart(session);
+    protected cleanup(session: DebugSession): void {
+        // Data breakpoints that can't persist should be removed when a session ends.
+        const currentDataBreakpoints = this.breakpoints.getDataBreakpoints();
+        const toRetain = currentDataBreakpoints.filter(candidate => candidate.origin.info.canPersist);
+        if (currentDataBreakpoints.length !== toRetain.length) {
+            this.breakpoints.setDataBreakpoints(toRetain.map(bp => bp.origin));
+        }
+        if (this.remove(session.id)) {
+            this.onDidDestroyDebugSessionEmitter.fire(session);
+            this.breakpoints.updateSessionData(session.id, session.capabilities);
+            this.breakpoints.clearExceptionSessionEnablement(session.id);
+        }
     }
-    protected async doRestart(session: DebugSession, restart?: any): Promise<DebugSession | undefined> {
-        if (await session.restart()) {
+
+    /**
+     * @param userInitiated a restart the user asked for, as opposed to one the debug adapter requested.
+     * As in VS Code, it saves, uses the launch configuration as it is now and runs the `preLaunchTask` again.
+     */
+    protected async doRestart(session: DebugSession, isRestart: boolean, userInitiated = false): Promise<DebugSession | undefined> {
+        if (userInitiated && !await this.saveBeforeStart(session.configuration)) {
+            return undefined;
+        }
+        const options = userInitiated ? await this.optionsForRestart(session) : session.options;
+        if (!options) {
+            return undefined;
+        }
+
+        if (session.canRestart()) {
+            if (userInitiated && !await this.runTask(options.workspaceFolderUri, options.configuration.preLaunchTask, true)) {
+                return undefined;
+            }
+            await session.restart(options);
             return session;
         }
-        await session.terminate(true);
-        const { options, configuration } = session;
-        configuration.__restart = restart;
-        return this.start(options);
+
+        session.stop(isRestart, () => this.debug.terminateDebugSession(session.id));
+        const configuration = { ...options.configuration };
+        if (userInitiated) {
+            delete configuration.__restart;
+        } else {
+            configuration.__restart = isRestart;
+        }
+        return this.start({ ...options, configuration });
     }
 
-    async terminateSessions(): Promise<void> {
-        this.updateCurrentSession(undefined);
-        this.currentSession?.terminate();
+    /**
+     * The session's options, resolved again if its launch configuration changed since the session started.
+     */
+    protected async optionsForRestart(session: DebugSession): Promise<DebugConfigurationSessionOptions | undefined> {
+        const { options } = session;
+        if (!InternalDebugSessionOptions.is(options) || !options.launchConfiguration || !options.unresolvedConfiguration) {
+            return options;
+        }
+        const { launchConfiguration, unresolvedConfiguration } = options;
+        const current = this.debugConfigurationManager.findConfiguration(launchConfiguration.name, options.workspaceFolderUri);
+        if (!current || deepEqual(current, launchConfiguration)) {
+            return options;
+        }
+        // Keep what the session added to the launch configuration, such as `noDebug` or a parent session.
+        const added = Object.fromEntries(Object.entries(unresolvedConfiguration).filter(([key]) => !(key in launchConfiguration)));
+        const { id, ...unresolvedOptions } = options;
+        const resolved = await this.resolveSessionOptions({ ...unresolvedOptions, configuration: { ...added, ...current } });
+        if (!resolved) {
+            return undefined;
+        }
+        const restartOptions: DebugConfigurationSessionOptions & { id: number } = { ...resolved, id };
+        return restartOptions;
     }
 
-    async restartSessions(): Promise<void> {
-        this.updateCurrentSession(undefined);
-        this.currentSession?.restart();
+    async terminateSession(session?: DebugSession): Promise<void> {
+        if (!session) {
+            this.updateCurrentSession(this._currentSession);
+            session = this._currentSession;
+        }
+        if (session) {
+            if (session.options.compoundRoot) {
+                session.options.compoundRoot.stopSession();
+            } else if (session.parentSession && session.configuration.lifecycleManagedByParent) {
+                this.terminateSession(session.parentSession);
+            } else {
+                session.stop(false, () => this.debug.terminateDebugSession(session!.id));
+            }
+        }
     }
 
-    protected remove(sessionId: string): void {
-        this._sessions.delete(sessionId);
+    async restartSession(session?: DebugSession): Promise<DebugSession | undefined> {
+        if (!session) {
+            this.updateCurrentSession(this._currentSession);
+            session = this._currentSession;
+        }
+
+        if (session) {
+            if (session.parentSession && session.configuration.lifecycleManagedByParent) {
+                return this.restartSession(session.parentSession);
+            } else {
+                return this.doRestart(session, true, true);
+            }
+        }
+    }
+
+    protected remove(sessionId: string): boolean {
+        const existed = this._sessions.delete(sessionId);
         const { currentSession } = this;
         if (currentSession && currentSession.id === sessionId) {
             this.updateCurrentSession(undefined);
         }
+        return existed;
     }
 
     getSession(sessionId: string): DebugSession | undefined {
@@ -334,7 +637,7 @@ export class DebugSessionManager {
     }
 
     protected _currentSession: DebugSession | undefined;
-    protected readonly toDisposeOnCurrentSession = new DisposableCollection();
+    protected readonly disposeOnCurrentSessionChanged = new DisposableCollection();
     get currentSession(): DebugSession | undefined {
         return this._currentSession;
     }
@@ -342,41 +645,39 @@ export class DebugSessionManager {
         if (this._currentSession === current) {
             return;
         }
-        this.toDisposeOnCurrentSession.dispose();
+        this.disposeOnCurrentSessionChanged.dispose();
         const previous = this.currentSession;
         this._currentSession = current;
         this.onDidChangeActiveDebugSessionEmitter.fire({ previous, current });
         if (current) {
-            this.toDisposeOnCurrentSession.push(current.onDidChange(() => {
+            this.disposeOnCurrentSessionChanged.push(current.onDidChange(() => {
                 if (this.currentFrame === this.topFrame) {
-                    this.open();
+                    this.open('auto');
                 }
                 this.fireDidChange(current);
             }));
+            this.disposeOnCurrentSessionChanged.push(current.onDidResolveLazyVariable(variable => this.onDidResolveLazyVariableEmitter.fire({ session: current, variable })));
+            this.disposeOnCurrentSessionChanged.push(current.onDidFocusStackFrame(frame => this.onDidFocusStackFrameEmitter.fire(frame)));
+            this.disposeOnCurrentSessionChanged.push(current.onDidFocusThread(thread => this.onDidFocusThreadEmitter.fire(thread)));
         }
-        this.updateBreakpoints(previous, current);
+        // Announce what is focused now, also when nothing is: the forwarding above is torn down with the previous
+        // session, so without this the last thread and frame of a session that has ended stay the focused ones.
+        const { currentThread, currentFrame } = this;
+        this.onDidFocusThreadEmitter.fire(currentThread);
+        this.onDidFocusStackFrameEmitter.fire(currentFrame);
         this.open();
         this.fireDidChange(current);
     }
-    open(): void {
+    open(revealOption: 'auto' | 'center' = 'center'): void {
         const { currentFrame } = this;
-        if (currentFrame) {
-            currentFrame.open();
-        }
-    }
-    protected updateBreakpoints(previous: DebugSession | undefined, current: DebugSession | undefined): void {
-        const affectedUri = new Set();
-        for (const session of [previous, current]) {
-            if (session) {
-                for (const uriString of session.breakpointUris) {
-                    if (!affectedUri.has(uriString)) {
-                        affectedUri.add(uriString);
-                        this.fireDidChangeBreakpoints({
-                            session: current,
-                            uri: new URI(uriString)
-                        });
-                    }
-                }
+        if (currentFrame && currentFrame.thread.stopped) {
+            const focusEditor = this.debugPreferences['debug.focusEditorOnBreak'];
+            currentFrame.open({
+                revealOption,
+                mode: focusEditor ? 'activate' : 'reveal',
+            });
+            if (this.debugPreferences['debug.focusWindowOnBreak']) {
+                this.windowService.focus();
             }
         }
     }
@@ -404,71 +705,6 @@ export class DebugSessionManager {
     }
 
     /**
-     * Destroy the debug session. If session identifier isn't provided then
-     * all active debug session will be destroyed.
-     * @param sessionId The session identifier
-     */
-    destroy(sessionId?: string): void {
-        if (sessionId) {
-            const session = this._sessions.get(sessionId);
-            if (session) {
-                this.doDestroy(session);
-            }
-        } else {
-            this._sessions.forEach(session => this.doDestroy(session));
-        }
-    }
-
-    private doDestroy(session: DebugSession): void {
-        this.debug.terminateDebugSession(session.id);
-
-        session.dispose();
-        this.remove(session.id);
-        this.onDidDestroyDebugSessionEmitter.fire(session);
-    }
-
-    getFunctionBreakpoints(session: DebugSession | undefined = this.currentSession): DebugFunctionBreakpoint[] {
-        if (session && session.state > DebugState.Initializing) {
-            return session.getFunctionBreakpoints();
-        }
-        const { labelProvider, breakpoints, editorManager } = this;
-        return this.breakpoints.getFunctionBreakpoints().map(origin => new DebugFunctionBreakpoint(origin, { labelProvider, breakpoints, editorManager }));
-    }
-
-    getBreakpoints(session?: DebugSession): DebugSourceBreakpoint[];
-    getBreakpoints(uri: URI, session?: DebugSession): DebugSourceBreakpoint[];
-    getBreakpoints(arg?: URI | DebugSession, arg2?: DebugSession): DebugSourceBreakpoint[] {
-        const uri = arg instanceof URI ? arg : undefined;
-        const session = arg instanceof DebugSession ? arg : arg2 instanceof DebugSession ? arg2 : this.currentSession;
-        if (session && session.state > DebugState.Initializing) {
-            return session.getSourceBreakpoints(uri);
-        }
-        const { labelProvider, breakpoints, editorManager } = this;
-        return this.breakpoints.findMarkers({ uri }).map(({ data }) => new DebugSourceBreakpoint(data, { labelProvider, breakpoints, editorManager }));
-    }
-
-    getLineBreakpoints(uri: URI, line: number): DebugSourceBreakpoint[] {
-        const session = this.currentSession;
-        if (session && session.state > DebugState.Initializing) {
-            return session.getSourceBreakpoints(uri).filter(breakpoint => breakpoint.line === line);
-        }
-        const { labelProvider, breakpoints, editorManager } = this;
-        return this.breakpoints.getLineBreakpoints(uri, line).map(origin =>
-            new DebugSourceBreakpoint(origin, { labelProvider, breakpoints, editorManager })
-        );
-    }
-
-    getInlineBreakpoint(uri: URI, line: number, column: number): DebugSourceBreakpoint | undefined {
-        const session = this.currentSession;
-        if (session && session.state > DebugState.Initializing) {
-            return session.getSourceBreakpoints(uri).filter(breakpoint => breakpoint.line === line && breakpoint.column === column)[0];
-        }
-        const origin = this.breakpoints.getInlineBreakpoint(uri, line, column);
-        const { labelProvider, breakpoints, editorManager } = this;
-        return origin && new DebugSourceBreakpoint(origin, { labelProvider, breakpoints, editorManager });
-    }
-
-    /**
      * Runs the given tasks.
      * @param taskName the task name to run, see [TaskNameResolver](#TaskNameResolver)
      * @return true if it allowed to continue debugging otherwise it returns false
@@ -483,8 +719,9 @@ export class DebugSessionManager {
             return true;
         }
 
+        const taskLabel = typeof taskName === 'string' ? taskName : JSON.stringify(taskName);
         if (!taskInfo) {
-            return this.doPostTaskAction(`Could not run the task '${taskName}'.`);
+            return this.doPostTaskAction(nls.localize('theia/debug/couldNotRunTask', "Could not run the task '{0}'.", taskLabel));
         }
 
         const getExitCodePromise: Promise<TaskEndedInfo> = this.taskService.getExitCode(taskInfo.taskId).then(result =>
@@ -502,19 +739,24 @@ export class DebugSessionManager {
         if (taskEndedInfo.taskEndedType === TaskEndedTypes.TaskExited && taskEndedInfo.value === 0) {
             return true;
         } else if (taskEndedInfo.taskEndedType === TaskEndedTypes.TaskExited && taskEndedInfo.value !== undefined) {
-            return this.doPostTaskAction(`Task '${taskName}' terminated with exit code ${taskEndedInfo.value}.`);
+            return this.doPostTaskAction(nls.localize('theia/debug/taskTerminatedWithExitCode', "Task '{0}' terminated with exit code {1}.", taskLabel, taskEndedInfo.value));
         } else {
             const signal = await this.taskService.getTerminateSignal(taskInfo.taskId);
             if (signal !== undefined) {
-                return this.doPostTaskAction(`Task '${taskName}' terminated by signal ${signal}.`);
+                return this.doPostTaskAction(nls.localize('theia/debug/taskTerminatedBySignal', "Task '{0}' terminated by signal {1}.", taskLabel, signal));
             } else {
-                return this.doPostTaskAction(`Task '${taskName}' terminated for unknown reason.`);
+                return this.doPostTaskAction(nls.localize('theia/debug/taskTerminatedForUnknownReason', "Task '{0}' terminated for unknown reason.", taskLabel));
             }
         }
     }
 
     protected async doPostTaskAction(errorMessage: string): Promise<boolean> {
-        const actions = ['Open launch.json', 'Cancel', 'Configure Task', 'Debug Anyway'];
+        const actions = [
+            nls.localizeByDefault('Open {0}', 'launch.json'),
+            nls.localizeByDefault('Cancel'),
+            nls.localizeByDefault('Configure Task'),
+            nls.localizeByDefault('Debug Anyway')
+        ];
         const result = await this.messageService.error(errorMessage, ...actions);
         switch (result) {
             case actions[0]: // open launch.json

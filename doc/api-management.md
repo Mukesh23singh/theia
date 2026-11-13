@@ -2,7 +2,6 @@
 
 > The guidance below is for the code of the Theia framework only. End products will get better development experience by using private visibility.
 
-
 - [**Stability**](#stability)
   - [**Experimental**](#experimental)
   - [**Stable**](#stable)
@@ -10,13 +9,13 @@
 - [**Deprecation**](#deprecation)
 
 Theia is a framework embracing openness, extensibility, and customizability as much as possible:
+
 - API defaults to public visibility for clients.
 - API defaults to protected for extenders.
 - Language constructions prohibiting runtime access to internals are never used.
 
 Usually, the version management is built around API visibility.
 Particularly, when a public API is broken a new major release is required.
-
 
 Since all APIs are more or less public, following the conventional approach is not practicable for Theia.
 It will slow down API innovation, accumulate technical debt or require many major releases.
@@ -44,7 +43,7 @@ An API without a stability tag is considered to be experimental and does not req
 /**
  * One does not need any annotations while working on experimental APIs.
  */
-export interface ExperimentalInterface {
+export interface ExperimentalInterface {
 }
 
 /**
@@ -74,7 +73,7 @@ export interface StableInterface {
 
 - All new APIs should always be added as **experimental** since it's almost impossible to get [stable API](#stable) right the first time.
 - Experimental APIs don't require the stability tag, but if a new member is added to [stable API](#stable) then it should be explicitly annotated.
-- Experimental APIs don't require extensive documentation. It does not mean that one should not document not obvious parts.
+- Experimental APIs don't require extensive documentation. It does not mean that one shouldn't document unobvious parts.
 - Experimental APIs don't follow [semver](https://semver.org/#spec-item-8) semantic.
 - Experimental APIs could be changed or removed without [the deprecation cycle](#deprecation) if they were not widely adopted.
 - Adoption should be measured by the number of internal clients or based on the feedback of Theia contributors and committers.
@@ -140,9 +139,9 @@ export interface DeprecatedStableInterface {
 }
 ```
 
-Deprecated [stable API](#stable) can be removed in one of the next *major* releases
+Deprecated [stable API](#stable) can be removed in one of the next _major_ releases
 
-Deprecated [experimental API](#experimental) can be removed in one of the next *minor* releases
+Deprecated [experimental API](#experimental) can be removed in one of the next _minor_ releases
 
 Breaking changes should be documented in [CHANGELOG](../CHANGELOG.md). Each breaking change should be justified to adopters
 and guide what should be done instead.

@@ -1,25 +1,25 @@
-/********************************************************************************
- * Copyright (C) 2020 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { Endpoint, FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { EnvVariablesServer } from '@theia/core/lib/common/env-variables';
 import { environment } from '@theia/core/shared/@theia/application-package/lib/environment';
 import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
-import { v4 } from 'uuid';
-import { MiniBrowserEndpoint } from '../../common/mini-browser-endpoint';
+import { generateUuid } from '@theia/core/lib/common/uuid';
+import { MiniBrowserEndpoint } from '../../common/mini-browser-endpoint.js';
 
 /**
  * Fetch values from the backend's environment and caches them locally.
@@ -35,7 +35,7 @@ export class MiniBrowserEnvironment implements FrontendApplicationContribution {
     protected environment: EnvVariablesServer;
 
     @postConstruct()
-    protected postConstruct(): void {
+    protected init(): void {
         this._hostPatternPromise = this.getHostPattern()
             .then(pattern => this._hostPattern = pattern);
     }
@@ -71,7 +71,7 @@ export class MiniBrowserEnvironment implements FrontendApplicationContribution {
      * Throws if `hostPatternPromise` is not yet resolved.
      */
     getRandomEndpoint(): Endpoint {
-        return this.getEndpoint(v4());
+        return this.getEndpoint(generateUuid());
     }
 
     protected async getHostPattern(): Promise<string> {

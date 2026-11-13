@@ -1,29 +1,31 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { enableJSDOM } from '../test/jsdom';
+import { enableJSDOM } from '../test/jsdom.js';
 
 let disableJSDOM = enableJSDOM();
 
 import * as assert from 'assert';
 import { Container } from 'inversify';
-import { bindPreferenceService } from '../frontend-application-bindings';
-import { PreferenceSchemaProperties, PreferenceSchemaProvider } from './preference-contribution';
-import { FrontendApplicationConfigProvider } from '../frontend-application-config-provider';
-import { ApplicationProps } from '@theia/application-package/lib/application-props';
+import { bindPreferenceService } from '../frontend-application-bindings.js';
+import { FrontendApplicationConfigProvider } from '../frontend-application-config-provider.js';
+import { IndexedAccess, PreferenceDataProperty, PreferenceSchemaService } from '../../common/preferences/preference-schema.js';
+import { PreferenceProvider, PreferenceProviderProvider, PreferenceScope } from '../../common/preferences/index.js';
+import { ILogger } from '../../common/index.js';
+import { MockLogger } from '../../common/test/mock-logger.js';
 
 disableJSDOM();
 
@@ -38,17 +40,20 @@ let testContainer: Container;
 function createTestContainer(): Container {
     const result = new Container();
     bindPreferenceService(result.bind.bind(result));
+
+    result.bind(ILogger).to(MockLogger).inSingletonScope();
+
     return result;
 }
 
-const EDITOR_FONT_SIZE_PROPERTIES: PreferenceSchemaProperties = {
+const EDITOR_FONT_SIZE_PROPERTIES: IndexedAccess<PreferenceDataProperty> = {
     'editor.fontSize': {
         type: 'number',
         default: 14,
         overridable: true
     },
 };
-const EDITOR_INSERT_SPACES_PROPERTIES: PreferenceSchemaProperties = {
+const EDITOR_INSERT_SPACES_PROPERTIES: IndexedAccess<PreferenceDataProperty> = {
     'editor.insertSpaces': {
         type: 'boolean',
         default: true,
@@ -57,14 +62,13 @@ const EDITOR_INSERT_SPACES_PROPERTIES: PreferenceSchemaProperties = {
 };
 
 describe('Preference Schema Provider', () => {
-    let prefSchema: PreferenceSchemaProvider;
+    let prefSchema: PreferenceSchemaService;
+    let prefDefaults: PreferenceProvider;
 
     before(() => {
         disableJSDOM = enableJSDOM();
         FrontendApplicationConfigProvider.set({
-            ...ApplicationProps.DEFAULT.frontend.config,
-            'applicationName': 'test',
-            'preferences': {
+            preferences: {
                 'editor.fontSize': 20,
                 '[typescript]': { 'editor.fontSize': 24 }
             }
@@ -77,57 +81,43 @@ describe('Preference Schema Provider', () => {
 
     beforeEach(async () => {
         testContainer = createTestContainer();
-        prefSchema = testContainer.get(PreferenceSchemaProvider);
+        prefSchema = testContainer.get(PreferenceSchemaService);
+        await prefSchema.ready;
+        prefSchema.registerOverrideIdentifier('typescript');
+        const providerProvider: PreferenceProviderProvider = testContainer.get(PreferenceProviderProvider);
+        prefDefaults = providerProvider(PreferenceScope.Default)!;
+        await prefDefaults.ready;
     });
 
     it('Should load all preferences specified in the frontend config.', () => {
-        assert.strictEqual(prefSchema.get('editor.fontSize'), 20);
-        assert.strictEqual(prefSchema.get('[typescript].editor.fontSize'), 24);
+        assert.strictEqual(prefDefaults.get('editor.fontSize'), 20);
+        assert.strictEqual(prefDefaults.get('editor.fontSize', undefined, 'typescript'), 24);
     });
 
     it('Should favor the default specified in the package.json over a default registered by a schema', () => {
-        prefSchema.setSchema({
+        prefSchema.addSchema({
+            scope: PreferenceScope.User,
             properties: {
                 ...EDITOR_FONT_SIZE_PROPERTIES
             }
         });
 
-        assert.strictEqual(prefSchema.get('editor.fontSize'), 20);
+        assert.strictEqual(prefDefaults.get('editor.fontSize'), 20);
     });
 
     it('Should merge language-specific overrides from schemas and the package.json', () => {
-        prefSchema.setSchema({
+        prefSchema.addSchema({
             properties: {
                 ...EDITOR_FONT_SIZE_PROPERTIES,
                 ...EDITOR_INSERT_SPACES_PROPERTIES,
-                '[typescript]': {
-                    type: 'object',
-                    default: {
-                        'editor.insertSpaces': false
-                    }
-                }
-            }
+            },
+            scope: PreferenceScope.Default
         });
-        assert.strictEqual(prefSchema.get('editor.insertSpaces'), true);
-        assert.strictEqual(prefSchema.get('[typescript].editor.insertSpaces'), false);
-        assert.strictEqual(prefSchema.get('[typescript].editor.fontSize'), 24);
-    });
 
-    it('Should favor package.json specifications in the merge process', () => {
-        prefSchema.setSchema({
-            properties: {
-                ...EDITOR_FONT_SIZE_PROPERTIES,
-                ...EDITOR_INSERT_SPACES_PROPERTIES,
-                '[typescript]': {
-                    type: 'object',
-                    default: {
-                        'editor.insertSpaces': false,
-                        'editor.fontSize': 36,
-                    }
-                }
-            }
-        });
-        assert.strictEqual(prefSchema.get('[typescript].editor.insertSpaces'), false);
-        assert.strictEqual(prefSchema.get('[typescript].editor.fontSize'), 24);
+        prefSchema.registerOverride('editor.insertSpaces', 'typescript', false);
+
+        assert.strictEqual(prefDefaults.get('editor.insertSpaces'), true);
+        assert.strictEqual(prefDefaults.get('editor.insertSpaces', undefined, 'typescript'), false);
+        assert.strictEqual(prefDefaults.get('editor.fontSize', undefined, 'typescript'), 24);
     });
 });

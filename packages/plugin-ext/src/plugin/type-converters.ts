@@ -1,38 +1,44 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as theia from '@theia/plugin';
-import * as lstypes from '@theia/core/shared/vscode-languageserver-types';
-import { URI } from './types-impl';
-import * as rpc from '../common/plugin-api-rpc';
+import * as lstypes from '@theia/core/shared/vscode-languageserver-protocol';
+import { InlineValueEvaluatableExpression, InlineValueText, InlineValueVariableLookup, QuickPickItemKind, ThemeIcon, URI } from './types-impl.js';
+import * as rpc from '../common/plugin-api-rpc.js';
 import {
     DecorationOptions, EditorPosition, Plugin, Position, WorkspaceTextEditDto, WorkspaceFileEditDto, Selection, TaskDto, WorkspaceEditDto
-} from '../common/plugin-api-rpc';
-import * as model from '../common/plugin-api-rpc-model';
-import { LanguageFilter, LanguageSelector, RelativePattern } from '@theia/callhierarchy/lib/common/language-selector';
-import { isMarkdownString, MarkdownString } from './markdown-string';
-import * as types from './types-impl';
-import { UriComponents } from '../common/uri-components';
-import { TaskGroup } from './types-impl';
-import { isReadonlyArray } from '../common/arrays';
+} from '../common/plugin-api-rpc.js';
+import * as model from '../common/plugin-api-rpc-model.js';
+import { LanguageFilter, LanguageSelector } from '@theia/editor/lib/common/language-selector';
+import { MarkdownString as PluginMarkdownStringImpl } from './markdown-string.js';
+import * as types from './types-impl.js';
+import { UriComponents } from '../common/uri-components.js';
+import { isReadonlyArray } from '../common/arrays.js';
+import { DisposableCollection, Mutable, isEmptyObject, isObject } from '@theia/core/lib/common';
+import * as notebooks from '@theia/notebook/lib/common';
+import { CommandsConverter } from './command-registry.js';
+import { BinaryBuffer } from '@theia/core/lib/common/buffer';
+import { CellRange, isTextStreamMime } from '@theia/notebook/lib/common';
+import { MarkdownString as MarkdownStringDTO } from '@theia/core/lib/common/markdown-rendering';
+
+import { TestItemDTO, TestMessageDTO, TestMessageStackFrameDTO } from '../common/test-types.js';
+import { PluginIconPath } from './plugin-icon-path.js';
 
 const SIDE_GROUP = -2;
 const ACTIVE_GROUP = -1;
-const BUILD_GROUP = 'build';
-const TEST_GROUP = 'test';
 
 export function toViewColumn(ep?: EditorPosition): theia.ViewColumn | undefined {
     if (typeof ep !== 'number') {
@@ -128,18 +134,26 @@ export function fromRange(range: theia.Range | undefined): model.Range | undefin
         endColumn: end.character + 1
     };
 }
-
-export function fromPosition(position: types.Position): Position {
+export function fromPosition(position: types.Position | theia.Position): Position;
+export function fromPosition(position: types.Position | theia.Position | undefined): Position | undefined;
+export function fromPosition(position: types.Position | theia.Position | undefined): Position | undefined {
+    if (!position) {
+        return undefined;
+    }
     return { lineNumber: position.line + 1, column: position.character + 1 };
 }
 
-export function toPosition(position: Position): types.Position {
+export function toPosition(position: Position): types.Position;
+export function toPosition(position: Position | undefined): types.Position | undefined;
+export function toPosition(position: Position | undefined): types.Position | undefined {
+    if (!position) {
+        return undefined;
+    }
     return new types.Position(position.lineNumber - 1, position.column - 1);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function isDecorationOptions(something: any): something is theia.DecorationOptions {
-    return (typeof something.range !== 'undefined');
+function isDecorationOptions(arg: unknown): arg is theia.DecorationOptions {
+    return isObject<theia.DecorationOptions>(arg) && typeof arg.range !== 'undefined';
 }
 
 export function isDecorationOptionsArr(something: theia.Range[] | theia.DecorationOptions[]): something is theia.DecorationOptions[] {
@@ -173,7 +187,7 @@ export function fromRangeOrRangeWithMessage(ranges: theia.Range[] | theia.Decora
     }
 }
 
-export function fromManyMarkdown(markup: (theia.MarkdownString | theia.MarkedString)[]): model.MarkdownString[] {
+export function fromManyMarkdown(markup: (theia.MarkdownString | theia.MarkedString)[]): MarkdownStringDTO[] {
     return markup.map(fromMarkdown);
 }
 
@@ -182,30 +196,43 @@ interface Codeblock {
     value: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function isCodeblock(thing: any): thing is Codeblock {
-    return thing && typeof thing === 'object'
-        && typeof (<Codeblock>thing).language === 'string'
-        && typeof (<Codeblock>thing).value === 'string';
+function isCodeblock(arg: unknown): arg is Codeblock {
+    return isObject<Codeblock>(arg)
+        && typeof arg.language === 'string'
+        && typeof arg.value === 'string';
 }
 
-export function fromMarkdown(markup: theia.MarkdownString | theia.MarkedString): model.MarkdownString {
+export function fromMarkdown(markup: theia.MarkdownString | theia.MarkedString): MarkdownStringDTO {
     if (isCodeblock(markup)) {
         const { language, value } = markup;
         return { value: '```' + language + '\n' + value + '\n```\n' };
-    } else if (isMarkdownString(markup)) {
+    } else if (markup instanceof PluginMarkdownStringImpl) {
+        return markup.toJSON();
+    } else if (MarkdownStringDTO.is(markup)) {
         return markup;
     } else if (typeof markup === 'string') {
-        return { value: <string>markup };
+        return { value: markup };
     } else {
         return { value: '' };
     }
 }
 
-export function toMarkdown(value: model.MarkdownString): MarkdownString {
-    const ret = new MarkdownString(value.value);
-    ret.isTrusted = value.isTrusted;
-    return ret;
+export function fromMarkdownOrString(value: string | theia.MarkdownString | undefined): string | MarkdownStringDTO | undefined {
+    if (value === undefined) {
+        return undefined;
+    } else if (typeof value === 'string') {
+        return value;
+    } else {
+        return fromMarkdown(value);
+    }
+}
+
+export function toMarkdown(value: MarkdownStringDTO): PluginMarkdownStringImpl {
+    const implemented = new PluginMarkdownStringImpl(value.value, value.supportThemeIcons);
+    implemented.isTrusted = value.isTrusted;
+    implemented.supportHtml = value.supportHtml;
+    implemented.baseUri = value.baseUri && URI.revive(implemented.baseUri);
+    return implemented;
 }
 
 export function fromDocumentSelector(selector: theia.DocumentSelector | undefined): LanguageSelector | undefined {
@@ -219,27 +246,21 @@ export function fromDocumentSelector(selector: theia.DocumentSelector | undefine
         return {
             language: selector.language,
             scheme: selector.scheme,
-            pattern: fromGlobPattern(selector.pattern!)
+            pattern: selector.pattern && fromGlobPattern(selector.pattern)
         } as LanguageFilter;
     }
 
 }
 
-export function fromGlobPattern(pattern: theia.GlobPattern): string | RelativePattern {
+export function fromGlobPattern(pattern: theia.GlobPattern): string | types.RelativePattern {
     if (typeof pattern === 'string') {
         return pattern;
     }
 
-    if (isRelativePattern(pattern)) {
-        return new types.RelativePattern(pattern.base, pattern.pattern);
-    }
-
-    return pattern;
-}
-
-function isRelativePattern(obj: {}): obj is theia.RelativePattern {
-    const rp = obj as theia.RelativePattern;
-    return rp && typeof rp.base === 'string' && typeof rp.pattern === 'string';
+    return new types.RelativePattern(
+        pattern.baseUri ?? pattern.base, // preserve backwards compatibility with older extensions: legacy relative pattern shape did not have the `baseUri` property
+        pattern.pattern
+    );
 }
 
 export function fromCompletionItemKind(kind?: types.CompletionItemKind): model.CompletionItemKind {
@@ -315,6 +336,15 @@ export function fromTextEdit(edit: theia.TextEdit): model.TextEdit {
     };
 }
 
+function fromSnippetTextEdit(edit: theia.SnippetTextEdit): model.TextEdit & { insertAsSnippet?: boolean, keepWhitespace?: boolean } {
+    return {
+        text: edit.snippet.value,
+        range: fromRange(edit.range),
+        insertAsSnippet: true,
+        keepWhitespace: edit.keepWhitespace
+    };
+}
+
 export function convertDiagnosticToMarkerData(diagnostic: theia.Diagnostic): model.MarkerData {
     return {
         code: convertCode(diagnostic.code),
@@ -326,16 +356,20 @@ export function convertDiagnosticToMarkerData(diagnostic: theia.Diagnostic): mod
         endLineNumber: diagnostic.range.end.line + 1,
         endColumn: diagnostic.range.end.character + 1,
         relatedInformation: convertRelatedInformation(diagnostic.relatedInformation),
-        tags: convertTags(diagnostic.tags)
+        tags: convertTags(diagnostic.tags),
+        data: diagnostic.data,
     };
 }
 
-function convertCode(code: string | number | undefined): string | undefined {
+export function convertCode(code: string | number | { value: string | number; target: theia.Uri } | undefined): string | undefined {
     if (typeof code === 'number') {
         return String(code);
-    } else {
-        return code;
     }
+    if (typeof code === 'string' || typeof code === 'undefined') {
+        return code;
+    } else {
+        return String(code.value);
+    };
 }
 
 function convertSeverity(severity: types.DiagnosticSeverity): types.MarkerSeverity {
@@ -385,17 +419,78 @@ function convertTags(tags: types.DiagnosticTag[] | undefined): types.MarkerTag[]
     return markerTags;
 }
 
-export function fromHover(hover: theia.Hover): model.Hover {
-    return <model.Hover>{
+export function fromHover(hover: theia.VerboseHover): model.Hover {
+    const modelHover: model.Hover = {
         range: fromRange(hover.range),
-        contents: fromManyMarkdown(hover.contents)
+        contents: fromManyMarkdown(hover.contents),
+        canIncreaseVerbosity: hover.canIncreaseVerbosity,
+        canDecreaseVerbosity: hover.canDecreaseVerbosity,
+    };
+    return modelHover;
+}
+
+export function fromEvaluatableExpression(evaluatableExpression: theia.EvaluatableExpression): model.EvaluatableExpression {
+    return <model.EvaluatableExpression>{
+        range: fromRange(evaluatableExpression.range),
+        expression: evaluatableExpression.expression
     };
 }
 
-export function fromLocation(location: theia.Location): model.Location {
+export function fromInlineValue(inlineValue: theia.InlineValue): model.InlineValue {
+    if (inlineValue instanceof InlineValueText) {
+        return <model.InlineValueText>{
+            type: 'text',
+            range: fromRange(inlineValue.range),
+            text: inlineValue.text
+        };
+    } else if (inlineValue instanceof InlineValueVariableLookup) {
+        return <model.InlineValueVariableLookup>{
+            type: 'variable',
+            range: fromRange(inlineValue.range),
+            variableName: inlineValue.variableName,
+            caseSensitiveLookup: inlineValue.caseSensitiveLookup
+        };
+    } else if (inlineValue instanceof InlineValueEvaluatableExpression) {
+        return <model.InlineValueEvaluatableExpression>{
+            type: 'expression',
+            range: fromRange(inlineValue.range),
+            expression: inlineValue.expression
+        };
+    } else {
+        throw new Error('Unknown InlineValue type');
+    }
+}
+
+export function toInlineValueContext(inlineValueContext: model.InlineValueContext): theia.InlineValueContext {
+    const ivLocation = inlineValueContext.stoppedLocation;
+    return <theia.InlineValueContext>{
+        frameId: inlineValueContext.frameId,
+        stoppedLocation: new types.Range(ivLocation.startLineNumber, ivLocation.startColumn, ivLocation.endLineNumber, ivLocation.endColumn)
+    };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-shadow
+export function fromLocation(location: theia.Location): model.Location;
+export function fromLocation(location: theia.Location | undefined): model.Location | undefined;
+export function fromLocation(location: theia.Location | undefined): model.Location | undefined {
+    if (!location) {
+        return undefined;
+    }
     return <model.Location>{
         uri: location.uri,
         range: fromRange(location.range)
+    };
+}
+
+export function fromLocationToLanguageServerLocation(location: theia.Location): lstypes.Location;
+export function fromLocationToLanguageServerLocation(location: theia.Location | undefined): lstypes.Location | undefined;
+export function fromLocationToLanguageServerLocation(location: theia.Location | undefined): lstypes.Location | undefined {
+    if (!location) {
+        return undefined;
+    }
+    return <lstypes.Location>{
+        uri: location.uri.toString(),
+        range: location.range
     };
 }
 
@@ -467,7 +562,7 @@ export namespace ParameterInformation {
     export function to(info: model.ParameterInformation): types.ParameterInformation {
         return {
             label: info.label,
-            documentation: isMarkdownString(info.documentation) ? toMarkdown(info.documentation) : info.documentation
+            documentation: MarkdownStringDTO.is(info.documentation) ? toMarkdown(info.documentation) : info.documentation
         };
     }
 }
@@ -478,15 +573,17 @@ export namespace SignatureInformation {
         return {
             label: info.label,
             documentation: info.documentation ? fromMarkdown(info.documentation) : undefined,
-            parameters: info.parameters && info.parameters.map(ParameterInformation.from)
+            parameters: info.parameters && info.parameters.map(ParameterInformation.from),
+            activeParameter: info.activeParameter
         };
     }
 
     export function to(info: model.SignatureInformation): types.SignatureInformation {
         return {
             label: info.label,
-            documentation: isMarkdownString(info.documentation) ? toMarkdown(info.documentation) : info.documentation,
-            parameters: info.parameters && info.parameters.map(ParameterInformation.to)
+            documentation: MarkdownStringDTO.is(info.documentation) ? toMarkdown(info.documentation) : info.documentation,
+            parameters: info.parameters && info.parameters.map(ParameterInformation.to),
+            activeParameter: info.activeParameter
         };
     }
 }
@@ -517,14 +614,51 @@ export function fromWorkspaceEdit(value: theia.WorkspaceEdit, documents?: any): 
         edits: []
     };
     for (const entry of (value as types.WorkspaceEdit)._allEntries()) {
-        const [uri, uriOrEdits] = entry;
-        if (Array.isArray(uriOrEdits)) {
-            // text edits
-            const doc = documents ? documents.getDocument(uri.toString()) : undefined;
-            result.edits.push(<WorkspaceTextEditDto>{ resource: uri, modelVersionId: doc && doc.version, edit: uriOrEdits.map(fromTextEdit)[0], metadata: entry[2] });
-        } else {
-            // resource edits
-            result.edits.push(<WorkspaceFileEditDto>{ oldUri: uri, newUri: uriOrEdits, options: entry[2], metadata: entry[3] });
+        if (entry?._type === types.FileEditType.Text) {
+            const doc = documents ? documents.getDocument(entry.uri.toString()) : undefined;
+            const workspaceTextEditDto: WorkspaceTextEditDto = {
+                resource: entry.uri,
+                modelVersionId: doc?.version,
+                textEdit: fromTextEdit(entry.edit),
+                metadata: entry.metadata
+            };
+            result.edits.push(workspaceTextEditDto);
+        } else if (entry?._type === types.FileEditType.Snippet) {
+            const doc = documents ? documents.getDocument(entry.uri.toString()) : undefined;
+            const workspaceTextEditDto: WorkspaceTextEditDto = {
+                resource: entry.uri,
+                modelVersionId: doc?.version,
+                textEdit: fromSnippetTextEdit(entry.edit),
+                metadata: entry.metadata
+            };
+            result.edits.push(workspaceTextEditDto);
+        } else if (entry?._type === types.FileEditType.File) {
+            const workspaceFileEditDto: WorkspaceFileEditDto = {
+                oldResource: entry.from,
+                newResource: entry.to,
+                options: entry.options,
+                metadata: entry.metadata
+            };
+            result.edits.push(workspaceFileEditDto);
+        } else if (entry?._type === types.FileEditType.Cell) {
+            if (entry.edit) {
+                result.edits.push({
+                    metadata: entry.metadata,
+                    resource: entry.uri,
+                    cellEdit: entry.edit,
+                });
+            }
+        } else if (entry?._type === types.FileEditType.CellReplace) {
+            result.edits.push({
+                metadata: entry.metadata,
+                resource: entry.uri,
+                cellEdit: {
+                    editType: notebooks.CellEditType.Replace,
+                    index: entry.index,
+                    count: entry.count,
+                    cells: entry.cells.map(NotebookCellData.from)
+                }
+            });
         }
     }
     return result;
@@ -571,6 +705,34 @@ export namespace SymbolKind {
         }
         return model.SymbolKind.Property;
     }
+
+    // lstypes.SymbolKind is 1-26, but Theia/model SymbolKind is 0–25.
+    // We convert by adding or subtracting 1 to keep the enum indices aligned.
+    export function fromLspSymbolKind(kind: lstypes.SymbolKind): theia.SymbolKind {
+        const n = Number(kind);
+        if (n >= 1 && n <= 26) {
+            return (n - 1) as theia.SymbolKind;
+        }
+        return fromLspSymbolKind(lstypes.SymbolKind.Property);
+    }
+
+    export function toLspSymbolKind(kind: model.SymbolKind): lstypes.SymbolKind {
+        const n = Number(kind);
+        if (n >= 0 && n <= 25) {
+            return (n + 1) as lstypes.SymbolKind;
+        }
+        return lstypes.SymbolKind.Property;
+    }
+}
+
+export function toCodeActionTriggerKind(triggerKind: model.CodeActionTriggerKind): types.CodeActionTriggerKind {
+    switch (triggerKind) {
+        case model.CodeActionTriggerKind.Invoke:
+            return types.CodeActionTriggerKind.Invoke;
+
+        case model.CodeActionTriggerKind.Automatic:
+            return types.CodeActionTriggerKind.Automatic;
+    }
 }
 
 export function fromDocumentSymbol(info: theia.DocumentSymbol): model.DocumentSymbol {
@@ -612,90 +774,107 @@ export function toSymbolTag(kind: model.SymbolTag): types.SymbolTag {
     }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function isModelLocation(thing: any): thing is model.Location {
-    if (!thing) {
-        return false;
-    }
-    return isModelRange((<model.Location>thing).range) &&
-        isUriComponents((<model.Location>thing).uri);
+/**
+ * Creates a merged symbol of type theia.SymbolInformation & theia.DocumentSymbol.
+ * Is only used as the result type of the `vscode.executeDocumentSymbolProvider` command.
+ */
+export function toMergedSymbol(uri: UriComponents, symbol: model.DocumentSymbol): theia.SymbolInformation & theia.DocumentSymbol {
+    const uriValue = URI.revive(uri);
+    const location = new types.Location(uriValue, toRange(symbol.range));
+    return {
+        name: symbol.name,
+        containerName: symbol.containerName ?? '',
+        kind: SymbolKind.toSymbolKind(symbol.kind),
+        tags: [],
+        location,
+        detail: symbol.detail,
+        range: location.range,
+        selectionRange: toRange(symbol.selectionRange),
+        children: symbol.children?.map(child => toMergedSymbol(uri, child)) ?? []
+    };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function isModelRange(thing: any): thing is model.Range {
-    if (!thing) {
-        return false;
-    }
-    return (('startLineNumber' in thing) && typeof thing.startLineNumber === 'number') &&
-        (('startColumn' in thing) && typeof thing.startColumn === 'number') &&
-        (('endLineNumber' in thing) && typeof thing.endLineNumber === 'number') &&
-        (('endColumn' in thing) && typeof thing.endColumn === 'number');
+export function isModelLocation(arg: unknown): arg is model.Location {
+    return isObject<model.Location>(arg) &&
+        isModelRange(arg.range) &&
+        isUriComponents(arg.uri);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function isUriComponents(thing: any): thing is UriComponents {
-    if (!thing) {
-        return false;
-    }
-    return (('scheme' in thing) && typeof thing.scheme === 'string') &&
-        (('path' in thing) && typeof thing.path === 'string') &&
-        (('query' in thing) && typeof thing.query === 'string') &&
-        (('fragment' in thing) && typeof thing.fragment === 'string');
+export function isModelRange(arg: unknown): arg is model.Range {
+    return isObject<model.Range>(arg) &&
+        typeof arg.startLineNumber === 'number' &&
+        typeof arg.startColumn === 'number' &&
+        typeof arg.endLineNumber === 'number' &&
+        typeof arg.endColumn === 'number';
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function isModelCallHierarchyItem(thing: any): thing is model.CallHierarchyItem {
-    if (!thing) {
-        return false;
-    }
-    return isModelRange(thing.range)
-        && isModelRange(thing.selectionRange)
-        && isUriComponents(thing.uri)
-        && !!thing.name;
+export function isUriComponents(arg: unknown): arg is UriComponents {
+    return isObject<UriComponents>(arg) &&
+        typeof arg.scheme === 'string' &&
+        (arg['$mid'] === 1 || (
+            typeof arg.path === 'string' &&
+            typeof arg.query === 'string' &&
+            typeof arg.fragment === 'string'));
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function isModelCallHierarchyIncomingCall(thing: any): thing is model.CallHierarchyIncomingCall {
-    if (!thing) {
-        return false;
-    }
-    const maybeIncomingCall = thing as model.CallHierarchyIncomingCall;
-    return 'from' in maybeIncomingCall && 'fromRanges' in maybeIncomingCall && isModelCallHierarchyItem(maybeIncomingCall.from);
+export function isModelCallHierarchyItem(arg: unknown): arg is model.CallHierarchyItem {
+    return isObject<model.CallHierarchyItem>(arg)
+        && isModelRange(arg.range)
+        && isModelRange(arg.selectionRange)
+        && isUriComponents(arg.uri)
+        && !!arg.name;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function isModelCallHierarchyOutgoingCall(thing: any): thing is model.CallHierarchyOutgoingCall {
-    if (!thing) {
-        return false;
-    }
-    const maybeOutgoingCall = thing as model.CallHierarchyOutgoingCall;
-    return 'to' in maybeOutgoingCall && 'fromRanges' in maybeOutgoingCall && isModelCallHierarchyItem(maybeOutgoingCall.to);
+export function isModelCallHierarchyIncomingCall(arg: unknown): arg is model.CallHierarchyIncomingCall {
+    return isObject<model.CallHierarchyIncomingCall>(arg) &&
+        'from' in arg &&
+        'fromRanges' in arg &&
+        isModelCallHierarchyItem(arg.from);
+}
+
+export function isModelCallHierarchyOutgoingCall(arg: unknown): arg is model.CallHierarchyOutgoingCall {
+    return isObject<model.CallHierarchyOutgoingCall>(arg) &&
+        'to' in arg &&
+        'fromRanges' in arg &&
+        isModelCallHierarchyItem(arg.to);
 }
 
 export function toLocation(value: model.Location): types.Location {
     return new types.Location(URI.revive(value.uri), toRange(value.range));
 }
 
-export function fromCallHierarchyItem(item: theia.CallHierarchyItem): model.CallHierarchyItem {
-    return <model.CallHierarchyItem>{
+export function fromHierarchyItem(item: types.CallHierarchyItem | types.TypeHierarchyItem): model.HierarchyItem {
+    return {
         kind: SymbolKind.fromSymbolKind(item.kind),
         name: item.name,
         detail: item.detail,
         uri: item.uri,
         range: fromRange(item.range),
         selectionRange: fromRange(item.selectionRange),
-        tags: item.tags
+        tags: item.tags,
+        _itemId: item._itemId,
+        _sessionId: item._sessionId,
     };
 }
 
+export function fromCallHierarchyItem(item: types.CallHierarchyItem): model.CallHierarchyItem {
+    return <model.CallHierarchyItem>fromHierarchyItem(item);
+}
+
 export function toCallHierarchyItem(value: model.CallHierarchyItem): types.CallHierarchyItem {
-    return new types.CallHierarchyItem(
+    const item = new types.CallHierarchyItem(
         SymbolKind.toSymbolKind(value.kind),
         value.name,
         value.detail ? value.detail : '',
         URI.revive(value.uri),
         toRange(value.range),
-        toRange(value.selectionRange));
+        toRange(value.selectionRange),
+    );
+    item.tags = value.tags;
+    item._itemId = value._itemId;
+    item._sessionId = value._sessionId;
+
+    return item;
 }
 
 export function toCallHierarchyIncomingCall(value: model.CallHierarchyIncomingCall): types.CallHierarchyIncomingCall {
@@ -708,6 +887,34 @@ export function toCallHierarchyOutgoingCall(value: model.CallHierarchyOutgoingCa
     return new types.CallHierarchyOutgoingCall(
         toCallHierarchyItem(value.to),
         value.fromRanges && value.fromRanges.map(toRange));
+}
+
+export function isModelTypeHierarchyItem(arg: unknown): arg is model.TypeHierarchyItem {
+    return isObject<model.TypeHierarchyItem>(arg)
+        && isModelRange(arg.range)
+        && isModelRange(arg.selectionRange)
+        && isUriComponents(arg.uri)
+        && !!arg.name;
+}
+
+export function fromTypeHierarchyItem(item: types.TypeHierarchyItem): model.TypeHierarchyItem {
+    return <model.TypeHierarchyItem>fromHierarchyItem(item);
+}
+
+export function toTypeHierarchyItem(value: model.TypeHierarchyItem): types.TypeHierarchyItem {
+    const item = new types.TypeHierarchyItem(
+        SymbolKind.toSymbolKind(value.kind),
+        value.name,
+        value.detail ? value.detail : '',
+        URI.revive(value.uri),
+        toRange(value.selectionRange),
+        toRange(value.range),
+    );
+    item.tags = value.tags;
+    item._itemId = value._itemId;
+    item._sessionId = value._sessionId;
+
+    return item;
 }
 
 export function toWorkspaceFolder(folder: model.WorkspaceFolder): theia.WorkspaceFolder {
@@ -727,27 +934,31 @@ export function fromTask(task: theia.Task): TaskDto | undefined {
     taskDto.label = task.name;
     taskDto.source = task.source;
 
+    taskDto.runOptions = { reevaluateOnRerun: task.runOptions.reevaluateOnRerun };
+
     if ((task as types.Task).hasProblemMatchers) {
         taskDto.problemMatcher = task.problemMatchers;
     }
     if ('detail' in task) {
-        taskDto.detail = (task as theia.Task2).detail;
+        taskDto.detail = task.detail;
     }
-    if (typeof task.scope === 'object') {
-        taskDto.scope = task.scope.uri.toString();
-    } else if (typeof task.scope === 'number') {
+    if (typeof task.scope === 'number') {
         taskDto.scope = task.scope;
+    } else if (task.scope !== undefined) {
+        taskDto.scope = task.scope.uri.toString();
+    } else {
+        taskDto.scope = types.TaskScope.Workspace;
     }
 
     if (task.presentationOptions) {
         taskDto.presentation = task.presentationOptions;
     }
 
-    const group = task.group;
-    if (group === TaskGroup.Build) {
-        taskDto.group = BUILD_GROUP;
-    } else if (group === TaskGroup.Test) {
-        taskDto.group = TEST_GROUP;
+    if (task.group) {
+        taskDto.group = {
+            kind: <rpc.TaskGroupKind>task.group.id,
+            isDefault: !!task.group.isDefault
+        };
     }
 
     const taskDefinition = task.definition;
@@ -783,46 +994,71 @@ export function fromTask(task: theia.Task): TaskDto | undefined {
     return taskDto;
 }
 
-export function toTask(taskDto: TaskDto): theia.Task {
+/**
+ * Converts a task DTO to a task.
+ * @param getWorkspaceFolder returns the workspace folder that contains the given URI, so that a folder scoped task has the folder from `workspace.workspaceFolders` as its `scope`
+ * @returns the task, or `undefined` if the task is scoped to a folder that is not in a workspace folder
+ */
+export function toTask(taskDto: TaskDto, getWorkspaceFolder: (uri: theia.Uri) => theia.WorkspaceFolder | undefined): theia.Task | undefined {
     if (!taskDto) {
         throw new Error('Task should be provided for converting');
     }
 
-    const { type, taskType, label, source, scope, problemMatcher, detail, command, args, options, group, presentation, ...properties } = taskDto;
+    const { executionType, label, source, scope, detail, command, args, options, group, presentation, runOptions } = taskDto;
     const result = {} as theia.Task;
     result.name = label;
     result.source = source;
+    result.runOptions = runOptions ?? {};
     if (detail) {
-        (result as theia.Task2).detail = detail;
+        result.detail = detail;
     }
     if (typeof scope === 'string') {
-        const uri = URI.parse(scope);
-        result.scope = {
-            uri,
-            name: uri.toString(),
-            index: 0
-        };
+        const workspaceFolder = getWorkspaceFolder(URI.parse(scope));
+        if (!workspaceFolder) {
+            return undefined;
+        }
+        result.scope = workspaceFolder;
     } else {
         result.scope = scope;
     }
 
-    const taskDefinition: theia.TaskDefinition = {
-        type: type
-    };
+    result.definition = toTaskDefinition(taskDto);
 
-    result.definition = taskDefinition;
-
-    if (taskType === 'process') {
+    if (executionType === 'process') {
         result.execution = getProcessExecution(taskDto);
     }
 
     const execution = { command, args, options };
-    if (taskType === 'shell' || types.ShellExecution.is(execution)) {
+    if (executionType === 'shell' || types.ShellExecution.is(execution)) {
         result.execution = getShellExecution(taskDto);
     }
 
-    if (taskType === 'customExecution' || types.CustomExecution.is(execution)) {
+    if (executionType === 'customExecution' || types.CustomExecution.is(execution)) {
         result.execution = getCustomExecution(taskDto);
+    }
+
+    if (group) {
+        result.group = new types.TaskGroup(
+            group.kind,
+            group.kind,
+            group.isDefault
+        );
+    }
+
+    if (presentation) {
+        result.presentationOptions = presentation;
+    }
+
+    return result;
+}
+
+export function toTaskDefinition(taskDto: TaskDto): theia.TaskDefinition {
+    const { type, executionType, label, source, scope, problemMatcher, detail, command, args, options, group, presentation, runOptions, ...properties } = taskDto;
+    const taskDefinition: theia.TaskDefinition = {
+        type: type
+    };
+
+    if (executionType === 'customExecution') {
         // if taskType is customExecution, we need to put all the information into taskDefinition,
         // because some parameters may be in taskDefinition.
         taskDefinition.label = label;
@@ -831,33 +1067,17 @@ export function toTask(taskDto: TaskDto): theia.Task {
         taskDefinition.options = options;
     }
 
-    if (group) {
-        if (group === BUILD_GROUP) {
-            result.group = TaskGroup.Build;
-        } else if (group === TEST_GROUP) {
-            result.group = TaskGroup.Test;
-        }
-    }
-
-    if (presentation) {
-        result.presentationOptions = presentation;
-    }
-
-    if (!properties) {
-        return result;
-    }
-
     for (const key in properties) {
         if (properties.hasOwnProperty(key)) {
             taskDefinition[key] = properties[key];
         }
     }
 
-    return result;
+    return taskDefinition;
 }
 
 export function fromProcessExecution(execution: theia.ProcessExecution, taskDto: TaskDto): TaskDto {
-    taskDto.taskType = 'process';
+    taskDto.executionType = 'process';
     taskDto.command = execution.process;
     taskDto.args = execution.args;
 
@@ -869,7 +1089,7 @@ export function fromProcessExecution(execution: theia.ProcessExecution, taskDto:
 }
 
 export function fromShellExecution(execution: theia.ShellExecution, taskDto: TaskDto): TaskDto {
-    taskDto.taskType = 'shell';
+    taskDto.executionType = 'shell';
     const options = execution.options;
     if (options) {
         taskDto.options = getShellExecutionOptions(options);
@@ -881,18 +1101,17 @@ export function fromShellExecution(execution: theia.ShellExecution, taskDto: Tas
         return taskDto;
     }
 
-    const command = execution.command;
-    if (typeof command === 'string') {
-        taskDto.command = command;
+    if (execution.command) {
+        taskDto.command = getCommand(execution.command);
         taskDto.args = getShellArgs(execution.args);
         return taskDto;
     } else {
-        throw new Error('Converting ShellQuotedString command is not implemented');
+        throw new Error('Command is undefined');
     }
 }
 
-export function fromCustomExecution(execution: theia.CustomExecution, taskDto: TaskDto): TaskDto {
-    taskDto.taskType = 'customExecution';
+export function fromCustomExecution(execution: types.CustomExecution, taskDto: TaskDto): TaskDto {
+    taskDto.executionType = 'customExecution';
     const callback = execution.callback;
     if (callback) {
         taskDto.callback = callback;
@@ -945,6 +1164,10 @@ export function getShellArgs(args: undefined | (string | theia.ShellQuotedString
     return result;
 }
 
+function getCommand(command: string | theia.ShellQuotedString): string {
+    return typeof command === 'string' ? command : command.value;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getShellExecutionOptions(options: theia.ShellExecutionOptions): { [key: string]: any } {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -986,14 +1209,14 @@ export function fromSymbolInformation(symbolInformation: theia.SymbolInformation
     if (symbolInformation.location && symbolInformation.location.range) {
         const p1 = lstypes.Position.create(symbolInformation.location.range.start.line, symbolInformation.location.range.start.character);
         const p2 = lstypes.Position.create(symbolInformation.location.range.end.line, symbolInformation.location.range.end.character);
-        return lstypes.SymbolInformation.create(symbolInformation.name, symbolInformation.kind++ as lstypes.SymbolKind, lstypes.Range.create(p1, p2),
+        return lstypes.SymbolInformation.create(symbolInformation.name, SymbolKind.toLspSymbolKind(symbolInformation.kind), lstypes.Range.create(p1, p2),
             symbolInformation.location.uri.toString(), symbolInformation.containerName);
     }
 
     return {
         name: symbolInformation.name,
         containerName: symbolInformation.containerName,
-        kind: symbolInformation.kind++ as lstypes.SymbolKind,
+        kind: SymbolKind.toLspSymbolKind(symbolInformation.kind),
         location: {
             uri: symbolInformation.location.uri.toString(),
             range: symbolInformation.location.range,
@@ -1006,15 +1229,21 @@ export function toSymbolInformation(symbolInformation: lstypes.SymbolInformation
         return undefined;
     }
 
-    return <theia.SymbolInformation>{
+    const lspRange: lstypes.Range = symbolInformation.location.range;
+    const range = new types.Range(
+        lspRange.start.line,
+        lspRange.start.character,
+        lspRange.end.line,
+        lspRange.end.character
+    );
+
+    const theiaSymbolInformation: theia.SymbolInformation = {
         name: symbolInformation.name,
-        containerName: symbolInformation.containerName,
-        kind: symbolInformation.kind,
-        location: {
-            uri: URI.parse(symbolInformation.location.uri),
-            range: symbolInformation.location.range
-        }
+        containerName: symbolInformation.containerName || '',
+        kind: SymbolKind.fromLspSymbolKind(symbolInformation.kind),
+        location: new types.Location(URI.parse(symbolInformation.location.uri), range)
     };
+    return theiaSymbolInformation;
 }
 
 export function fromSelectionRange(selectionRange: theia.SelectionRange): model.SelectionRange {
@@ -1062,32 +1291,64 @@ export function fromColorPresentation(colorPresentation: theia.ColorPresentation
     };
 }
 
-export function convertToTransferQuickPickItems(items: rpc.Item[]): rpc.TransferQuickPickItems[] {
-    const pickItems: rpc.TransferQuickPickItems[] = [];
-    for (let handle = 0; handle < items.length; handle++) {
-        const item = items[handle];
-        let label: string;
-        let description: string | undefined;
-        let detail: string | undefined;
-        let picked: boolean | undefined;
-        let alwaysShow: boolean | undefined;
-
-        if (typeof item === 'string') {
-            label = item;
-        } else {
-            ({ label, description, detail, picked, alwaysShow } = item);
-        }
-
-        pickItems.push({
-            label,
-            description,
-            handle,
-            detail,
-            picked,
-            alwaysShow
-        });
+export function convertIconPath(iconPath: types.URI | { light: types.URI; dark: types.URI } | theia.ThemeIcon | undefined):
+    UriComponents | { light: UriComponents; dark: UriComponents } | ThemeIcon | undefined {
+    if (!iconPath) {
+        return undefined;
     }
-    return pickItems;
+    if (iconPath instanceof types.URI) {
+        return iconPath.toJSON();
+    } else if ('dark' in iconPath) {
+        return {
+            dark: iconPath.dark.toJSON(),
+            light: iconPath.light?.toJSON()
+        };
+    } else if (ThemeIcon.is(iconPath)) {
+        return {
+            id: iconPath.id,
+            color: iconPath.color ? { id: iconPath.color.id } : undefined
+        };
+    } else {
+        return undefined;
+    }
+}
+
+export function convertQuickInputButton(plugin: Plugin, button: theia.QuickInputButton, index: number): rpc.TransferQuickInputButton {
+    const iconPath = convertIconPath(button.iconPath);
+    if (!iconPath) {
+        throw new Error(`Could not convert icon path: '${button.iconPath}'`);
+    }
+    return {
+        handle: index,
+        iconUrl: PluginIconPath.toUrl(iconPath, plugin) ?? ThemeIcon.get(iconPath),
+        tooltip: button.tooltip,
+        location: button.location,
+        toggle: button.toggle
+    };
+}
+
+export function convertToTransferQuickPickItems(plugin: Plugin, items: (theia.QuickPickItem | string)[]): rpc.TransferQuickPickItem[] {
+    return items.map((item, index) => {
+        if (typeof item === 'string') {
+            return { kind: 'item', label: item, handle: index };
+        } else if (item.kind === QuickPickItemKind.Separator) {
+            return { kind: 'separator', label: item.label, handle: index };
+        } else {
+            const { label, description, iconPath, detail, picked, alwaysShow, buttons, resourceUri } = item;
+            return {
+                kind: 'item',
+                label,
+                description,
+                iconUrl: PluginIconPath.toUrl(iconPath, plugin) ?? ThemeIcon.get(iconPath),
+                detail,
+                picked,
+                alwaysShow,
+                buttons: buttons ? buttons.map((button, i) => convertQuickInputButton(plugin, button, i)) : undefined,
+                resourceUri: resourceUri?.toJSON(),
+                handle: index,
+            };
+        }
+    });
 }
 
 export namespace DecorationRenderOptions {
@@ -1199,6 +1460,28 @@ export namespace ThemableDecorationAttachmentRenderOptions {
     }
 }
 
+export namespace ViewColumn {
+    export function from(column?: theia.ViewColumn): rpc.EditorGroupColumn {
+        if (typeof column === 'number' && column >= types.ViewColumn.One) {
+            return column - 1; // adjust zero index (ViewColumn.ONE => 0)
+        }
+
+        if (column === types.ViewColumn.Beside) {
+            return SIDE_GROUP;
+        }
+
+        return ACTIVE_GROUP; // default is always the active group
+    }
+
+    export function to(position: rpc.EditorGroupColumn): theia.ViewColumn {
+        if (typeof position === 'number' && position >= 0) {
+            return position + 1; // adjust to index (ViewColumn.ONE => 1)
+        }
+
+        throw new Error('invalid \'EditorGroupColumn\'');
+    }
+}
+
 export function pathOrURIToURI(value: string | URI): URI {
     if (typeof value === 'undefined') {
         return value;
@@ -1213,6 +1496,344 @@ export function pathOrURIToURI(value: string | URI): URI {
 export function pluginToPluginInfo(plugin: Plugin): rpc.PluginInfo {
     return {
         id: plugin.model.id,
-        name: plugin.model.name
+        name: plugin.model.name,
+        displayName: plugin.model.displayName
     };
+}
+
+export namespace InlayHintKind {
+    export function from(kind: theia.InlayHintKind): model.InlayHintKind {
+        return kind;
+    }
+    export function to(kind: model.InlayHintKind): theia.InlayHintKind {
+        return kind;
+    }
+}
+
+export namespace DataTransferItem {
+    export function to(mime: string, item: model.DataTransferItemDTO, resolveFileData: (itemId: string) => Promise<Uint8Array>): theia.DataTransferItem {
+        const file = item.fileData;
+        if (file) {
+            return new class extends types.DataTransferItem {
+                override asFile(): theia.DataTransferFile {
+                    return {
+                        name: file.name,
+                        uri: URI.revive(file.uri),
+                        data: () => resolveFileData(file.id),
+                    };
+                }
+            }('');
+        }
+
+        if (mime === 'text/uri-list' && item.uriListData) {
+            return new types.DataTransferItem(reviveUriList(item.uriListData));
+        }
+
+        return new types.DataTransferItem(item.asString);
+    }
+
+    function reviveUriList(parts: ReadonlyArray<string | UriComponents>): string {
+        return parts.map(part => typeof part === 'string' ? part : URI.revive(part).toString()).join('\r\n');
+    }
+}
+
+export namespace DataTransfer {
+    export function toDataTransfer(value: model.DataTransferDTO, resolveFileData: (itemId: string) => Promise<Uint8Array>): theia.DataTransfer {
+        const dataTransfer = new types.DataTransfer();
+        for (const [mimeType, item] of value.items) {
+            dataTransfer.set(mimeType, DataTransferItem.to(mimeType, item, resolveFileData));
+        }
+        return dataTransfer;
+    }
+}
+
+export namespace NotebookDocumentContentOptions {
+    export function from(options: theia.NotebookDocumentContentOptions | undefined): notebooks.TransientOptions {
+        return {
+            transientOutputs: options?.transientOutputs ?? false,
+            transientCellMetadata: options?.transientCellMetadata ?? {},
+            transientDocumentMetadata: options?.transientDocumentMetadata ?? {},
+        };
+    }
+}
+
+export namespace NotebookStatusBarItem {
+    export function from(item: theia.NotebookCellStatusBarItem, commandsConverter: CommandsConverter, disposables: DisposableCollection): notebooks.NotebookCellStatusBarItem {
+        const command = typeof item.command === 'string' ? { title: '', command: item.command } : item.command;
+        return {
+            alignment: item.alignment === types.NotebookCellStatusBarAlignment.Left ? notebooks.CellStatusbarAlignment.Left : notebooks.CellStatusbarAlignment.Right,
+            command: commandsConverter.toSafeCommand(command, disposables),
+            text: item.text,
+            tooltip: item.tooltip,
+            priority: item.priority
+        };
+    }
+}
+
+export namespace NotebookData {
+
+    export function from(data: theia.NotebookData): rpc.NotebookDataDto {
+        const res: rpc.NotebookDataDto = {
+            metadata: data.metadata ?? Object.create(null),
+            cells: [],
+        };
+        for (const cell of data.cells) {
+            // types.NotebookCellData.validate(cell);
+            res.cells.push(NotebookCellData.from(cell));
+        }
+        return res;
+    }
+
+    export function to(data: rpc.NotebookDataDto): theia.NotebookData {
+        const res = new types.NotebookData(
+            data.cells.map(NotebookCellData.to),
+        );
+        if (!isEmptyObject(data.metadata)) {
+            res.metadata = data.metadata;
+        }
+        return res;
+    }
+}
+
+export namespace NotebookCellData {
+
+    export function from(data: theia.NotebookCellData): rpc.NotebookCellDataDto {
+        return {
+            cellKind: NotebookCellKind.from(data.kind),
+            language: data.languageId,
+            source: data.value,
+            metadata: data.metadata,
+            internalMetadata: NotebookCellExecutionSummary.from(data.executionSummary ?? {}),
+            outputs: data.outputs ? data.outputs.map(NotebookCellOutputConverter.from) : []
+        };
+    }
+
+    export function to(data: rpc.NotebookCellDataDto): theia.NotebookCellData {
+        return new types.NotebookCellData(
+            NotebookCellKind.to(data.cellKind),
+            data.source,
+            data.language,
+            data.outputs ? data.outputs.map(NotebookCellOutput.to) : undefined,
+            data.metadata,
+            data.internalMetadata ? NotebookCellExecutionSummary.to(data.internalMetadata) : undefined
+        );
+    }
+}
+
+export namespace NotebookCellKind {
+    export function from(data: theia.NotebookCellKind): notebooks.CellKind {
+        switch (data) {
+            case types.NotebookCellKind.Markup:
+                return notebooks.CellKind.Markup;
+            case types.NotebookCellKind.Code:
+            default:
+                return notebooks.CellKind.Code;
+        }
+    }
+
+    export function to(data: notebooks.CellKind): theia.NotebookCellKind {
+        switch (data) {
+            case notebooks.CellKind.Markup:
+                return types.NotebookCellKind.Markup;
+            case notebooks.CellKind.Code:
+            default:
+                return types.NotebookCellKind.Code;
+        }
+    }
+}
+
+export namespace NotebookCellOutput {
+    export function from(output: theia.NotebookCellOutput & { outputId: string }): rpc.NotebookOutputDto {
+        return {
+            outputId: output.outputId,
+            items: output.items.map(NotebookCellOutputItem.from),
+            metadata: output.metadata
+        };
+    }
+
+    export function to(output: rpc.NotebookOutputDto): theia.NotebookCellOutput {
+        const items = output.items.map(NotebookCellOutputItem.to);
+        return new types.NotebookCellOutput(items, output.outputId, output.metadata);
+    }
+}
+
+export namespace NotebookCellOutputItem {
+    export function from(item: types.NotebookCellOutputItem): rpc.NotebookOutputItemDto {
+        return {
+            mime: item.mime,
+            valueBytes: BinaryBuffer.wrap(item.data),
+        };
+    }
+
+    export function to(item: rpc.NotebookOutputItemDto): types.NotebookCellOutputItem {
+        return new types.NotebookCellOutputItem(item.valueBytes.buffer, item.mime);
+    }
+}
+
+export namespace NotebookCellOutputConverter {
+    export function from(output: types.NotebookCellOutput): rpc.NotebookOutputDto {
+        return {
+            outputId: output.outputId,
+            items: output.items.map(NotebookCellOutputItem.from),
+            metadata: output.metadata
+        };
+    }
+
+    export function to(output: rpc.NotebookOutputDto): types.NotebookCellOutput {
+        const items = output.items.map(NotebookCellOutputItem.to);
+        return new types.NotebookCellOutput(items, output.outputId, output.metadata);
+    }
+
+    export function ensureUniqueMimeTypes(items: types.NotebookCellOutputItem[], warn: boolean = false): types.NotebookCellOutputItem[] {
+        const seen = new Set<string>();
+        const removeIdx = new Set<number>();
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            // We can have multiple text stream mime types in the same output.
+            if (!seen.has(item.mime) || isTextStreamMime(item.mime)) {
+                seen.add(item.mime);
+                continue;
+            }
+            // duplicated mime types... first has won
+            removeIdx.add(i);
+            if (warn) {
+                console.warn(`DUPLICATED mime type '${item.mime}' will be dropped`);
+            }
+        }
+        if (removeIdx.size === 0) {
+            return items;
+        }
+        return items.filter((_, index) => !removeIdx.has(index));
+    }
+}
+
+export namespace NotebookCellExecutionSummary {
+    export function to(data: notebooks.NotebookCellInternalMetadata): theia.NotebookCellExecutionSummary {
+        return {
+            timing: typeof data.runStartTime === 'number' && typeof data.runEndTime === 'number' ? { startTime: data.runStartTime, endTime: data.runEndTime } : undefined,
+            executionOrder: data.executionOrder,
+            success: data.lastRunSuccess
+        };
+    }
+
+    export function from(data: theia.NotebookCellExecutionSummary): Partial<notebooks.NotebookCellInternalMetadata> {
+        return {
+            lastRunSuccess: data.success,
+            runStartTime: data.timing?.startTime,
+            runEndTime: data.timing?.endTime,
+            executionOrder: data.executionOrder
+        };
+    }
+}
+
+export namespace NotebookRange {
+
+    export function from(range: theia.NotebookRange): CellRange {
+        return { start: range.start, end: range.end };
+    }
+
+    export function to(range: CellRange): types.NotebookRange {
+        return new types.NotebookRange(range.start, range.end);
+    }
+}
+
+export namespace NotebookKernelSourceAction {
+    export function from(item: theia.NotebookKernelSourceAction, commandsConverter: CommandsConverter, disposables: DisposableCollection): rpc.NotebookKernelSourceActionDto {
+        const command = typeof item.command === 'string' ? { title: '', command: item.command } : item.command;
+
+        return {
+            command: commandsConverter.toSafeCommand(command, disposables),
+            label: item.label,
+            description: item.description,
+            detail: item.detail,
+            documentation: item.documentation
+        };
+    }
+}
+
+export namespace TestMessage {
+    export function from(message: theia.TestMessage | readonly theia.TestMessage[]): TestMessageDTO[] {
+        if (isReadonlyArray(message)) {
+            return message.map(msg => TestMessage.from(msg)[0]);
+        }
+        return [{
+            location: fromLocationToLanguageServerLocation(message.location),
+            message: fromMarkdown(message.message)!,
+            expected: message.expectedOutput,
+            actual: message.actualOutput,
+            contextValue: message.contextValue,
+            stackTrace: message.stackTrace && message.stackTrace.map(frame => TestMessageStackFrame.from(frame))
+        }];
+    }
+}
+
+export namespace TestMessageStackFrame {
+    export function from(stackTrace: theia.TestMessageStackFrame): TestMessageStackFrameDTO {
+        return {
+            label: stackTrace.label,
+            position: stackTrace.position,
+            uri: stackTrace?.uri?.toString()
+        };
+    }
+}
+
+export namespace TestItem {
+    export function from(test: theia.TestItem): TestItemDTO {
+        return <TestItemDTO>TestItem.fromPartial(test);
+    }
+
+    export function fromPartial(test: Partial<theia.TestItem>): Partial<TestItemDTO> {
+        const result: Partial<Mutable<TestItemDTO>> = {};
+
+        if ('id' in test) {
+            result.id = test.id;
+        }
+
+        if ('uri' in test) {
+            result.uri = test.uri;
+        }
+
+        if ('label' in test) {
+            result.label = test.label;
+        }
+
+        if ('range' in test) {
+            result.range = fromRange(test.range);
+        }
+
+        if ('sortKey' in test) {
+            result.sortKey = test.sortText;
+        }
+
+        if ('tags' in test) {
+            result.tags = test.tags ? test.tags.map(tag => tag.id) : [];
+        }
+        if ('busy' in test) {
+            result.busy = test.busy!;
+        }
+        if ('sortKey' in test) {
+            result.sortKey = test.sortText;
+        }
+        if ('canResolveChildren' in test) {
+            result.canResolveChildren = test.canResolveChildren!;
+        }
+        if ('description' in test) {
+            result.description = test.description;
+        }
+
+        if ('description' in test) {
+            result.error = test.error;
+        }
+
+        if (test.children) {
+            const children: TestItemDTO[] = [];
+            test.children.forEach(item => {
+                children.push(TestItem.from(item));
+            });
+            result.children = children;
+        }
+
+        return result;
+
+    }
 }

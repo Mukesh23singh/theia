@@ -1,22 +1,23 @@
-/********************************************************************************
- * Copyright (C) 2019 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable } from '@theia/core/shared/inversify';
+import { injectable, inject, named } from '@theia/core/shared/inversify';
 import { Deferred } from '@theia/core/lib/common/promise-util';
 import { MaybePromise } from '@theia/core/lib/common/types';
+import { ILogger } from '@theia/core';
 
 export interface WebviewResourceResponse {
     eTag: string | undefined,
@@ -29,6 +30,9 @@ export interface WebviewResourceResponse {
 @injectable()
 export class WebviewResourceCache {
 
+    @inject(ILogger) @named('plugin-ext:WebviewResourceCache')
+    protected readonly logger: ILogger;
+
     protected readonly cache = new Deferred<Cache | undefined>();
 
     constructor() {
@@ -39,7 +43,7 @@ export class WebviewResourceCache {
         try {
             this.cache.resolve(await caches.open('webview:v1'));
         } catch (e) {
-            console.error('Failed to enable webview caching: ', e);
+            this.logger.error('Failed to enable webview caching: ', e);
             this.cache.resolve(undefined);
         }
     }
@@ -79,7 +83,7 @@ export class WebviewResourceCache {
             return;
         }
         const body = await response.body();
-        await cache.put(url, new Response(body, {
+        await cache.put(url, new Response(new Uint8Array(body), {
             status: 200,
             headers: { 'ETag': response.eTag }
         }));

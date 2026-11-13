@@ -1,32 +1,32 @@
-/********************************************************************************
- * Copyright (C) 2019 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { inject, injectable, optional, postConstruct } from '@theia/core/shared/inversify';
 import { Command, CommandContribution, CommandHandler, CommandRegistry } from '@theia/core/lib/common/command';
-import { DebugSessionManager } from './debug-session-manager';
-import { DebugConfigurationManager } from './debug-configuration-manager';
-import { DebugCommands } from './debug-frontend-application-contribution';
-import { DebugSessionOptions } from './debug-session-options';
+import { DebugSessionManager } from './debug-session-manager.js';
+import { DebugConfigurationManager } from './debug-configuration-manager.js';
+import { DebugCommands } from './debug-commands.js';
+import { DebugSessionOptions } from './debug-session-options.js';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { LabelProvider } from '@theia/core/lib/browser/label-provider';
 import URI from '@theia/core/lib/common/uri';
 import { QuickAccessContribution, QuickAccessProvider, QuickAccessRegistry, QuickInputService, StatusBar, StatusBarAlignment } from '@theia/core/lib/browser';
-import { DebugPreferences } from './debug-preferences';
-import { filterItems, QuickPickItem, QuickPicks } from '@theia/core/lib/browser/quick-input/quick-input-service';
-import { CancellationToken } from '@theia/core/lib/common';
+import { DebugPreferences } from '../common/debug-preferences.js';
+import { filterItems, QuickPickItemOrSeparator, QuickPicks } from '@theia/core/lib/browser/quick-input/quick-input-service';
+import { CancellationToken, nls } from '@theia/core/lib/common';
 
 @injectable()
 export class DebugPrefixConfiguration implements CommandContribution, CommandHandler, QuickAccessContribution, QuickAccessProvider {
@@ -61,14 +61,14 @@ export class DebugPrefixConfiguration implements CommandContribution, CommandHan
 
     readonly statusBarId = 'select-run-debug-statusbar-item';
 
-    private readonly command: Command = {
+    private readonly command = Command.toDefaultLocalizedCommand({
         id: 'select.debug.configuration',
-        category: 'Debug',
+        category: DebugCommands.DEBUG_CATEGORY,
         label: 'Select and Start Debugging'
-    };
+    });
 
     @postConstruct()
-    protected initialize(): void {
+    protected init(): void {
         this.handleDebugStatusBarVisibility();
         this.preference.onPreferenceChanged(e => {
             if (e.preferenceName === 'debug.showInStatusBar') {
@@ -103,39 +103,43 @@ export class DebugPrefixConfiguration implements CommandContribution, CommandHan
             getInstance: () => this,
             prefix: DebugPrefixConfiguration.PREFIX,
             placeholder: '',
-            helpEntries: [{ description: 'Debug Configuration', needsEditor: false }]
+            helpEntries: [{ description: nls.localize('theia/debug/debugConfiguration', 'Debug Configuration'), needsEditor: false }]
         });
     }
 
+    protected resolveRootFolderName(uri: string | undefined): string | undefined {
+        return uri && this.workspaceService.isMultiRootWorkspaceOpened
+            ? this.labelProvider.getName(new URI(uri))
+            : '';
+    }
+
     async getPicks(filter: string, token: CancellationToken): Promise<QuickPicks> {
-        const items: QuickPickItem[] = [];
+        const items: QuickPickItemOrSeparator[] = [];
         const configurations = this.debugConfigurationManager.all;
 
         for (const config of configurations) {
             items.push({
-                label: config.configuration.name,
-                description: this.workspaceService.isMultiRootWorkspaceOpened
-                    ? this.labelProvider.getName(new URI(config.workspaceFolderUri))
-                    : '',
+                label: config.name,
+                description: this.resolveRootFolderName(config.workspaceFolderUri),
                 execute: () => this.runConfiguration(config)
             });
         }
 
         // Resolve dynamic configurations from providers
-        const configurationsByType = await this.debugConfigurationManager.provideDynamicDebugConfigurations();
-        for (const typeConfigurations of configurationsByType) {
-            const dynamicConfigurations = typeConfigurations.configurations;
-            if (dynamicConfigurations.length > 0) {
+        const record = await this.debugConfigurationManager.provideDynamicDebugConfigurations();
+        for (const [providerType, configurationOptions] of Object.entries(record)) {
+            if (configurationOptions.length > 0) {
                 items.push({
-                    label: typeConfigurations.type,
+                    label: providerType,
                     type: 'separator'
                 });
             }
 
-            for (const configuration of dynamicConfigurations) {
+            for (const options of configurationOptions) {
                 items.push({
-                    label: configuration.name,
-                    execute: () => this.runConfiguration({configuration})
+                    label: options.name,
+                    description: this.resolveRootFolderName(options.workspaceFolderUri),
+                    execute: () => this.runConfiguration({ name: options.name, configuration: options.configuration, providerType, workspaceFolderUri: options.workspaceFolderUri })
                 });
             }
         }
@@ -146,10 +150,10 @@ export class DebugPrefixConfiguration implements CommandContribution, CommandHan
     /**
      * Set the current debug configuration, and execute debug start command.
      *
-     * @param configuration the `DebugSessionOptions`.
+     * @param configurationOptions the `DebugSessionOptions`.
      */
-    protected runConfiguration(configuration: DebugSessionOptions): void {
-        this.debugConfigurationManager.current = { ...configuration };
+    protected runConfiguration(configurationOptions: DebugSessionOptions): void {
+        this.debugConfigurationManager.current = configurationOptions;
         this.commandRegistry.executeCommand(DebugCommands.START.id);
     }
 
@@ -171,7 +175,7 @@ export class DebugPrefixConfiguration implements CommandContribution, CommandHan
      */
     protected updateStatusBar(): void {
         const text: string = this.debugConfigurationManager.current
-            ? this.debugConfigurationManager.current.configuration.name
+            ? this.debugConfigurationManager.current.name
             : '';
         const icon = '$(codicon-debug-alt-small)';
         this.statusBar.setElement(this.statusBarId, {

@@ -1,34 +1,34 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { inject, injectable } from '@theia/core/shared/inversify';
+import { inject, injectable, named } from '@theia/core/shared/inversify';
 import URI from '@theia/core/lib/common/uri';
-import { ILogger } from '@theia/core/lib/common/logger';
 import { Endpoint } from '@theia/core/lib/browser/endpoint';
-import { FileDownloadData } from '../../common/download/file-download-data';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { addClipboardListener } from '@theia/core/lib/browser/widgets';
+import { ILogger, nls } from '@theia/core';
+import type { FileDownloadData, FileDownloadService } from '../../common/download/file-download.js';
 
 @injectable()
-export class FileDownloadService {
+export class FileDownloadServiceImpl implements FileDownloadService {
 
     protected anchor: HTMLAnchorElement | undefined;
     protected downloadCounter: number = 0;
 
-    @inject(ILogger)
+    @inject(ILogger) @named('filesystem:FileDownloadServiceImpl')
     protected readonly logger: ILogger;
 
     @inject(MessageService)
@@ -38,7 +38,7 @@ export class FileDownloadService {
         if (downloadUrl && event.clipboardData) {
             event.clipboardData.setData('text/plain', downloadUrl);
             event.preventDefault();
-            this.messageService.info('Copied the download link to the clipboard.');
+            this.messageService.info(nls.localize('theia/filesystem/copiedToClipboard', 'Copied the download link to the clipboard.'));
         }
     }
 
@@ -48,14 +48,21 @@ export class FileDownloadService {
 
     async download(uris: URI[], options?: FileDownloadService.DownloadOptions): Promise<void> {
         let cancel = false;
+
         if (uris.length === 0) {
             return;
         }
+
         const copyLink = options && options.copyLink ? true : false;
+
         try {
+            const text: string = copyLink ?
+                nls.localize('theia/filesystem/prepareDownloadLink', 'Preparing download link...') :
+                nls.localize('theia/filesystem/prepareDownload', 'Preparing download...');
             const [progress, result] = await Promise.all([
                 this.messageService.showProgress({
-                    text: `Preparing download${copyLink ? ' link' : ''}...`, options: { cancelable: true }
+                    text: text,
+                    options: { cancelable: true }
                 }, () => { cancel = true; }),
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 new Promise<{ response: Response, jsonResponse: any }>(async resolve => {
@@ -145,7 +152,6 @@ export class FileDownloadService {
     protected url(uris: URI[]): string {
         const endpoint = this.endpoint();
         if (uris.length === 1) {
-            // tslint:disable-next-line:whitespace
             const [uri,] = uris;
             return `${endpoint}/?uri=${uri.toString()}`;
         }
@@ -162,13 +168,4 @@ export class FileDownloadService {
         return new Endpoint({ path: 'files' }).getRestUrl().toString();
     }
 
-}
-
-export namespace FileDownloadService {
-    export interface DownloadOptions {
-        /**
-         * `true` if the download link has to be copied to the clipboard. This will not trigger the actual download. Defaults to `false`.
-         */
-        readonly copyLink?: boolean;
-    }
 }

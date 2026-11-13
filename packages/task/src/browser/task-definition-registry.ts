@@ -1,23 +1,23 @@
-/********************************************************************************
- * Copyright (C) 2019 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable } from '@theia/core/shared/inversify';
-import { JSONExt } from '@theia/core/shared/@phosphor/coreutils';
+import { JSONExt } from '@theia/core/shared/@lumino/coreutils';
 import { Event, Emitter } from '@theia/core/lib/common';
-import { TaskConfiguration, TaskDefinition, TaskCustomization } from '../common';
+import { TaskConfiguration, TaskDefinition, TaskCustomization } from '../common/index.js';
 import { Disposable } from '@theia/core/lib/common/disposable';
 
 @injectable()
@@ -111,6 +111,9 @@ export class TaskDefinitionRegistry {
         const oneType = one.type;
         const otherType = other.type;
         if (oneType !== otherType) {
+            return false;
+        }
+        if (one['taskType'] !== other['taskType']) {
             return false;
         }
         const def = this.getDefinition(one);

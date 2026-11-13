@@ -1,35 +1,34 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import {
     FolderPreferenceProvider,
     FolderPreferenceProviderFactory,
     FolderPreferenceProviderFolder,
-    UserPreferenceProvider,
-    UserPreferenceProviderFactory
 } from '@theia/preferences/lib/browser';
 import { Container, injectable, interfaces } from '@theia/core/shared/inversify';
-import { extensionsConfigurationSchema } from './recommended-extensions-json-schema';
+import { extensionsConfigurationSchema } from './recommended-extensions-json-schema.js';
 import {
     WorkspaceFilePreferenceProvider,
     WorkspaceFilePreferenceProviderFactory,
     WorkspaceFilePreferenceProviderOptions
 } from '@theia/preferences/lib/browser/workspace-file-preference-provider';
-import { bindFactory } from '@theia/preferences/lib/browser/preference-bindings';
-import { SectionPreferenceProviderSection, SectionPreferenceProviderUri } from '@theia/preferences/lib/browser/section-preference-provider';
+import { SectionPreferenceProviderUri, SectionPreferenceProviderSection } from '@theia/preferences/lib/common/section-preference-provider';
+import { UserPreferenceProvider, UserPreferenceProviderFactory } from '@theia/preferences/lib/common/user-preference-provider';
+import { bindFactory } from '@theia/core';
 
 /**
  * The overrides in this file are required because the base preference providers assume that a
@@ -38,8 +37,8 @@ import { SectionPreferenceProviderSection, SectionPreferenceProviderUri } from '
 
 @injectable()
 export class FolderPreferenceProviderWithExtensions extends FolderPreferenceProvider {
-    protected getPath(preferenceName: string): string[] | undefined {
-        const path = super.getPath(preferenceName);
+    protected override getPath(preferenceName: string, overrideIdentifier?: string): string[] | undefined {
+        const path = super.getPath(preferenceName, overrideIdentifier);
         if (this.section !== 'extensions' || !path?.length) {
             return path;
         }
@@ -53,8 +52,8 @@ export class FolderPreferenceProviderWithExtensions extends FolderPreferenceProv
 
 @injectable()
 export class UserPreferenceProviderWithExtensions extends UserPreferenceProvider {
-    protected getPath(preferenceName: string): string[] | undefined {
-        const path = super.getPath(preferenceName);
+    protected override getPath(preferenceName: string, overrideIdentifier?: string): string[] | undefined {
+        const path = super.getPath(preferenceName, overrideIdentifier);
         if (this.section !== 'extensions' || !path?.length) {
             return path;
         }
@@ -68,7 +67,7 @@ export class UserPreferenceProviderWithExtensions extends UserPreferenceProvider
 
 @injectable()
 export class WorkspaceFilePreferenceProviderWithExtensions extends WorkspaceFilePreferenceProvider {
-    protected belongsInSection(firstSegment: string, remainder: string): boolean {
+    protected override belongsInSection(firstSegment: string, remainder: string): boolean {
         if (firstSegment === 'extensions') {
             return remainder in extensionsConfigurationSchema.properties!;
         }

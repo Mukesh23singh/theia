@@ -1,35 +1,37 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { TextEditorsExt, EditorChangedPropertiesData, TextEditorPositionData, TextEditorsMain, PLUGIN_RPC_CONTEXT } from '../common/plugin-api-rpc';
-import { RPCProtocol } from '../common/rpc-protocol';
+import {
+    TextEditorsExt, EditorChangedPropertiesData, TextEditorPositionData, TextEditorsMain, PLUGIN_RPC_CONTEXT, TextEditorDiffInformationDto
+} from '../common/plugin-api-rpc.js';
+import { RPCProtocol } from '../common/rpc-protocol.js';
 import * as theia from '@theia/plugin';
 import { Emitter, Event } from '@theia/core/lib/common/event';
-import { EditorsAndDocumentsExtImpl } from './editors-and-documents';
-import { TextEditorExt } from './text-editor';
-import * as Converters from './type-converters';
-import { TextEditorSelectionChangeKind } from './types-impl';
-import { IdGenerator } from '../common/id-generator';
+import { EditorsAndDocumentsExtImpl } from './editors-and-documents.js';
+import { TextEditorExt } from './text-editor.js';
+import * as Converters from './type-converters.js';
+import { TextEditorChangeKind, TextEditorSelectionChangeKind, URI } from './types-impl.js';
+import { IdGenerator } from '../common/id-generator.js';
 
 export class TextEditorsExtImpl implements TextEditorsExt {
-
     private readonly _onDidChangeTextEditorSelection = new Emitter<theia.TextEditorSelectionChangeEvent>();
     private readonly _onDidChangeTextEditorOptions = new Emitter<theia.TextEditorOptionsChangeEvent>();
     private readonly _onDidChangeTextEditorVisibleRanges = new Emitter<theia.TextEditorVisibleRangesChangeEvent>();
     private readonly _onDidChangeTextEditorViewColumn = new Emitter<theia.TextEditorViewColumnChangeEvent>();
+    private readonly _onDidChangeTextEditorDiffInformation = new Emitter<theia.TextEditorDiffInformationChangeEvent>();
     private readonly _onDidChangeActiveTextEditor = new Emitter<theia.TextEditor | undefined>();
     private readonly _onDidChangeVisibleTextEditors = new Emitter<theia.TextEditor[]>();
 
@@ -37,6 +39,7 @@ export class TextEditorsExtImpl implements TextEditorsExt {
     readonly onDidChangeTextEditorOptions = this._onDidChangeTextEditorOptions.event;
     readonly onDidChangeTextEditorVisibleRanges = this._onDidChangeTextEditorVisibleRanges.event;
     readonly onDidChangeTextEditorViewColumn = this._onDidChangeTextEditorViewColumn.event;
+    readonly onDidChangeTextEditorDiffInformation = this._onDidChangeTextEditorDiffInformation.event;
     readonly onDidChangeActiveTextEditor = this._onDidChangeActiveTextEditor.event;
     readonly onDidChangeVisibleTextEditors = this._onDidChangeVisibleTextEditors.event;
 
@@ -111,6 +114,81 @@ export class TextEditorsExtImpl implements TextEditorsExt {
         return this.editorsAndDocuments.activeEditor();
     }
 
+    async getDiffInformation(): Promise<theia.LineChange[]> {
+        const activeEditor = this.getActiveEditor();
+        if (!activeEditor) {
+            return [];
+        }
+        return activeEditor.getDiffInformation();
+    }
+
+    $acceptEditorDiffInformation(id: string, diffInformation: TextEditorDiffInformationDto[] | undefined): void {
+        const textEditor = this.editorsAndDocuments.getEditor(id);
+        if (!textEditor) {
+            throw new Error('unknown text editor');
+        }
+
+        if (!diffInformation) {
+            textEditor._acceptDiffInformation(undefined);
+            this._onDidChangeTextEditorDiffInformation.fire({
+                textEditor: textEditor,
+                diffInformation: undefined
+            });
+            return;
+        }
+
+        const that = this;
+        const result = diffInformation.map(diff => {
+            const original = URI.revive(diff.original);
+            const modified = URI.revive(diff.modified);
+
+            const changes = diff.changes.map(change => {
+                const originalStartLineNumber = change.original.startLineNumber;
+                const originalEndLineNumberExclusive = change.original.endLineNumberExclusive;
+                const modifiedStartLineNumber = change.modified.startLineNumber;
+                const modifiedEndLineNumberExclusive = change.modified.endLineNumberExclusive;
+
+                let kind: TextEditorChangeKind;
+                if (change.original.startLineNumber === originalEndLineNumberExclusive) {
+                    kind = TextEditorChangeKind.Addition;
+                } else if (modifiedStartLineNumber === modifiedEndLineNumberExclusive) {
+                    kind = TextEditorChangeKind.Deletion;
+                } else {
+                    kind = TextEditorChangeKind.Modification;
+                }
+
+                return {
+                    original: {
+                        startLineNumber: originalStartLineNumber,
+                        endLineNumberExclusive: originalEndLineNumberExclusive
+                    },
+                    modified: {
+                        startLineNumber: modifiedStartLineNumber,
+                        endLineNumberExclusive: modifiedEndLineNumberExclusive
+                    },
+                    kind
+                } satisfies theia.TextEditorChange;
+            });
+
+            return Object.freeze({
+                documentVersion: diff.documentVersion,
+                original,
+                modified,
+                changes,
+                get isStale(): boolean {
+                    const document = that.editorsAndDocuments.getDocument(modified.toString());
+                    return document?.document.version !== diff.documentVersion;
+                }
+            });
+        });
+
+        textEditor._acceptDiffInformation(result);
+        this._onDidChangeTextEditorDiffInformation.fire({
+            textEditor: textEditor,
+            diffInformation: result
+        });
+    }
+
     getVisibleTextEditors(): theia.TextEditor[] {
         return this.editorsAndDocuments.allEditors();
     }
@@ -119,9 +197,17 @@ export class TextEditorsExtImpl implements TextEditorsExt {
         return new TextEditorDecorationType(this.proxy, options);
     }
 
-    applyWorkspaceEdit(edit: theia.WorkspaceEdit): Promise<boolean> {
+    applyWorkspaceEdit(edit: theia.WorkspaceEdit, metadata?: theia.WorkspaceEditMetadata): Promise<boolean> {
         const dto = Converters.fromWorkspaceEdit(edit, this.editorsAndDocuments);
-        return this.proxy.$tryApplyWorkspaceEdit(dto);
+        return this.proxy.$tryApplyWorkspaceEdit(dto, metadata);
+    }
+
+    save(uri: theia.Uri): PromiseLike<theia.Uri | undefined> {
+        return this.proxy.$save(uri).then(components => URI.revive(components));
+    }
+
+    saveAs(uri: theia.Uri): PromiseLike<theia.Uri | undefined> {
+        return this.proxy.$saveAs(uri).then(components => URI.revive(components));
     }
 
     saveAll(includeUntitled?: boolean): PromiseLike<boolean> {

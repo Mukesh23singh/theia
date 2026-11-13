@@ -8,11 +8,14 @@
     }
   },
   "plugins": [
+    "@stylistic",
     "@theia",
     "@typescript-eslint",
-    "@typescript-eslint/tslint",
     "import",
-    "no-null"
+    "jsdoc",
+    "no-null",
+    "eslint-plugin-react",
+    "eslint-plugin-no-unsanitized"
   ],
   "env": {
     "browser": true,

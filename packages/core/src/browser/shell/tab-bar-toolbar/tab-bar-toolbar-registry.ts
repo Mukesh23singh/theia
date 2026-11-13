@@ -1,0 +1,282 @@
+// *****************************************************************************
+// Copyright (C) 2022 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
+
+import debounce from '../../../../shared/lodash.debounce/index.cjs';
+import { inject, injectable, named } from 'inversify';
+// eslint-disable-next-line max-len
+import { CommandRegistry, ContributionProvider, Disposable, DisposableCollection, Emitter, Event, MenuModelRegistry, MenuPath, ILogger } from '../../../common/index.js';
+import { ContextKeyService, ContextMatcher } from '../../context-key-service.js';
+import { FrontendApplicationContribution } from '../../frontend-application-contribution.js';
+import { Widget } from '../../widgets/index.js';
+import { Navigatable } from '../../navigatable-types.js';
+import { ResourceContextKey } from '../../resource-context-key.js';
+import { WidgetContextKeyContribution } from '../../widget-context-key-contribution.js';
+import { ReactTabBarToolbarAction, RenderedToolbarAction } from './tab-bar-toolbar-types.js';
+import { CommandMenuAsToolbarItemWrapper, SubmenuAsToolbarItemWrapper, ToolbarActionWrapper } from './tab-bar-toolbar-menu-adapters.js';
+import { KeybindingRegistry } from '../../keybinding.js';
+import { LabelParser } from '../../label-parser.js';
+import { ContextMenuRenderer } from '../../context-menu-renderer.js';
+import { CommandMenu, CompoundMenuNode, MenuNode, RenderedMenuNode } from '../../../common/menu/index.js';
+import { ReactToolbarItemImpl, RenderedToolbarItemImpl, TabBarToolbarItem } from './tab-toolbar-item.js';
+
+/**
+ * Clients should implement this interface if they want to contribute to the tab-bar toolbar.
+ */
+export const TabBarToolbarContribution = Symbol('TabBarToolbarContribution');
+/**
+ * Representation of a tabbar toolbar contribution.
+ */
+export interface TabBarToolbarContribution {
+    /**
+     * Registers toolbar items.
+     * @param registry the tabbar toolbar registry.
+     */
+    registerToolbarItems(registry: TabBarToolbarRegistry): void;
+}
+
+const menuDelegateSeparator = '=@=';
+interface MenuDelegate {
+    menuPath: MenuPath;
+    isVisible(widget?: Widget): boolean;
+}
+/**
+ * Main, shared registry for tab-bar toolbar items.
+ */
+@injectable()
+export class TabBarToolbarRegistry implements FrontendApplicationContribution {
+
+    protected items = new Map<string, TabBarToolbarItem>();
+    protected menuDelegates = new Map<string, MenuDelegate>();
+
+    @inject(CommandRegistry) protected readonly commandRegistry: CommandRegistry;
+    @inject(ContextKeyService) protected readonly contextKeyService: ContextKeyService;
+    @inject(MenuModelRegistry) protected readonly menuRegistry: MenuModelRegistry;
+    @inject(KeybindingRegistry) protected readonly keybindingRegistry: KeybindingRegistry;
+    @inject(LabelParser) protected readonly labelParser: LabelParser;
+    @inject(ContextMenuRenderer) protected readonly contextMenuRenderer: ContextMenuRenderer;
+
+    @inject(ResourceContextKey) protected readonly resourceContextKey: ResourceContextKey;
+
+    @inject(ContributionProvider) @named(TabBarToolbarContribution)
+    protected readonly contributionProvider: ContributionProvider<TabBarToolbarContribution>;
+
+    @inject(ContributionProvider) @named(WidgetContextKeyContribution)
+    protected readonly contextKeyContributionProvider: ContributionProvider<WidgetContextKeyContribution>;
+
+    @inject(ILogger) @named('core:TabBarToolbarRegistry')
+    protected readonly logger: ILogger;
+
+    protected readonly onDidChangeEmitter = new Emitter<void>();
+    readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
+    // debounce in order to avoid to fire more than once in the same tick
+    protected fireOnDidChange = debounce(() => this.onDidChangeEmitter.fire(undefined), 0);
+
+    onStart(): void {
+        const contributions = this.contributionProvider.getContributions();
+        for (const contribution of contributions) {
+            contribution.registerToolbarItems(this);
+        }
+    }
+
+    /**
+     * Registers the given item. Throws an error, if the corresponding command cannot be found or an item has been already registered for the desired command.
+     *
+     * @param item the item to register.
+     */
+    registerItem(item: RenderedToolbarAction | ReactTabBarToolbarAction): Disposable {
+        if (ReactTabBarToolbarAction.is(item)) {
+            return this.doRegisterItem(new ReactToolbarItemImpl(this.commandRegistry, this.contextKeyService, item));
+        } else {
+            if (item.menuPath) {
+                return this.doRegisterItem(new ToolbarActionWrapper(item.menuPath,
+                    this.commandRegistry, this.menuRegistry, this.contextKeyService, this.contextMenuRenderer, item));
+            } else {
+                const wrapper = new RenderedToolbarItemImpl(this.commandRegistry, this.contextKeyService, this.keybindingRegistry, this.labelParser, item);
+                const disposables = this.doRegisterItem(wrapper);
+                disposables.push(wrapper);
+                return disposables;
+            }
+        }
+    }
+
+    doRegisterItem(item: TabBarToolbarItem): DisposableCollection {
+        if (this.items.has(item.id)) {
+            throw new Error(`A toolbar item is already registered with the '${item.id}' ID.`);
+        }
+        this.items.set(item.id, item);
+        this.fireOnDidChange();
+        const toDispose = new DisposableCollection(
+            Disposable.create(() => {
+                this.items.delete(item.id);
+                this.fireOnDidChange();
+            })
+        );
+
+        if (item.onDidChange) {
+            toDispose.push(item.onDidChange(() => this.fireOnDidChange()));
+        }
+        return toDispose;
+    }
+
+    /**
+     * Returns an array of tab-bar toolbar items which are visible when the `widget` argument is the current one.
+     *
+     * By default returns with all items where the command is enabled and `item.isVisible` is `true`.
+     */
+    visibleItems(widget: Widget): Array<TabBarToolbarItem> {
+        if (widget.isDisposed) {
+            return [];
+        }
+        const result: Array<TabBarToolbarItem> = [];
+        const contextMatcher = this.contextMatcherFor(widget);
+        for (const item of this.items.values()) {
+            if (item.isVisible(widget, contextMatcher)) {
+                result.push(item);
+            }
+        }
+
+        for (const delegate of this.menuDelegates.values()) {
+            if (delegate.isVisible(widget)) {
+                const menu = this.menuRegistry.getMenu(delegate.menuPath);
+                if (menu) {
+                    for (const child of menu.children) {
+                        if (child.isVisible([...delegate.menuPath, child.id], contextMatcher, widget.node, widget)) {
+                            if (CompoundMenuNode.is(child)) {
+                                for (const grandchild of child.children) {
+                                    if (grandchild.isVisible([...delegate.menuPath, child.id, grandchild.id],
+                                        contextMatcher, widget.node, widget) && RenderedMenuNode.is(grandchild)) {
+                                        if (CommandMenu.is(grandchild)) {
+                                            result.push(new CommandMenuAsToolbarItemWrapper([...delegate.menuPath, child.id, grandchild.id], this.commandRegistry,
+                                                this.menuRegistry, this.contextKeyService, this.contextMenuRenderer, grandchild, child.id));
+                                        } else if (CompoundMenuNode.is(grandchild)) {
+                                            result.push(new SubmenuAsToolbarItemWrapper([...delegate.menuPath, child.id, grandchild.id], this.commandRegistry, this.menuRegistry,
+                                                this.contextKeyService, this.contextMenuRenderer, grandchild, child.id));
+                                        }
+
+                                    }
+                                }
+                            } else if (CommandMenu.is(child)) {
+                                result.push(new CommandMenuAsToolbarItemWrapper([...delegate.menuPath, child.id], this.commandRegistry, this.menuRegistry,
+                                    this.contextKeyService, this.contextMenuRenderer, child, undefined));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * A matcher that evaluates `when` clauses against the given widget rather than against whichever widget
+     * currently holds the focus. Keys that describe no aspect of the widget keep their ambient value, and the
+     * context scoped to the widget's DOM node is still consulted for the keys the overlay does not define.
+     */
+    contextMatcherFor(widget: Widget): ContextMatcher {
+        const overlay = new Map<string, unknown>();
+        if (Navigatable.is(widget)) {
+            for (const [key, value] of Object.entries(this.resourceContextKey.toValues(widget.getResourceUri()))) {
+                overlay.set(key, value);
+            }
+        }
+        for (const contribution of this.contextKeyContributionProvider.getContributions()) {
+            const entries = contribution.getContextKeyValues(widget);
+            if (entries) {
+                for (const [key, value] of entries) {
+                    overlay.set(key, value);
+                }
+            }
+        }
+        return overlay.size ? this.contextKeyService.createOverlay(overlay) : this.contextKeyService;
+    }
+
+    /**
+     * Collects all context keys referenced by toolbar items and delegated menu nodes
+     * that may participate in rendering for the given widget.
+     */
+    collectContextKeys(widget: Widget): Set<string> {
+        const contextKeys = new Set<string>();
+        if (widget.isDisposed) {
+            return contextKeys;
+        }
+
+        for (const item of this.items.values()) {
+            if (item.when) {
+                this.contextKeyService.parseKeys(item.when)?.forEach(key => contextKeys.add(key));
+            }
+        }
+
+        for (const delegate of this.menuDelegates.values()) {
+            if (!delegate.isVisible(widget)) {
+                continue;
+            }
+            const menu = this.menuRegistry.getMenu(delegate.menuPath);
+            if (menu) {
+                this.collectMenuContextKeys(menu, contextKeys);
+            }
+        }
+        return contextKeys;
+    }
+
+    protected collectMenuContextKeys(menuNode: MenuNode, contextKeys: Set<string>): void {
+        if (menuNode.when) {
+            this.contextKeyService.parseKeys(menuNode.when)?.forEach(key => contextKeys.add(key));
+        }
+        if (CompoundMenuNode.is(menuNode)) {
+            for (const child of menuNode.children) {
+                this.collectMenuContextKeys(child, contextKeys);
+            }
+        }
+    }
+
+    unregisterItem(id: string): void {
+        if (this.items.delete(id)) {
+            this.fireOnDidChange();
+        }
+    }
+
+    registerMenuDelegate(menuPath: MenuPath, when?: ((widget: Widget) => boolean)): Disposable {
+        const id = this.toElementId(menuPath);
+        if (!this.menuDelegates.has(id)) {
+
+            this.menuDelegates.set(id, {
+                menuPath, isVisible: (widget: Widget) => !when || when(widget)
+            });
+            this.fireOnDidChange();
+            return { dispose: () => this.unregisterMenuDelegate(menuPath) };
+        }
+        this.logger.warn('Unable to register menu delegate. Delegate has already been registered', menuPath);
+        return Disposable.NULL;
+    }
+
+    unregisterMenuDelegate(menuPath: MenuPath): void {
+        if (this.menuDelegates.delete(this.toElementId(menuPath))) {
+            this.fireOnDidChange();
+        }
+    }
+
+    /**
+     * Generate a single ID string from a menu path that
+     * is likely to be unique amongst the items in the toolbar.
+     *
+     * @param menuPath a menubar path
+     * @returns a likely unique ID based on the path
+     */
+    toElementId(menuPath: MenuPath): string {
+        return menuPath.join(menuDelegateSeparator);
+    }
+
+}

@@ -1,36 +1,36 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import debounce = require('@theia/core/shared/lodash.debounce');
+import debounce from '@theia/core/shared/lodash.debounce';
 import { URI } from '@theia/core/shared/vscode-uri';
 import { interfaces } from '@theia/core/shared/inversify';
-import { WebviewsMain, MAIN_RPC_CONTEXT, WebviewsExt, WebviewPanelViewState } from '../../common/plugin-api-rpc';
-import { RPCProtocol } from '../../common/rpc-protocol';
+import { WebviewsMain, MAIN_RPC_CONTEXT, WebviewsExt, WebviewPanelViewState, ThemeIcon } from '../../common/plugin-api-rpc.js';
+import { RPCProtocol } from '../../common/rpc-protocol.js';
 import { WebviewOptions, WebviewPanelOptions, WebviewPanelShowOptions } from '@theia/plugin';
 import { ApplicationShell } from '@theia/core/lib/browser/shell/application-shell';
-import { WebviewWidget, WebviewWidgetIdentifier } from './webview/webview';
+import { WebviewWidget, WebviewWidgetIdentifier } from './webview/webview.js';
 import { Disposable, DisposableCollection } from '@theia/core/lib/common/disposable';
-import { ViewColumnService } from './view-column-service';
+import { ViewColumnService } from '@theia/core/lib/browser/shell/view-column-service';
 import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
-import { JSONExt } from '@theia/core/shared/@phosphor/coreutils';
+import { JSONExt } from '@theia/core/shared/@lumino/coreutils';
 import { Mutable } from '@theia/core/lib/common/types';
-import { HostedPluginSupport } from '../../hosted/browser/hosted-plugin';
-import { IconUrl } from '../../common/plugin-protocol';
-import { CustomEditorWidget } from './custom-editors/custom-editor-widget';
-import { ViewColumn, WebviewPanelTargetArea } from '../../plugin/types-impl';
+import { HostedPluginSupport } from '../../hosted/browser/hosted-plugin.js';
+import { IconUrl } from '../../common/plugin-protocol.js';
+import { CustomEditorWidget } from './custom-editors/custom-editor-widget.js';
+import { ViewColumn, WebviewPanelTargetArea } from '../../plugin/types-impl.js';
 
 export class WebviewsMainImpl implements WebviewsMain, Disposable {
 
@@ -63,14 +63,15 @@ export class WebviewsMainImpl implements WebviewsMain, Disposable {
         showOptions: WebviewPanelShowOptions,
         options: WebviewPanelOptions & WebviewOptions
     ): Promise<void> {
-        const view = await this.widgetManager.getOrCreateWidget<WebviewWidget>(WebviewWidget.FACTORY_ID, <WebviewWidgetIdentifier>{ id: panelId });
+        const view = await this.widgetManager.getOrCreateWidget<WebviewWidget>(WebviewWidget.FACTORY_ID, <WebviewWidgetIdentifier>{ id: panelId, viewId: viewType });
         this.hookWebview(view);
         view.viewType = viewType;
         view.title.label = title;
-        const { enableFindWidget, retainContextWhenHidden, enableScripts, localResourceRoots, ...contentOptions } = options;
+        const { enableFindWidget, retainContextWhenHidden, enableScripts, enableForms, localResourceRoots, ...contentOptions } = options;
         view.options = { enableFindWidget, retainContextWhenHidden };
         view.setContentOptions({
             allowScripts: enableScripts,
+            allowForms: enableForms,
             localResourceRoots: localResourceRoots && localResourceRoots.map(root => root.toString()),
             ...contentOptions
         });
@@ -134,8 +135,8 @@ export class WebviewsMainImpl implements WebviewsMain, Disposable {
     }
 
     async $reveal(handle: string, showOptions: WebviewPanelShowOptions): Promise<void> {
-        const widget = await this.getWebview(handle);
-        if (widget.isDisposed) {
+        const widget = await this.tryGetWebview(handle);
+        if (!widget || widget.isDisposed) {
             return;
         }
         if ((showOptions.viewColumn !== undefined && showOptions.viewColumn !== widget.viewState.position) || showOptions.area !== undefined) {
@@ -155,25 +156,31 @@ export class WebviewsMainImpl implements WebviewsMain, Disposable {
     }
 
     async $setTitle(handle: string, value: string): Promise<void> {
-        const webview = await this.getWebview(handle);
-        webview.title.label = value;
+        const webview = await this.tryGetWebview(handle);
+        if (webview) {
+            webview.title.label = value;
+        }
     }
 
-    async $setIconPath(handle: string, iconUrl: IconUrl | undefined): Promise<void> {
-        const webview = await this.getWebview(handle);
-        webview.setIconUrl(iconUrl);
+    async $setIconPath(handle: string, iconUrl: IconUrl | ThemeIcon | undefined): Promise<void> {
+        const webview = await this.tryGetWebview(handle);
+        webview?.setIconUrl(iconUrl);
     }
 
     async $setHtml(handle: string, value: string): Promise<void> {
-        const webview = await this.getWebview(handle);
-        webview.setHTML(value);
+        const webview = await this.tryGetWebview(handle);
+        webview?.setHTML(value);
     }
 
     async $setOptions(handle: string, options: WebviewOptions): Promise<void> {
-        const webview = await this.getWebview(handle);
-        const { enableScripts, localResourceRoots, ...contentOptions } = options;
+        const webview = await this.tryGetWebview(handle);
+        if (!webview) {
+            return;
+        }
+        const { enableScripts, enableForms, localResourceRoots, ...contentOptions } = options;
         webview.setContentOptions({
             allowScripts: enableScripts,
+            allowForms: enableForms,
             localResourceRoots: localResourceRoots && localResourceRoots.map(root => root.toString()),
             ...contentOptions
         });
@@ -181,7 +188,10 @@ export class WebviewsMainImpl implements WebviewsMain, Disposable {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async $postMessage(handle: string, value: any): Promise<boolean> {
-        const webview = await this.getWebview(handle);
+        const webview = await this.tryGetWebview(handle);
+        if (!webview) {
+            return false;
+        }
         webview.sendMessage(value);
         return true;
     }
@@ -210,10 +220,11 @@ export class WebviewsMainImpl implements WebviewsMain, Disposable {
         }
 
         const options = widget.options;
-        const { allowScripts, localResourceRoots, ...contentOptions } = widget.contentOptions;
+        const { allowScripts, allowForms, localResourceRoots, ...contentOptions } = widget.contentOptions;
         this.updateViewState(widget);
         await this.proxy.$deserializeWebviewPanel(handle, widget.viewType, title, state, widget.viewState, {
             enableScripts: allowScripts,
+            enableForms: allowForms,
             localResourceRoots: localResourceRoots && localResourceRoots.map(root => URI.parse(root)),
             ...contentOptions,
             ...options
@@ -249,16 +260,21 @@ export class WebviewsMainImpl implements WebviewsMain, Disposable {
         this.proxy.$onDidChangeWebviewPanelViewState(widget.identifier.id, widget.viewState);
     }
 
-    private async getWebview(viewId: string): Promise<WebviewWidget> {
-        const webview = await this.tryGetWebview(viewId);
-        if (!webview) {
-            throw new Error(`Unknown Webview: ${viewId}`);
-        }
-        return webview;
-    }
-
+    /**
+     * Looks up the webview widget for the given handle.
+     *
+     * All `$`-methods of this class are invoked over RPC and resolve the widget asynchronously, so the webview may already
+     * have been disposed by the time they run. The plugin host declares most of them as returning `void` and therefore never
+     * attaches a rejection handler, so throwing here surfaces as an unhandled promise rejection in the plugin host. Callers
+     * must instead treat a missing webview as a no-op, the same way VS Code's `MainThreadWebviews` does.
+     */
     private async tryGetWebview(id: string): Promise<WebviewWidget | undefined> {
-        const webview = await this.widgetManager.getWidget<WebviewWidget>(WebviewWidget.FACTORY_ID, <WebviewWidgetIdentifier>{ id })
+        const webview = await this.widgetManager.findWidget<WebviewWidget>(WebviewWidget.FACTORY_ID, options => {
+            if (options) {
+                return options.id === id;
+            }
+            return false;
+        })
             || await this.widgetManager.getWidget<CustomEditorWidget>(CustomEditorWidget.FACTORY_ID, <WebviewWidgetIdentifier>{ id });
         return webview;
     }

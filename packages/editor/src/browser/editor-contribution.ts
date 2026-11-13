@@ -1,38 +1,50 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { EditorManager } from './editor-manager';
-import { TextEditor } from './editor';
-import { injectable, inject, optional } from '@theia/core/shared/inversify';
+import { EditorManager } from './editor-manager.js';
+import { TextEditor } from './editor.js';
+import { injectable, inject, optional, named } from '@theia/core/shared/inversify';
 import { StatusBarAlignment, StatusBar } from '@theia/core/lib/browser/status-bar/status-bar';
-import { FrontendApplicationContribution, DiffUris, DockLayout, QuickInputService } from '@theia/core/lib/browser';
+import {
+    FrontendApplicationContribution, DiffUris, DockLayout,
+    QuickInputService, KeybindingRegistry, KeybindingContribution, SHELL_TABBAR_CONTEXT_SPLIT, ApplicationShell,
+    WidgetStatusBarContribution,
+    Widget,
+    OpenWithService
+} from '@theia/core/lib/browser';
 import { ContextKeyService } from '@theia/core/lib/browser/context-key-service';
-import { CommandHandler, DisposableCollection } from '@theia/core';
-import { EditorCommands } from './editor-command';
+import { CommandHandler, DisposableCollection, MenuContribution, MenuModelRegistry, ContributionProvider, Prioritizeable } from '@theia/core';
+import { EditorCommands } from './editor-command.js';
 import { CommandRegistry, CommandContribution } from '@theia/core/lib/common';
-import { KeybindingRegistry, KeybindingContribution } from '@theia/core/lib/browser';
-import { LanguageService } from '@theia/core/lib/browser/language-service';
-import { SUPPORTED_ENCODINGS } from '@theia/core/lib/browser/supported-encodings';
+import { SUPPORTED_ENCODINGS } from '@theia/core/lib/common/supported-encodings';
+import { nls } from '@theia/core/lib/common/nls';
+import { CurrentWidgetCommandAdapter } from '@theia/core/lib/browser/shell/current-widget-command-adapter';
+import { EditorWidget } from './editor-widget.js';
+import { EditorLanguageStatusService } from './language-status/editor-language-status-service.js';
+import { QuickEditorService } from './quick-editor-service.js';
+import { SplitEditorContribution } from './split-editor-contribution.js';
 
 @injectable()
-export class EditorContribution implements FrontendApplicationContribution, CommandContribution, KeybindingContribution {
+export class EditorContribution implements FrontendApplicationContribution,
+    CommandContribution, KeybindingContribution, MenuContribution, WidgetStatusBarContribution<EditorWidget> {
 
-    @inject(StatusBar) protected readonly statusBar: StatusBar;
     @inject(EditorManager) protected readonly editorManager: EditorManager;
-    @inject(LanguageService) protected readonly languages: LanguageService;
+    @inject(OpenWithService) protected readonly openWithService: OpenWithService;
+    @inject(EditorLanguageStatusService) protected readonly languageStatusService: EditorLanguageStatusService;
+    @inject(ApplicationShell) protected readonly shell: ApplicationShell;
 
     @inject(ContextKeyService)
     protected readonly contextKeyService: ContextKeyService;
@@ -40,11 +52,21 @@ export class EditorContribution implements FrontendApplicationContribution, Comm
     @inject(QuickInputService) @optional()
     protected readonly quickInputService: QuickInputService;
 
+    @inject(ContributionProvider) @named(SplitEditorContribution)
+    protected readonly splitEditorContributions: ContributionProvider<SplitEditorContribution>;
+
     onStart(): void {
         this.initEditorContextKeys();
-
-        this.updateStatusBar();
-        this.editorManager.onCurrentEditorChanged(() => this.updateStatusBar());
+        this.openWithService.registerHandler({
+            id: 'default',
+            label: this.editorManager.label,
+            providerName: nls.localizeByDefault('Built-in'),
+            canHandle: () => 100,
+            // Higher priority than any other handler
+            // so that the text editor always appears first in the quick pick
+            getOrder: () => 10000,
+            open: uri => this.editorManager.open(uri)
+        });
     }
 
     protected initEditorContextKeys(): void {
@@ -66,82 +88,83 @@ export class EditorContribution implements FrontendApplicationContribution, Comm
     }
 
     protected readonly toDisposeOnCurrentEditorChanged = new DisposableCollection();
-    protected updateStatusBar(): void {
+
+    canHandle(widget: Widget): widget is EditorWidget {
+        return widget instanceof EditorWidget;
+    }
+
+    activate(statusBar: StatusBar, widget: EditorWidget): void {
         this.toDisposeOnCurrentEditorChanged.dispose();
-
-        const widget = this.editorManager.currentEditor;
-        const editor = widget && widget.editor;
-        this.updateLanguageStatus(editor);
-        this.updateEncodingStatus(editor);
-        this.setCursorPositionStatus(editor);
-        if (editor) {
-            this.toDisposeOnCurrentEditorChanged.pushAll([
-                editor.onLanguageChanged(() => this.updateLanguageStatus(editor)),
-                editor.onEncodingChanged(() => this.updateEncodingStatus(editor)),
-                editor.onCursorPositionChanged(() => this.setCursorPositionStatus(editor))
-            ]);
-        }
+        const editor = widget.editor;
+        this.updateLanguageStatus(statusBar, editor);
+        this.updateEncodingStatus(statusBar, editor);
+        this.setCursorPositionStatus(statusBar, editor);
+        this.toDisposeOnCurrentEditorChanged.pushAll([
+            editor.onLanguageChanged(() => this.updateLanguageStatus(statusBar, editor)),
+            editor.onEncodingChanged(() => this.updateEncodingStatus(statusBar, editor)),
+            editor.onCursorPositionChanged(() => this.setCursorPositionStatus(statusBar, editor))
+        ]);
     }
 
-    protected updateLanguageStatus(editor: TextEditor | undefined): void {
-        if (!editor) {
-            this.statusBar.removeElement('editor-status-language');
-            return;
-        }
-        const language = this.languages.getLanguage(editor.document.languageId);
-        const languageName = language ? language.name : '';
-        this.statusBar.setElement('editor-status-language', {
-            text: languageName,
-            alignment: StatusBarAlignment.RIGHT,
-            priority: 1,
-            command: EditorCommands.CHANGE_LANGUAGE.id,
-            tooltip: 'Select Language Mode'
-        });
+    deactivate(statusBar: StatusBar): void {
+        this.toDisposeOnCurrentEditorChanged.dispose();
+        this.updateLanguageStatus(statusBar, undefined);
+        this.updateEncodingStatus(statusBar, undefined);
+        this.setCursorPositionStatus(statusBar, undefined);
     }
 
-    protected updateEncodingStatus(editor: TextEditor | undefined): void {
+    protected updateLanguageStatus(statusBar: StatusBar, editor: TextEditor | undefined): void {
+        this.languageStatusService.updateLanguageStatus(editor);
+    }
+
+    protected updateEncodingStatus(statusBar: StatusBar, editor: TextEditor | undefined): void {
         if (!editor) {
-            this.statusBar.removeElement('editor-status-encoding');
+            statusBar.removeElement('editor-status-encoding');
             return;
         }
-        this.statusBar.setElement('editor-status-encoding', {
-            text: SUPPORTED_ENCODINGS[editor.getEncoding()].labelShort,
+        const rawEncoding = editor.getEncoding();
+        statusBar.setElement('editor-status-encoding', {
+            text: (typeof rawEncoding === 'string' ? SUPPORTED_ENCODINGS[rawEncoding]?.labelShort : undefined) ?? rawEncoding,
             alignment: StatusBarAlignment.RIGHT,
             priority: 10,
             command: EditorCommands.CHANGE_ENCODING.id,
-            tooltip: 'Select Encoding'
+            tooltip: nls.localizeByDefault('Select Encoding')
         });
     }
 
-    protected setCursorPositionStatus(editor: TextEditor | undefined): void {
+    protected setCursorPositionStatus(statusBar: StatusBar, editor: TextEditor | undefined): void {
         if (!editor) {
-            this.statusBar.removeElement('editor-status-cursor-position');
+            statusBar.removeElement('editor-status-cursor-position');
             return;
         }
         const { cursor } = editor;
-        this.statusBar.setElement('editor-status-cursor-position', {
-            text: `Ln ${cursor.line + 1}, Col ${editor.getVisibleColumn(cursor)}`,
+        statusBar.setElement('editor-status-cursor-position', {
+            text: nls.localizeByDefault('Ln {0}, Col {1}', cursor.line + 1, editor.getVisibleColumn(cursor)),
             alignment: StatusBarAlignment.RIGHT,
             priority: 100,
-            tooltip: 'Go To Line',
-            command: 'editor.action.gotoLine'
+            tooltip: EditorCommands.GOTO_LINE_COLUMN.label,
+            command: EditorCommands.GOTO_LINE_COLUMN.id
         });
     }
 
     registerCommands(commands: CommandRegistry): void {
         commands.registerCommand(EditorCommands.SHOW_ALL_OPENED_EDITORS, {
-            execute: () => this.quickInputService?.open('edt ')
+            execute: () => this.quickInputService?.open(QuickEditorService.PREFIX)
         });
-        const splitHandlerFactory = (splitMode: DockLayout.InsertMode): CommandHandler => ({
-            isEnabled: () => !!this.editorManager.currentEditor,
-            isVisible: () => !!this.editorManager.currentEditor,
-            execute: async () => {
-                const { currentEditor } = this.editorManager;
-                if (currentEditor) {
-                    const selection = currentEditor.editor.selection;
-                    const newEditor = await this.editorManager.openToSide(currentEditor.editor.uri, { selection, widgetOptions: { mode: splitMode } });
-                    const oldEditorState = currentEditor.editor.storeViewState();
-                    newEditor.editor.restoreViewState(oldEditorState);
+        const splitHandlerFactory = (splitMode: DockLayout.InsertMode): CommandHandler => new CurrentWidgetCommandAdapter(this.shell, {
+            isEnabled: title => {
+                if (!title?.owner) {
+                    return false;
+                }
+                return this.findSplitContribution(title.owner) !== undefined;
+            },
+            execute: async title => {
+                if (!title?.owner) {
+                    return;
+                }
+                const contribution = this.findSplitContribution(title.owner);
+                if (contribution) {
+                    await contribution.split(title.owner, splitMode);
                 }
             }
         });
@@ -151,6 +174,14 @@ export class EditorContribution implements FrontendApplicationContribution, Comm
         commands.registerCommand(EditorCommands.SPLIT_EDITOR_DOWN, splitHandlerFactory('split-bottom'));
         commands.registerCommand(EditorCommands.SPLIT_EDITOR_UP, splitHandlerFactory('split-top'));
         commands.registerCommand(EditorCommands.SPLIT_EDITOR_LEFT, splitHandlerFactory('split-left'));
+    }
+
+    protected findSplitContribution(widget: Widget): SplitEditorContribution | undefined {
+        const prioritized = Prioritizeable.prioritizeAllSync(
+            this.splitEditorContributions.getContributions(),
+            contribution => contribution.canHandle(widget)
+        );
+        return prioritized.length > 0 ? prioritized[0].value : undefined;
     }
 
     registerKeybindings(keybindings: KeybindingRegistry): void {
@@ -165,6 +196,29 @@ export class EditorContribution implements FrontendApplicationContribution, Comm
         keybindings.registerKeybinding({
             command: EditorCommands.SPLIT_EDITOR_VERTICAL.id,
             keybinding: 'ctrlcmd+k ctrlcmd+\\',
+        });
+    }
+
+    registerMenus(registry: MenuModelRegistry): void {
+        registry.registerMenuAction(SHELL_TABBAR_CONTEXT_SPLIT, {
+            commandId: EditorCommands.SPLIT_EDITOR_UP.id,
+            label: nls.localizeByDefault('Split Up'),
+            order: '1',
+        });
+        registry.registerMenuAction(SHELL_TABBAR_CONTEXT_SPLIT, {
+            commandId: EditorCommands.SPLIT_EDITOR_DOWN.id,
+            label: nls.localizeByDefault('Split Down'),
+            order: '2',
+        });
+        registry.registerMenuAction(SHELL_TABBAR_CONTEXT_SPLIT, {
+            commandId: EditorCommands.SPLIT_EDITOR_LEFT.id,
+            label: nls.localizeByDefault('Split Left'),
+            order: '3',
+        });
+        registry.registerMenuAction(SHELL_TABBAR_CONTEXT_SPLIT, {
+            commandId: EditorCommands.SPLIT_EDITOR_RIGHT.id,
+            label: nls.localizeByDefault('Split Right'),
+            order: '4',
         });
     }
 }

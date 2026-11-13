@@ -1,25 +1,25 @@
-/********************************************************************************
- * Copyright (C) 2019 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 /*---------------------------------------------------------------------------------------------
 *  Copyright (c) Microsoft Corporation. All rights reserved.
 *  Licensed under the MIT License. See License.txt in the project root for license information.
 *--------------------------------------------------------------------------------------------*/
 // copied and modified from https://github.com/microsoft/vscode/blob/ba40bd16433d5a817bfae15f3b4350e18f144af4/src/vs/workbench/contrib/webview/browser/pre/service-worker.js
 // @ts-check
-const VERSION = 1;
+const VERSION = 2;
 
 const rootPath = self.location.pathname.replace(/\/service-worker.js$/, '');
 
@@ -47,21 +47,21 @@ class RequestStore {
         this.map = new Map();
     }
 
-	/**
-	 * @param {string} webviewId
-	 * @param {string} path
-	 * @return {Promise<T> | undefined}
-	 */
+    /**
+     * @param {string} webviewId
+     * @param {string} path
+     * @return {Promise<T> | undefined}
+     */
     get(webviewId, path) {
         const entry = this.map.get(this._key(webviewId, path));
         return entry && entry.promise;
     }
 
-	/**
-	 * @param {string} webviewId
-	 * @param {string} path
-	 * @returns {Promise<T>}
-	 */
+    /**
+     * @param {string} webviewId
+     * @param {string} path
+     * @returns {Promise<T>}
+     */
     create(webviewId, path) {
         const existing = this.get(webviewId, path);
         if (existing) {
@@ -84,12 +84,12 @@ class RequestStore {
         return promise;
     }
 
-	/**
-	 * @param {string} webviewId
-	 * @param {string} path
-	 * @param {T} result
-	 * @return {boolean}
-	 */
+    /**
+     * @param {string} webviewId
+     * @param {string} path
+     * @param {T} result
+     * @return {boolean}
+     */
     resolve(webviewId, path, result) {
         const entry = this.map.get(this._key(webviewId, path));
         if (!entry) {
@@ -99,11 +99,11 @@ class RequestStore {
         return true;
     }
 
-	/**
-	 * @param {string} webviewId
-	 * @param {string} path
-	 * @return {string}
-	 */
+    /**
+     * @param {string} webviewId
+     * @param {string} path
+     * @return {string}
+     */
     _key(webviewId, path) {
         return `${webviewId}@@@${path}`;
     }
@@ -148,8 +148,9 @@ self.addEventListener('message', async (event) => {
                     ? { body: data.data, mime: data.mime }
                     : undefined;
 
-                if (!resourceRequestStore.resolve(webviewId, data.path, response)) {
-                    console.error('Could not resolve unknown resource', data.path);
+                const key = resourceKey(data.path, data.query);
+                if (!resourceRequestStore.resolve(webviewId, key, response)) {
+                    console.error('Could not resolve unknown resource', key);
                 }
                 return;
             }
@@ -218,18 +219,23 @@ async function processResourceRequest(event, requestUrl, resourceRoot) {
         return notFound();
     }
 
+    // The query is part of the key: extensions change it to load a changed file again
+    const query = requestUrl.search.replace(/^\?/, '');
+    const key = resourceKey(resourcePath, query);
+
     // Check if we've already resolved this request
-    const existing = resourceRequestStore.get(webviewId, resourcePath);
+    const existing = resourceRequestStore.get(webviewId, key);
     if (existing) {
         return existing.then(resolveResourceEntry);
     }
 
     parentClient.postMessage({
         channel: 'load-resource',
-        path: resourcePath
+        path: resourcePath,
+        query
     });
 
-    return resourceRequestStore.create(webviewId, resourcePath)
+    return resourceRequestStore.create(webviewId, key)
         .then(resolveResourceEntry);
 }
 
@@ -279,6 +285,10 @@ async function processLocalhostRequest(event, requestUrl) {
 
     return localhostRequestStore.create(webviewId, origin)
         .then(resolveRedirect);
+}
+
+function resourceKey(path, query) {
+    return query ? `${path}?${query}` : path;
 }
 
 function getWebviewIdForClient(client) {

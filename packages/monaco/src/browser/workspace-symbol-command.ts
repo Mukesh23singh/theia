@@ -1,41 +1,40 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { environment } from '@theia/core/shared/@theia/application-package/lib/environment';
 import { KeybindingContribution, KeybindingRegistry, OpenerService, LabelProvider } from '@theia/core/lib/browser';
-
 import { QuickAccessContribution, QuickAccessProvider, QuickInputService, QuickAccessRegistry, QuickPicks, QuickPickItem, findMatches } from '@theia/core/lib/browser/quick-input';
 import {
-    CommandRegistry, CommandHandler, Command, SelectionService, CancellationToken
+    CommandRegistry, CommandHandler, Command, SelectionService, CancellationToken,
+    CommandContribution, MenuContribution, MenuModelRegistry, nls
 } from '@theia/core/lib/common';
-import { CommandContribution } from '@theia/core/lib/common';
-import { Range, Position, SymbolInformation } from '@theia/core/shared/vscode-languageserver-types';
-import { WorkspaceSymbolParams } from '@theia/core/shared/vscode-languageserver-protocol';
-import { MonacoLanguages, WorkspaceSymbolProvider } from './monaco-languages';
+import { Range, Position, SymbolInformation, WorkspaceSymbolParams } from '@theia/core/shared/vscode-languageserver-protocol';
+import { MonacoLanguages, WorkspaceSymbolProvider } from './monaco-languages.js';
 import URI from '@theia/core/lib/common/uri';
+import { EditorMainMenu } from '@theia/editor/lib/browser';
 
 @injectable()
-export class WorkspaceSymbolCommand implements QuickAccessProvider, CommandContribution, KeybindingContribution, CommandHandler, QuickAccessContribution {
+export class WorkspaceSymbolCommand implements QuickAccessProvider, CommandContribution, KeybindingContribution, MenuContribution, CommandHandler, QuickAccessContribution {
     public static readonly PREFIX = '#';
 
-    private command: Command = {
+    private command = Command.toDefaultLocalizedCommand({
         id: 'languages.workspace.symbol',
         label: 'Go to Symbol in Workspace...'
-    };
+    });
 
     @inject(MonacoLanguages) protected readonly languages: MonacoLanguages;
     @inject(OpenerService) protected readonly openerService: OpenerService;
@@ -56,6 +55,13 @@ export class WorkspaceSymbolCommand implements QuickAccessProvider, CommandContr
         commands.registerCommand(this.command, this);
     }
 
+    registerMenus(menus: MenuModelRegistry): void {
+        menus.registerMenuAction(EditorMainMenu.WORKSPACE_GROUP, {
+            commandId: this.command.id,
+            order: '2'
+        });
+    }
+
     private isElectron(): boolean {
         return environment.electron.is();
     }
@@ -72,7 +78,7 @@ export class WorkspaceSymbolCommand implements QuickAccessProvider, CommandContr
             getInstance: () => this,
             prefix: WorkspaceSymbolCommand.PREFIX,
             placeholder: '',
-            helpEntries: [{ description: 'Go to Symbol in Workspace', needsEditor: false }]
+            helpEntries: [{ description: nls.localizeByDefault('Go to Symbol in Workspace'), needsEditor: false }]
         });
     }
 
@@ -100,7 +106,9 @@ export class WorkspaceSymbolCommand implements QuickAccessProvider, CommandContr
                     const filteredSymbols = symbols.filter(el => el && el.length !== 0);
                     if (filteredSymbols.length === 0) {
                         items.push({
-                            label: filter.length === 0 ? 'Type to search for symbols' : 'No symbols matching',
+                            label: filter.length === 0
+                                ? nls.localize('theia/monaco/typeToSearchForSymbols', 'Type to search for symbols')
+                                : nls.localize('theia/monaco/noSymbolsMatching', 'No symbols matching'),
                         });
                     }
                 }).catch();
@@ -148,7 +156,7 @@ export class WorkspaceSymbolCommand implements QuickAccessProvider, CommandContr
         if (!kind) {
             return undefined;
         }
-        return [`codicon ${inline ? 'inline' : 'block'} codicon-symbol-${kind.toLowerCase() || 'property'}`];
+        return ['codicon', `${inline ? 'inline' : 'block'}`, `codicon-symbol-${kind.toLowerCase() || 'property'}`];
     }
 
     private openURL(uri: URI, start: Position, end: Position): void {

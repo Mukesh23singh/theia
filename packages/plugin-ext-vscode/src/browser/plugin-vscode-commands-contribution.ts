@@ -1,20 +1,20 @@
-/********************************************************************************
- * Copyright (C) 2018 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { Command, CommandContribution, CommandRegistry, environment, isOSX, CancellationTokenSource } from '@theia/core';
+import { Command, CommandContribution, CommandRegistry, environment, isOSX, CancellationTokenSource, MessageService, isArray, ILogger, MEMORY_TEXT_READONLY } from '@theia/core';
 import {
     ApplicationShell,
     CommonCommands,
@@ -33,30 +33,27 @@ import { CommandService } from '@theia/core/lib/common/command';
 import TheiaURI from '@theia/core/lib/common/uri';
 import { EditorManager, EditorCommands } from '@theia/editor/lib/browser';
 import {
-    CodeEditorWidgetUtil
-} from '@theia/plugin-ext/lib/main/browser/menus/menus-contribution-handler';
-import {
     TextDocumentShowOptions,
     Location,
     CallHierarchyItem,
     CallHierarchyIncomingCall,
     CallHierarchyOutgoingCall,
+    TypeHierarchyItem,
     Hover,
     TextEdit,
     FormattingOptions,
     DocumentHighlight
 } from '@theia/plugin-ext/lib/common/plugin-api-rpc-model';
 import { DocumentsMainImpl } from '@theia/plugin-ext/lib/main/browser/documents-main';
-import { createUntitledURI } from '@theia/plugin-ext/lib/main/browser/editor/untitled-resource';
-import { isUriComponents, toDocumentSymbol, toPosition } from '@theia/plugin-ext/lib/plugin/type-converters';
+import { isUriComponents, toMergedSymbol, toPosition } from '@theia/plugin-ext/lib/plugin/type-converters';
 import { ViewColumn } from '@theia/plugin-ext/lib/plugin/types-impl';
 import { WorkspaceCommands } from '@theia/workspace/lib/browser';
 import { WorkspaceService, WorkspaceInput } from '@theia/workspace/lib/browser/workspace-service';
 import { DiffService } from '@theia/workspace/lib/browser/diff-service';
-import { inject, injectable, optional } from '@theia/core/shared/inversify';
+import { inject, injectable, optional, named } from '@theia/core/shared/inversify';
 import { Position } from '@theia/plugin-ext/lib/common/plugin-api-rpc';
 import { URI } from '@theia/core/shared/vscode-uri';
-import { PluginServer } from '@theia/plugin-ext/lib/common/plugin-protocol';
+import { DuplicateExtensionError, PluginDeployOptions, PluginIdentifiers, PluginServer } from '@theia/plugin-ext/lib/common/plugin-protocol';
 import { TerminalFrontendContribution } from '@theia/terminal/lib/browser/terminal-frontend-contribution';
 import { QuickOpenWorkspace } from '@theia/workspace/lib/browser/quick-open-workspace';
 import { TerminalService } from '@theia/terminal/lib/browser/base/terminal-service';
@@ -69,16 +66,51 @@ import { SelectableTreeNode } from '@theia/core/lib/browser/tree/tree-selection'
 import { UriComponents } from '@theia/plugin-ext/lib/common/uri-components';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { CallHierarchyServiceProvider, CallHierarchyService } from '@theia/callhierarchy/lib/browser';
+import { TypeHierarchyServiceProvider, TypeHierarchyService } from '@theia/typehierarchy/lib/browser';
 import { MonacoTextModelService } from '@theia/monaco/lib/browser/monaco-text-model-service';
 import {
     fromCallHierarchyCalleeToModelCallHierarchyOutgoingCall,
     fromCallHierarchyCallerToModelCallHierarchyIncomingCall,
-    fromDefinition,
-    toDefinition
-} from '@theia/plugin-ext/lib/main/browser/callhierarchy/callhierarchy-type-converters';
+    fromItemHierarchyDefinition,
+    toItemHierarchyDefinition
+} from '@theia/plugin-ext/lib/main/browser/hierarchy/hierarchy-types-converters';
 import { CustomEditorOpener } from '@theia/plugin-ext/lib/main/browser/custom-editors/custom-editor-opener';
+import { nls } from '@theia/core/lib/common/nls';
+import { WindowService } from '@theia/core/lib/browser/window/window-service';
+import * as monaco from '@theia/monaco-editor-core';
+import { VSCodeExtensionUri } from '../common/plugin-vscode-uri.js';
+import { CodeEditorWidgetUtil } from '@theia/plugin-ext/lib/main/browser/menus/vscode-theia-menu-mappings';
+import { OutlineViewContribution } from '@theia/outline-view/lib/browser/outline-view-contribution';
+import { CompletionList, Range, Position as PluginPosition } from '@theia/plugin';
+import { MonacoLanguages } from '@theia/monaco/lib/browser/monaco-languages';
+import { ScmContribution } from '@theia/scm/lib/browser/scm-contribution';
+import { ScmService } from '@theia/scm/lib/browser/scm-service';
+import { MergeEditorOpenerOptions, MergeEditorUri } from '@theia/scm/lib/browser/merge-editor/merge-editor';
+import { MultiDiffEditorOpenerOptions, MultiDiffEditorUri } from '@theia/scm/lib/browser/multi-diff-editor/multi-diff-editor';
+
+/**
+ * Convert a VS Code {@link UriComponents} or a string URI into a Theia {@link TheiaURI}.
+ * Returns `undefined` when given `undefined`.
+ */
+function toTheiaUri(value: UriComponents | string): TheiaURI;
+function toTheiaUri(value: UriComponents | string | undefined): TheiaURI | undefined;
+function toTheiaUri(value: UriComponents | string | undefined): TheiaURI | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+    if (typeof value === 'string') {
+        return new TheiaURI(value);
+    }
+    return TheiaURI.fromComponents(value);
+}
 
 export namespace VscodeCommands {
+
+    export const GET_CODE_EXCHANGE_ENDPOINTS: Command = {
+        id: 'workbench.getCodeExchangeProxyEndpoints' // this command is used in the github auth built-in
+        // see: https://github.com/microsoft/vscode/blob/191be39e5ac872e03f9d79cc859d9917f40ad935/extensions/github-authentication/src/githubServer.ts#L60
+    };
+
     export const OPEN: Command = {
         id: 'vscode.open'
     };
@@ -95,9 +127,136 @@ export namespace VscodeCommands {
         id: 'vscode.diff'
     };
 
-    export const INSTALL_FROM_VSIX: Command = {
+    export const INSTALL_EXTENSION_FROM_ID_OR_URI: Command = {
         id: 'workbench.extensions.installExtension'
     };
+
+    export const UNINSTALL_EXTENSION: Command = {
+        id: 'workbench.extensions.uninstallExtension'
+    };
+
+    // see https://github.com/microsoft/vscode/blob/2fc07b811f760549dab9be9d2bedd06c51dfcb9a/src/vs/workbench/contrib/extensions/common/extensions.ts#L246
+    export const INSTALL_EXTENSION_FROM_VSIX_COMMAND: Command = {
+        id: 'workbench.extensions.command.installFromVSIX'
+    };
+}
+
+// https://wicg.github.io/webusb/
+
+export interface UsbDeviceData {
+    readonly deviceClass: number;
+    readonly deviceProtocol: number;
+    readonly deviceSubclass: number;
+    readonly deviceVersionMajor: number;
+    readonly deviceVersionMinor: number;
+    readonly deviceVersionSubminor: number;
+    readonly manufacturerName?: string;
+    readonly productId: number;
+    readonly productName?: string;
+    readonly serialNumber?: string;
+    readonly usbVersionMajor: number;
+    readonly usbVersionMinor: number;
+    readonly usbVersionSubminor: number;
+    readonly vendorId: number;
+}
+
+// https://wicg.github.io/serial/
+
+export interface SerialPortData {
+    readonly usbVendorId?: number | undefined;
+    readonly usbProductId?: number | undefined;
+}
+
+// https://wicg.github.io/webhid/
+
+export interface HidDeviceData {
+    readonly opened: boolean;
+    readonly vendorId: number;
+    readonly productId: number;
+    readonly productName: string;
+    readonly collections: [];
+}
+
+export type EditorGroupNavigationDirection = 'left' | 'right' | 'up' | 'down';
+
+export interface EditorGroupNavigationRect {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+    width: number;
+    height: number;
+}
+
+type EditorGroupNavigationScore = [
+    orthogonalRank: number,
+    orthogonalGap: number,
+    primaryDistance: number,
+    orthogonalCenterDistance: number,
+    orthogonalStart: number
+];
+
+function isInDirection(source: EditorGroupNavigationRect, candidate: EditorGroupNavigationRect, direction: EditorGroupNavigationDirection): boolean {
+    const sourceCenter = rectCenter(source);
+    const candidateCenter = rectCenter(candidate);
+    switch (direction) {
+        case 'left':
+            return candidateCenter.x < sourceCenter.x;
+        case 'right':
+            return candidateCenter.x > sourceCenter.x;
+        case 'up':
+            return candidateCenter.y < sourceCenter.y;
+        case 'down':
+            return candidateCenter.y > sourceCenter.y;
+    }
+}
+
+function score(source: EditorGroupNavigationRect, candidate: EditorGroupNavigationRect, direction: EditorGroupNavigationDirection): EditorGroupNavigationScore {
+    const horizontal = direction === 'left' || direction === 'right';
+    const sourceCenter = rectCenter(source);
+    const candidateCenter = rectCenter(candidate);
+    const orthogonalOverlap = horizontal
+        ? intervalOverlap(source.top, source.bottom, candidate.top, candidate.bottom)
+        : intervalOverlap(source.left, source.right, candidate.left, candidate.right);
+    return [
+        orthogonalOverlap > 0 ? 0 : 1,
+        Math.max(0, -orthogonalOverlap),
+        directionalDistance(source, candidate, direction),
+        horizontal ? Math.abs(sourceCenter.y - candidateCenter.y) : Math.abs(sourceCenter.x - candidateCenter.x),
+        horizontal ? candidate.top : candidate.left
+    ];
+}
+
+function compareScore(left: EditorGroupNavigationScore, right: EditorGroupNavigationScore): number {
+    return left[0] - right[0]
+        || left[1] - right[1]
+        || left[2] - right[2]
+        || left[3] - right[3]
+        || left[4] - right[4];
+}
+
+function directionalDistance(source: EditorGroupNavigationRect, candidate: EditorGroupNavigationRect, direction: EditorGroupNavigationDirection): number {
+    switch (direction) {
+        case 'left':
+            return Math.max(0, source.left - candidate.right);
+        case 'right':
+            return Math.max(0, candidate.left - source.right);
+        case 'up':
+            return Math.max(0, source.top - candidate.bottom);
+        case 'down':
+            return Math.max(0, candidate.top - source.bottom);
+    }
+}
+
+function rectCenter(rect: EditorGroupNavigationRect): { x: number, y: number } {
+    return {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+    };
+}
+
+function intervalOverlap(start: number, end: number, candidateStart: number, candidateEnd: number): number {
+    return Math.min(end, candidateEnd) - Math.max(start, candidateStart);
 }
 
 @injectable()
@@ -126,16 +285,31 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
     protected readonly quickOpenWorkspace: QuickOpenWorkspace;
     @inject(TerminalService)
     protected readonly terminalService: TerminalService;
-    @inject(CodeEditorWidgetUtil)
-    protected readonly codeEditorWidgetUtil: CodeEditorWidgetUtil;
     @inject(PluginServer)
     protected readonly pluginServer: PluginServer;
     @inject(FileService)
     protected readonly fileService: FileService;
     @inject(CallHierarchyServiceProvider)
     protected readonly callHierarchyProvider: CallHierarchyServiceProvider;
+    @inject(TypeHierarchyServiceProvider)
+    protected readonly typeHierarchyProvider: TypeHierarchyServiceProvider;
     @inject(MonacoTextModelService)
     protected readonly textModelService: MonacoTextModelService;
+    @inject(WindowService)
+    protected readonly windowService: WindowService;
+    @inject(MessageService)
+    protected readonly messageService: MessageService;
+    @inject(OutlineViewContribution)
+    protected outlineViewContribution: OutlineViewContribution;
+    @inject(MonacoLanguages)
+    protected monacoLanguages: MonacoLanguages;
+    @inject(ScmContribution)
+    protected scmContribution: ScmContribution;
+    @inject(ScmService)
+    protected readonly scmService: ScmService;
+
+    @inject(ILogger) @named('plugin-ext-vscode:PluginVscodeCommandsContribution')
+    protected readonly logger: ILogger;
 
     private async openWith(commandId: string, resource: URI, columnOrOptions?: ViewColumn | TextDocumentShowOptions, openerId?: string): Promise<boolean> {
         if (!resource) {
@@ -159,36 +333,146 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
         const uri = new TheiaURI(resource);
         const editorOptions = DocumentsMainImpl.toEditorOpenerOptions(this.shell, options);
 
-        let opener: OpenHandler | undefined;
+        let openHandler: OpenHandler | undefined;
         if (typeof openerId === 'string') {
             const lowerViewType = openerId.toLowerCase();
             const openers = await this.openerService.getOpeners();
-            for (const opnr of openers) {
-                const idLowerCase = opnr.id.toLowerCase();
+            for (const opener of openers) {
+                const idLowerCase = opener.id.toLowerCase();
                 if (lowerViewType === idLowerCase) {
-                    opener = opnr;
+                    openHandler = opener;
                     break;
                 }
             }
         } else {
-            opener = await this.openerService.getOpener(uri, editorOptions);
+            openHandler = await this.openerService.getOpener(uri, editorOptions);
         }
 
-        if (opener) {
-            await opener.open(uri, editorOptions);
+        if (openHandler) {
+            await openHandler.open(uri, editorOptions);
             return true;
         }
 
         return false;
     }
 
+    protected navigateEditorGroup(direction: EditorGroupNavigationDirection): boolean {
+        const current = this.currentMainAreaTabBar();
+        const currentRect = current && this.getEditorGroupRect(current);
+        if (!current || current.titles.length === 0 || !currentRect) {
+            return false;
+        }
+
+        const candidates: TabBar<Widget>[] = [];
+        const candidateRects: EditorGroupNavigationRect[] = [];
+        for (const tabBar of this.shell.mainAreaTabBars) {
+            if (tabBar === current || tabBar.titles.length === 0) {
+                continue;
+            }
+            const candidateRect = this.getEditorGroupRect(tabBar);
+            if (candidateRect) {
+                candidates.push(tabBar);
+                candidateRects.push(candidateRect);
+            }
+        }
+        const index = this.findClosestEditorGroup(currentRect, candidateRects, direction);
+        return index === -1 ? false : this.activateEditorGroup(candidates[index]);
+    }
+
+    protected findClosestEditorGroup(source: EditorGroupNavigationRect, candidates: ReadonlyArray<EditorGroupNavigationRect>, direction: EditorGroupNavigationDirection): number {
+        let bestIndex = -1;
+        let bestScore: EditorGroupNavigationScore | undefined;
+        for (let index = 0; index < candidates.length; index++) {
+            const candidate = candidates[index];
+            if (!isInDirection(source, candidate, direction)) {
+                continue;
+            }
+            const candidateScore = score(source, candidate, direction);
+            if (!bestScore || compareScore(candidateScore, bestScore) < 0) {
+                bestIndex = index;
+                bestScore = candidateScore;
+            }
+        }
+        return bestIndex;
+    }
+
+    protected navigateEditorGroups(): boolean {
+        const current = this.currentMainAreaTabBar();
+        const tabBars = this.shell.mainAreaTabBars.filter(tabBar => tabBar.titles.length > 0);
+        if (!current || tabBars.length < 2) {
+            return false;
+        }
+        const currentIndex = tabBars.indexOf(current);
+        if (currentIndex === -1) {
+            return false;
+        }
+        const target = tabBars[(currentIndex + 1) % tabBars.length];
+        return this.activateEditorGroup(target);
+    }
+
+    protected currentMainAreaTabBar(): TabBar<Widget> | undefined {
+        const mainAreaTabBars = this.shell.mainAreaTabBars;
+        const currentTabBar = this.shell.currentTabBar;
+        if (currentTabBar && mainAreaTabBars.includes(currentTabBar)) {
+            return currentTabBar;
+        }
+        const currentEditor = this.editorManager.currentEditor || this.editorManager.activeEditor;
+        if (currentEditor) {
+            const tabBar = this.shell.getTabBarFor(currentEditor);
+            if (tabBar && mainAreaTabBars.includes(tabBar)) {
+                return tabBar;
+            }
+        }
+        return undefined;
+    }
+
+    protected getEditorGroupRect(tabBar: TabBar<Widget>): EditorGroupNavigationRect | undefined {
+        const title = tabBar.currentTitle || tabBar.titles[0];
+        const rects = [
+            tabBar.node.getBoundingClientRect(),
+            title?.owner.node.getBoundingClientRect()
+        ].filter((rect): rect is DOMRect => !!rect && rect.width > 0 && rect.height > 0);
+        if (rects.length === 0) {
+            return undefined;
+        }
+        const left = Math.min(...rects.map(rect => rect.left));
+        const right = Math.max(...rects.map(rect => rect.right));
+        const top = Math.min(...rects.map(rect => rect.top));
+        const bottom = Math.max(...rects.map(rect => rect.bottom));
+        return { left, right, top, bottom, width: right - left, height: bottom - top };
+    }
+
+    protected activateEditorGroup(tabBar: TabBar<Widget>): boolean {
+        let title = tabBar.currentTitle;
+        if (!title && tabBar.titles.length > 0) {
+            tabBar.currentIndex = 0;
+            title = tabBar.currentTitle;
+        }
+        if (!title) {
+            return false;
+        }
+        this.shell.activateWidget(title.owner.id);
+        return true;
+    }
+
     registerCommands(commands: CommandRegistry): void {
+        commands.registerCommand(VscodeCommands.GET_CODE_EXCHANGE_ENDPOINTS, {
+            execute: () => undefined // this is a dummy implementation: only used in the case of web apps, which is not supported yet.
+        });
+
         commands.registerCommand(VscodeCommands.OPEN, {
             isVisible: () => false,
-            execute: async (resource: URI, columnOrOptions?: ViewColumn | TextDocumentShowOptions) => {
-                const result = await this.openWith(VscodeCommands.OPEN.id, resource, columnOrOptions);
-                if (!result) {
-                    throw new Error(`Could not find an editor for ${resource}`);
+            execute: async (resource: URI | string, columnOrOptions?: ViewColumn | TextDocumentShowOptions) => {
+                if (typeof resource === 'string') {
+                    resource = URI.parse(resource);
+                }
+                try {
+                    await this.openWith(VscodeCommands.OPEN.id, resource, columnOrOptions);
+                } catch (error) {
+                    const message = nls.localizeByDefault("Unable to open '{0}'", resource.path);
+                    const reason = nls.localizeByDefault('Error: {0}', error.message);
+                    this.messageService.error(`${message}\n${reason}`);
+                    this.logger.warn(error);
                 }
             }
         });
@@ -269,48 +553,78 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
          * because of it we filter out editors from views based on `NavigatableWidget.is`
          * and apply actions only to them
          */
-        commands.registerCommand({ id: 'workbench.action.files.newUntitledFile' }, {
-            execute: () => open(this.openerService, createUntitledURI())
-        });
-
         if (!environment.electron.is() || isOSX) {
             commands.registerCommand({ id: 'workbench.action.files.openFileFolder' }, {
                 execute: () => commands.executeCommand(WorkspaceCommands.OPEN.id)
             });
+            commands.registerAlias('workbench.action.files.openFileFolder', WorkspaceCommands.OPEN.id);
         }
 
         commands.registerCommand({ id: 'workbench.action.files.openFile' }, {
             execute: () => commands.executeCommand(WorkspaceCommands.OPEN_FILE.id)
         });
+        commands.registerAlias('workbench.action.files.openFile', WorkspaceCommands.OPEN_FILE.id);
         commands.registerCommand({ id: 'workbench.action.files.openFolder' }, {
             execute: () => commands.executeCommand(WorkspaceCommands.OPEN_FOLDER.id)
         });
+        commands.registerAlias('workbench.action.files.openFolder', WorkspaceCommands.OPEN_FOLDER.id);
         commands.registerCommand({ id: 'workbench.action.addRootFolder' }, {
             execute: () => commands.executeCommand(WorkspaceCommands.ADD_FOLDER.id)
         });
-        commands.registerCommand({ id: 'workbench.action.gotoLine' }, {
-            execute: () => commands.executeCommand('editor.action.gotoLine')
+        commands.registerAlias('workbench.action.addRootFolder', WorkspaceCommands.ADD_FOLDER.id);
+        commands.registerCommand({ id: 'workbench.action.saveWorkspaceAs' }, {
+            execute: () => commands.executeCommand(WorkspaceCommands.SAVE_WORKSPACE_AS.id)
         });
+        commands.registerAlias('workbench.action.saveWorkspaceAs', WorkspaceCommands.SAVE_WORKSPACE_AS.id);
+        commands.registerCommand({ id: 'workbench.action.gotoLine' }, {
+            execute: () => commands.executeCommand(EditorCommands.GOTO_LINE_COLUMN.id)
+        });
+        commands.registerAlias('workbench.action.gotoLine', EditorCommands.GOTO_LINE_COLUMN.id);
         commands.registerCommand({ id: 'workbench.action.quickOpen' }, {
             execute: (prefix?: unknown) => this.quickInput.open(typeof prefix === 'string' ? prefix : '')
         });
         commands.registerCommand({ id: 'workbench.action.openSettings' }, {
             execute: (query?: string) => commands.executeCommand(CommonCommands.OPEN_PREFERENCES.id, query)
         });
+        commands.registerAlias('workbench.action.openSettings', CommonCommands.OPEN_PREFERENCES.id);
         commands.registerCommand({ id: 'workbench.action.openWorkspaceConfigFile' }, {
             execute: () => commands.executeCommand(WorkspaceCommands.OPEN_WORKSPACE_FILE.id)
         });
+        commands.registerAlias('workbench.action.openWorkspaceConfigFile', WorkspaceCommands.OPEN_WORKSPACE_FILE.id);
         commands.registerCommand({ id: 'workbench.files.action.refreshFilesExplorer' }, {
             execute: () => commands.executeCommand(FileNavigatorCommands.REFRESH_NAVIGATOR.id)
         });
-        commands.registerCommand({ id: VscodeCommands.INSTALL_FROM_VSIX.id }, {
+        commands.registerAlias('workbench.files.action.refreshFilesExplorer', FileNavigatorCommands.REFRESH_NAVIGATOR.id);
+        commands.registerCommand(VscodeCommands.INSTALL_EXTENSION_FROM_ID_OR_URI, {
             execute: async (vsixUriOrExtensionId: TheiaURI | UriComponents | string) => {
                 if (typeof vsixUriOrExtensionId === 'string') {
-                    await this.pluginServer.deploy(`vscode:extension/${vsixUriOrExtensionId}`);
+                    await this.installExtensionFromId(vsixUriOrExtensionId);
                 } else {
-                    const uriPath = isUriComponents(vsixUriOrExtensionId) ? URI.revive(vsixUriOrExtensionId).fsPath : await this.fileService.fsPath(vsixUriOrExtensionId);
-                    await this.pluginServer.deploy(`local-file:${uriPath}`);
+                    await this.deployPlugin(vsixUriOrExtensionId);
                 }
+            }
+        });
+        commands.registerCommand(VscodeCommands.INSTALL_EXTENSION_FROM_VSIX_COMMAND, {
+            execute: async (uris: TheiaURI[] | UriComponents[] | TheiaURI | UriComponents) => {
+                if (isArray(uris)) {
+                    await Promise.all(uris.map(async vsix => {
+                        await this.deployPlugin(vsix);
+                    }));
+                } else {
+                    await this.deployPlugin(uris);
+                }
+            }
+        });
+        commands.registerCommand(VscodeCommands.UNINSTALL_EXTENSION, {
+            execute: async (id: string) => {
+                if (!id) {
+                    throw new Error(nls.localizeByDefault('Extension id required.'));
+                }
+                const idAndVersion = PluginIdentifiers.idAndVersionFromVersionedId(id);
+                if (!idAndVersion) {
+                    throw new Error(`Invalid extension id: ${id}\nExpected format: <publisher>.<name>@<version>.`);
+                }
+                await this.pluginServer.uninstall(PluginIdentifiers.idAndVersionToVersionedId(idAndVersion));
             }
         });
         commands.registerCommand({ id: 'workbench.action.files.save', }, {
@@ -335,6 +649,7 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
         commands.registerCommand({ id: 'workbench.action.closeActiveEditor' }, {
             execute: () => commands.executeCommand(CommonCommands.CLOSE_MAIN_TAB.id)
         });
+        commands.registerAlias('workbench.action.closeActiveEditor', CommonCommands.CLOSE_MAIN_TAB.id);
         commands.registerCommand({ id: 'workbench.action.closeOtherEditors' }, {
             execute: async (uri?: monaco.Uri) => {
                 let editor = this.editorManager.currentEditor || this.shell.currentWidget;
@@ -345,18 +660,15 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
                         return (resourceUri && resourceUri.toString()) === uriString;
                     });
                 }
-                for (const widget of this.shell.widgets) {
-                    if (this.codeEditorWidgetUtil.is(widget) && widget !== editor) {
-                        await this.shell.closeWidget(widget.id);
-                    }
-                }
+                const toClose = this.shell.widgets.filter(widget => widget !== editor && CodeEditorWidgetUtil.is(widget) && widget.title.closable);
+                await this.shell.closeMany(toClose);
             }
         });
 
         const performActionOnGroup = (
             cb: (
                 tabBarOrArea: TabBar<Widget> | ApplicationShell.Area,
-                filter?: ((title: Title<Widget>, index: number) => boolean) | undefined
+                filter: (title: Title<Widget>, index: number) => boolean
             ) => void,
             uri?: monaco.Uri
         ): void => {
@@ -371,22 +683,25 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
             if (editor) {
                 const tabBar = this.shell.getTabBarFor(editor);
                 if (tabBar) {
-                    cb(tabBar, ({ owner }) => this.codeEditorWidgetUtil.is(owner));
+                    cb(tabBar, ({ owner }) => CodeEditorWidgetUtil.is(owner));
                 }
             }
         };
 
         commands.registerCommand({
             id: 'workbench.action.closeEditorsInGroup',
-            label: 'Close All Editors in Group'
+            label: nls.localizeByDefault('Close All Editors in Group')
         }, {
-            execute: (uri?: monaco.Uri) => performActionOnGroup(this.shell.closeTabs, uri)
+            execute: (uri?: monaco.Uri) => performActionOnGroup(
+                (tabBar, filter) => this.shell.closeTabs(tabBar, (title, index) => title.closable && filter(title, index)),
+                uri
+            )
         });
         commands.registerCommand({
             id: 'workbench.files.saveAllInGroup',
-            label: 'Save All in Group'
+            label: nls.localizeByDefault('Save All in Group')
         }, {
-            execute: (uri?: monaco.Uri) => performActionOnGroup(this.shell.saveTabs, uri)
+            execute: (uri?: monaco.Uri) => performActionOnGroup((tabBar, filter) => this.shell.saveTabs(tabBar, filter), uri)
         });
         commands.registerCommand({ id: 'workbench.action.closeEditorsInOtherGroups' }, {
             execute: () => {
@@ -396,7 +711,7 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
                     for (const tabBar of this.shell.allTabBars) {
                         if (tabBar !== editorTabBar) {
                             this.shell.closeTabs(tabBar,
-                                ({ owner }) => this.codeEditorWidgetUtil.is(owner)
+                                ({ owner, closable }) => closable && CodeEditorWidgetUtil.is(owner)
                             );
                         }
                     }
@@ -411,12 +726,12 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
                     if (tabBar) {
                         let left = true;
                         this.shell.closeTabs(tabBar,
-                            ({ owner }) => {
+                            ({ owner, closable }) => {
                                 if (owner === editor) {
                                     left = false;
                                     return false;
                                 }
-                                return left && this.codeEditorWidgetUtil.is(owner);
+                                return left && closable && CodeEditorWidgetUtil.is(owner);
                             }
                         );
                     }
@@ -431,12 +746,12 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
                     if (tabBar) {
                         let left = true;
                         this.shell.closeTabs(tabBar,
-                            ({ owner }) => {
+                            ({ owner, closable }) => {
                                 if (owner === editor) {
                                     left = false;
                                     return false;
                                 }
-                                return !left && this.codeEditorWidgetUtil.is(owner);
+                                return !left && closable && CodeEditorWidgetUtil.is(owner);
                             }
                         );
                     }
@@ -445,13 +760,8 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
         });
         commands.registerCommand({ id: 'workbench.action.closeAllEditors' }, {
             execute: async () => {
-                const promises = [];
-                for (const widget of this.shell.widgets) {
-                    if (this.codeEditorWidgetUtil.is(widget)) {
-                        promises.push(this.shell.closeWidget(widget.id));
-                    }
-                }
-                await Promise.all(promises);
+                const toClose = this.shell.widgets.filter(widget => CodeEditorWidgetUtil.is(widget) && widget.title.closable);
+                await this.shell.closeMany(toClose);
             }
         });
         commands.registerCommand({ id: 'workbench.action.nextEditor' }, {
@@ -460,15 +770,53 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
         commands.registerCommand({ id: 'workbench.action.previousEditor' }, {
             execute: () => this.shell.activatePreviousTab()
         });
+        commands.registerCommand({
+            id: 'workbench.action.navigateLeft',
+            label: nls.localizeByDefault('Navigate to the View on the Left'),
+            category: nls.localizeByDefault('View')
+        }, {
+            execute: () => this.navigateEditorGroup('left')
+        });
+        commands.registerCommand({
+            id: 'workbench.action.navigateRight',
+            label: nls.localizeByDefault('Navigate to the View on the Right'),
+            category: nls.localizeByDefault('View')
+        }, {
+            execute: () => this.navigateEditorGroup('right')
+        });
+        commands.registerCommand({
+            id: 'workbench.action.navigateUp',
+            label: nls.localizeByDefault('Navigate to the View Above'),
+            category: nls.localizeByDefault('View')
+        }, {
+            execute: () => this.navigateEditorGroup('up')
+        });
+        commands.registerCommand({
+            id: 'workbench.action.navigateDown',
+            label: nls.localizeByDefault('Navigate to the View Below'),
+            category: nls.localizeByDefault('View')
+        }, {
+            execute: () => this.navigateEditorGroup('down')
+        });
+        commands.registerCommand({
+            id: 'workbench.action.navigateEditorGroups',
+            label: nls.localizeByDefault('Navigate Between Editor Groups'),
+            category: nls.localizeByDefault('View')
+        }, {
+            execute: () => this.navigateEditorGroups()
+        });
         commands.registerCommand({ id: 'workbench.action.navigateBack' }, {
             execute: () => commands.executeCommand(EditorCommands.GO_BACK.id)
         });
+        commands.registerAlias('workbench.action.navigateBack', EditorCommands.GO_BACK.id);
         commands.registerCommand({ id: 'workbench.action.navigateForward' }, {
             execute: () => commands.executeCommand(EditorCommands.GO_FORWARD.id)
         });
+        commands.registerAlias('workbench.action.navigateForward', EditorCommands.GO_FORWARD.id);
         commands.registerCommand({ id: 'workbench.action.navigateToLastEditLocation' }, {
             execute: () => commands.executeCommand(EditorCommands.GO_LAST_EDIT.id)
         });
+        commands.registerAlias('workbench.action.navigateToLastEditLocation', EditorCommands.GO_LAST_EDIT.id);
 
         commands.registerCommand({ id: 'openInTerminal' }, {
             execute: (resource: URI) => this.terminalContribution.openInTerminal(new TheiaURI(resource.toString()))
@@ -476,7 +824,7 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
 
         commands.registerCommand({ id: 'workbench.action.reloadWindow' }, {
             execute: () => {
-                window.location.reload();
+                this.windowService.reload();
             }
         });
 
@@ -569,7 +917,7 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
                     if (!Array.isArray(value) || value === undefined) {
                         return undefined;
                     }
-                    return value.map(loc => toDocumentSymbol(loc));
+                    return value.map(loc => toMergedSymbol(resource, loc));
                 })
             }
         );
@@ -602,19 +950,66 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
         );
         commands.registerCommand(
             {
+                id: 'vscode.executeFoldingRangeProvider'
+            },
+            {
+                execute: ((resource: URI, position: Position) =>
+                    commands.executeCommand<TextEdit[]>('_executeFoldingRangeProvider', monaco.Uri.from(resource), position))
+            }
+        );
+        commands.registerCommand(
+            {
+                id: 'vscode.executeCodeActionProvider'
+            },
+            {
+                execute: ((resource: URI, range: Range, kind?: string, itemResolveCount?: number) =>
+                    commands.executeCommand<TextEdit[]>('_executeCodeActionProvider', monaco.Uri.from(resource), range, kind, itemResolveCount))
+            }
+        );
+        commands.registerCommand(
+            {
+                id: 'vscode.executeCompletionItemProvider'
+            },
+            {
+                execute: ((resource: URI, position: PluginPosition, triggerCharacter?: string, itemResolveCount?: number) =>
+                    commands.executeCommand<CompletionList[]>(
+                        '_executeCompletionItemProvider',
+                        monaco.Uri.from(resource),
+                        { lineNumber: position.line, column: position.character },
+                        triggerCharacter,
+                        itemResolveCount
+                    )
+                )
+            }
+        );
+        commands.registerCommand(
+            {
+                id: 'vscode.executeWorkspaceSymbolProvider'
+            },
+            {
+                execute: async (queryString: string) =>
+                    (await Promise.all(
+                        this.monacoLanguages.workspaceSymbolProviders
+                            .map(async provider => provider.provideWorkspaceSymbols({ query: queryString }, new CancellationTokenSource().token))))
+                        .flatMap(symbols => symbols)
+                        .filter(symbols => !!symbols)
+            }
+        );
+
+        commands.registerCommand(
+            {
                 id: 'vscode.prepareCallHierarchy'
             },
             {
                 execute: async (resource: URI, position: Position): Promise<CallHierarchyItem[]> => {
                     const provider = await this.getCallHierarchyServiceForUri(resource);
                     const definition = await provider?.getRootDefinition(
-                        resource.fsPath,
+                        resource.path,
                         toPosition(position),
                         new CancellationTokenSource().token
                     );
                     if (definition) {
-                        const item = fromDefinition(definition);
-                        return [item];
+                        return definition.items.map(item => fromItemHierarchyDefinition(item));
                     };
                     return [];
                 }
@@ -629,7 +1024,7 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
                     const resource = URI.from(item.uri);
                     const provider = await this.getCallHierarchyServiceForUri(resource);
                     const incomingCalls = await provider?.getCallers(
-                        toDefinition(item),
+                        toItemHierarchyDefinition(item),
                         new CancellationTokenSource().token,
                     );
                     if (incomingCalls) {
@@ -648,13 +1043,69 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
                     const resource = URI.from(item.uri);
                     const provider = await this.getCallHierarchyServiceForUri(resource);
                     const outgoingCalls = await provider?.getCallees?.(
-                        toDefinition(item),
+                        toItemHierarchyDefinition(item),
                         new CancellationTokenSource().token,
                     );
                     if (outgoingCalls) {
                         return outgoingCalls.map(fromCallHierarchyCalleeToModelCallHierarchyOutgoingCall);
                     }
                     return [];
+                }
+            }
+        );
+        commands.registerCommand(
+            {
+                id: 'vscode.prepareTypeHierarchy'
+            },
+            {
+                execute: async (resource: URI, position: Position): Promise<TypeHierarchyItem[]> => {
+                    const provider = await this.getTypeHierarchyServiceForUri(resource);
+                    const session = await provider?.prepareSession(
+                        resource.path,
+                        toPosition(position),
+                        new CancellationTokenSource().token
+                    );
+                    return session ? session.items.map(item => fromItemHierarchyDefinition(item)) : [];
+                }
+            }
+        );
+        commands.registerCommand(
+            {
+                id: 'vscode.provideSupertypes'
+            },
+            {
+                execute: async (item: TypeHierarchyItem): Promise<TypeHierarchyItem[]> => {
+                    if (!item._sessionId || !item._itemId) {
+                        return [];
+                    }
+                    const resource = URI.from(item.uri);
+                    const provider = await this.getTypeHierarchyServiceForUri(resource);
+                    const items = await provider?.provideSuperTypes(
+                        item._sessionId,
+                        item._itemId,
+                        new CancellationTokenSource().token
+                    );
+                    return (items ? items : []).map(typeItem => fromItemHierarchyDefinition(typeItem));
+                }
+            }
+        );
+        commands.registerCommand(
+            {
+                id: 'vscode.provideSubtypes'
+            },
+            {
+                execute: async (item: TypeHierarchyItem): Promise<TypeHierarchyItem[]> => {
+                    if (!item._sessionId || !item._itemId) {
+                        return [];
+                    }
+                    const resource = URI.from(item.uri);
+                    const provider = await this.getTypeHierarchyServiceForUri(resource);
+                    const items = await provider?.provideSubTypes(
+                        item._sessionId, item._itemId,
+                        new CancellationTokenSource().token
+                    );
+                    return (items ? items : []).map(typeItem => fromItemHierarchyDefinition(typeItem));
+
                 }
             }
         );
@@ -669,6 +1120,7 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
         }, {
             execute: () => commands.executeCommand(WorkspaceCommands.NEW_FOLDER.id)
         });
+        commands.registerAlias('explorer.newFolder', WorkspaceCommands.NEW_FOLDER.id);
         commands.registerCommand({
             id: 'workbench.action.terminal.sendSequence'
         }, {
@@ -704,16 +1156,19 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
         }, {
             execute: () => commands.executeCommand(FileNavigatorCommands.FOCUS.id)
         });
+        commands.registerAlias('workbench.view.explorer', FileNavigatorCommands.FOCUS.id);
         commands.registerCommand({
             id: 'copyFilePath'
         }, {
             execute: () => commands.executeCommand(CommonCommands.COPY_PATH.id)
         });
+        commands.registerAlias('copyFilePath', CommonCommands.COPY_PATH.id);
         commands.registerCommand({
             id: 'copyRelativeFilePath'
         }, {
-            execute: () => commands.executeCommand(FileNavigatorCommands.COPY_RELATIVE_FILE_PATH.id)
+            execute: () => commands.executeCommand(WorkspaceCommands.COPY_RELATIVE_FILE_PATH.id)
         });
+        commands.registerAlias('copyRelativeFilePath', WorkspaceCommands.COPY_RELATIVE_FILE_PATH.id);
         commands.registerCommand({
             id: 'revealInExplorer'
         }, {
@@ -735,13 +1190,229 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
                 }
             }
         });
+
+        commands.registerCommand({
+            id: 'workbench.experimental.requestUsbDevice'
+        }, {
+            execute: async (options?: { filters?: unknown[] }): Promise<UsbDeviceData | undefined> => {
+                const usb = (navigator as any).usb;
+                if (!usb) {
+                    return undefined;
+                }
+
+                const device = await usb.requestDevice({ filters: options?.filters ?? [] });
+                if (!device) {
+                    return undefined;
+                }
+
+                return {
+                    deviceClass: device.deviceClass,
+                    deviceProtocol: device.deviceProtocol,
+                    deviceSubclass: device.deviceSubclass,
+                    deviceVersionMajor: device.deviceVersionMajor,
+                    deviceVersionMinor: device.deviceVersionMinor,
+                    deviceVersionSubminor: device.deviceVersionSubminor,
+                    manufacturerName: device.manufacturerName,
+                    productId: device.productId,
+                    productName: device.productName,
+                    serialNumber: device.serialNumber,
+                    usbVersionMajor: device.usbVersionMajor,
+                    usbVersionMinor: device.usbVersionMinor,
+                    usbVersionSubminor: device.usbVersionSubminor,
+                    vendorId: device.vendorId,
+                };
+            }
+        });
+
+        commands.registerCommand({
+            id: 'workbench.experimental.requestSerialPort'
+        }, {
+            execute: async (options?: { filters?: unknown[] }): Promise<SerialPortData | undefined> => {
+                const serial = (navigator as any).serial;
+                if (!serial) {
+                    return undefined;
+                }
+
+                const port = await serial.requestPort({ filters: options?.filters ?? [] });
+                if (!port) {
+                    return undefined;
+                }
+
+                const info = port.getInfo();
+                return {
+                    usbVendorId: info.usbVendorId,
+                    usbProductId: info.usbProductId
+                };
+            }
+        });
+
+        commands.registerCommand({
+            id: 'workbench.experimental.requestHidDevice'
+        }, {
+            execute: async (options?: { filters?: unknown[] }): Promise<HidDeviceData | undefined> => {
+                const hid = (navigator as any).hid;
+                if (!hid) {
+                    return undefined;
+                }
+
+                const devices = await hid.requestDevice({ filters: options?.filters ?? [] });
+                if (!devices.length) {
+                    return undefined;
+                }
+
+                const device = devices[0];
+                return {
+                    opened: device.opened,
+                    vendorId: device.vendorId,
+                    productId: device.productId,
+                    productName: device.productName,
+                    collections: device.collections
+                };
+            }
+        });
+
+        // required by Jupyter for the show table of contents action
+        commands.registerCommand({ id: 'outline.focus' }, {
+            execute: () => this.outlineViewContribution.openView({ activate: true })
+        });
+
+        // required by vscode.git
+        commands.registerCommand({ id: 'workbench.view.scm' }, {
+            execute: async (): Promise<void> => { // no return value: attempting to return an ScmWidget would fail serialization when transferring the result
+                await this.scmContribution.openView({ activate: true });
+            }
+        });
+
+        interface OpenMergeEditorCommandArg {
+            base: UriComponents | string;
+            input1: MergeSideInputData | string;
+            input2: MergeSideInputData | string;
+            output: UriComponents | string;
+        }
+
+        interface MergeSideInputData {
+            uri: UriComponents;
+            title?: string;
+            description?: string;
+            detail?: string;
+        }
+
+        commands.registerCommand({ id: '_open.mergeEditor' }, {
+            execute: async (arg: OpenMergeEditorCommandArg): Promise<void> => {
+                const baseUri = toTheiaUri(arg.base);
+                const resultUri = toTheiaUri(arg.output);
+                const side1Uri = typeof arg.input1 === 'string' ? toTheiaUri(arg.input1) : toTheiaUri(arg.input1.uri);
+                const side2Uri = typeof arg.input2 === 'string' ? toTheiaUri(arg.input2) : toTheiaUri(arg.input2.uri);
+                const uri = MergeEditorUri.encode({ baseUri, side1Uri, side2Uri, resultUri });
+
+                let side1State = undefined;
+                if (typeof arg.input1 !== 'string') {
+                    const { title, description, detail } = arg.input1;
+                    side1State = { title, description, detail };
+                }
+                let side2State = undefined;
+                if (typeof arg.input2 !== 'string') {
+                    const { title, description, detail } = arg.input2;
+                    side2State = { title, description, detail };
+                }
+                const options: MergeEditorOpenerOptions = { widgetState: { side1State, side2State } };
+
+                await open(this.openerService, uri, options);
+            }
+        });
+
+        commands.registerCommand({ id: '_workbench.openScmMultiDiffEditor' }, {
+            execute: async (options: { title: string; repositoryUri: UriComponents; resourceGroupId: string }): Promise<void> => {
+                const repositoryUri = toTheiaUri(options.repositoryUri);
+                if (!repositoryUri) {
+                    return;
+                }
+                const repository = this.scmService.repositories.find(repo => new TheiaURI(repo.provider.rootUri).isEqual(repositoryUri));
+                const group = repository?.provider.groups.find(candidate => candidate.id === options.resourceGroupId);
+                if (!group) {
+                    return;
+                }
+                await commands.executeCommand('_workbench.openMultiDiffEditor', {
+                    title: options.title,
+                    resources: group.resources.map(resource => ({
+                        originalUri: resource.multiDiffEditorOriginalUri?.toComponents(),
+                        modifiedUri: resource.multiDiffEditorModifiedUri?.toComponents()
+                    }))
+                });
+            }
+        });
+
+        commands.registerCommand({ id: '_workbench.openMultiDiffEditor' }, {
+            execute: async (options: {
+                title: string;
+                resources?: { originalUri?: UriComponents; modifiedUri?: UriComponents }[];
+                reveal?: { modifiedUri: UriComponents };
+            }): Promise<void> => {
+                if (!options.resources?.length) {
+                    return;
+                }
+                const resources = options.resources
+                    .map(r => {
+                        const originalUri = toTheiaUri(r.originalUri);
+                        const modifiedUri = toTheiaUri(r.modifiedUri);
+                        const resourceUri = modifiedUri ?? originalUri;
+                        if (!resourceUri) {
+                            return undefined;
+                        }
+                        const emptyUri = new TheiaURI().withScheme(MEMORY_TEXT_READONLY).withPath(resourceUri.path);
+                        return { originalUri: originalUri ?? emptyUri, modifiedUri: modifiedUri ?? emptyUri };
+                    })
+                    .filter((r): r is { originalUri: TheiaURI; modifiedUri: TheiaURI } => r !== undefined);
+                if (!resources.length) {
+                    return;
+                }
+                const uri = MultiDiffEditorUri.encode({ title: options.title, resources });
+                const reveal = toTheiaUri(options.reveal?.modifiedUri);
+                const openerOptions: MultiDiffEditorOpenerOptions = { reveal };
+                await open(this.openerService, uri, openerOptions);
+            },
+        });
+    }
+
+    /**
+     * Installs an extension by its (optionally versioned) ID. Installing an extension that is already installed is a noop.
+     */
+    protected async installExtensionFromId(extensionIdOrVersionedId: string): Promise<void> {
+        let extensionId = extensionIdOrVersionedId;
+        let opts: PluginDeployOptions | undefined;
+        const versionedId = PluginIdentifiers.idAndVersionFromVersionedId(extensionIdOrVersionedId);
+        if (versionedId) {
+            extensionId = versionedId.id;
+            opts = { version: versionedId.version, ignoreOtherVersions: true };
+        }
+        try {
+            await this.pluginServer.install(VSCodeExtensionUri.fromId(extensionId).toString(), undefined, opts);
+        } catch (e) {
+            if (!DuplicateExtensionError.is(e)) {
+                throw e;
+            }
+        }
+    }
+
+    private async deployPlugin(uri: TheiaURI | UriComponents): Promise<void> {
+        const uriPath = isUriComponents(uri) ? URI.revive(uri).fsPath : await this.fileService.fsPath(uri);
+        return this.pluginServer.install(`local-file:${uriPath}`);
+    }
+
+    private async resolveLanguageId(resource: URI): Promise<string> {
+        const reference = await this.textModelService.createModelReference(resource);
+        const languageId = reference.object.languageId;
+        reference.dispose();
+        return languageId;
     }
 
     protected async getCallHierarchyServiceForUri(resource: URI): Promise<CallHierarchyService | undefined> {
-        const reference = await this.textModelService.createModelReference(resource);
-        const uri = new TheiaURI(resource);
-        const languageId = reference.object.languageId;
-        reference.dispose();
-        return this.callHierarchyProvider.get(languageId, uri);
+        const languageId = await this.resolveLanguageId(resource);
+        return this.callHierarchyProvider.get(languageId, new TheiaURI(resource));
+    }
+
+    protected async getTypeHierarchyServiceForUri(resource: URI): Promise<TypeHierarchyService | undefined> {
+        const languageId = await this.resolveLanguageId(resource);
+        return this.typeHierarchyProvider.get(languageId, new TheiaURI(resource));
     }
 }

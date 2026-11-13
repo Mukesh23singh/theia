@@ -16,7 +16,7 @@ The `@theia/userstorage` extension provides an API for accessing user storage fi
 
 ## Additional Information
 
-- [API documentation for `@theia/userstorage`](https://eclipse-theia.github.io/theia/docs/next/modules/userstorage.html)
+- [API documentation for `@theia/userstorage`](https://eclipse-theia.github.io/theia/docs/next/modules/_theia_userstorage.html)
 - [Theia - GitHub](https://github.com/eclipse-theia/theia)
 - [Theia - Website](https://theia-ide.org/)
 
@@ -26,14 +26,6 @@ The `@theia/userstorage` extension provides an API for accessing user storage fi
 - [一 (Secondary) GNU General Public License, version 2 with the GNU Classpath Exception](https://projects.eclipse.org/license/secondary-gpl-2.0-cp)
 
 ## Trademark
+
 "Theia" is a trademark of the Eclipse Foundation
-https://www.eclipse.org/theia
-
-
-# Theia - User Storage Extension
-
-
-
-## License
-- [Eclipse Public License 2.0](http://www.eclipse.org/legal/epl-2.0/)
-- [一 (Secondary) GNU General Public License, version 2 with the GNU Classpath Exception](https://projects.eclipse.org/license/secondary-gpl-2.0-cp)
+<https://www.eclipse.org/theia>

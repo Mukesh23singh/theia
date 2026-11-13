@@ -1,22 +1,22 @@
-/********************************************************************************
- * Copyright (C) 2021 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2021 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import * as React from '@theia/core/shared/react';
 import { Key, KeyCode } from '@theia/core/lib/browser';
-import debounce = require('@theia/core/shared/lodash.debounce');
+import debounce from '@theia/core/shared/lodash.debounce';
 
 interface HistoryState {
     history: string[];
@@ -37,20 +37,18 @@ export class SearchInWorkspaceInput extends React.Component<InputAttributes, His
         };
     }
 
-    setHistory(history: string[]): void {
-        this.setState(prevState => ({
-            ...prevState,
-            history,
-        }));
-    }
-
-    setIndex(index: number): void {
-        const { history } = this.state;
-        this.value = history[index];
-        this.setState(prevState => ({
-            ...prevState,
-            index,
-        }));
+    updateState(index: number, history?: string[]): void {
+        this.value = history ? history[index] : this.state.history[index];
+        this.setState(prevState => {
+            const newState = {
+                ...prevState,
+                index,
+            };
+            if (history) {
+                newState.history = history;
+            }
+            return newState;
+        });
     }
 
     get value(): string {
@@ -85,7 +83,7 @@ export class SearchInWorkspaceInput extends React.Component<InputAttributes, His
         if (!this.value) {
             this.value = history[index];
         } else if (index > 0 && index < history.length) {
-            this.setIndex(index - 1);
+            this.updateState(index - 1);
         }
     }
 
@@ -99,7 +97,7 @@ export class SearchInWorkspaceInput extends React.Component<InputAttributes, His
         } else if (!this.value) {
             this.value = history[index];
         } else if (index >= 0 && index < history.length - 1) {
-            this.setIndex(index + 1);
+            this.updateState(index + 1);
         }
     }
 
@@ -124,11 +122,10 @@ export class SearchInWorkspaceInput extends React.Component<InputAttributes, His
             .filter(term => term !== this.value)
             .concat(this.value)
             .slice(-SearchInWorkspaceInput.LIMIT);
-        this.setHistory(history);
-        this.setIndex(history.length - 1);
+        this.updateState(history.length - 1, history);
     }
 
-    render(): React.ReactNode {
+    override render(): React.ReactNode {
         return (
             <input
                 {...this.props}

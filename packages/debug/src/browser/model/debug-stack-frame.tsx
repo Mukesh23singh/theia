@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2018 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2018 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
@@ -21,15 +21,18 @@
 // Based on https://github.com/theia-ide/vscode/blob/standalone/0.19.x/src/vs/workbench/contrib/debug/common/debugModel.ts
 
 import * as React from '@theia/core/shared/react';
-import { WidgetOpenerOptions, DISABLED_CLASS } from '@theia/core/lib/browser';
-import { EditorWidget, Range, Position } from '@theia/editor/lib/browser';
-import { DebugProtocol } from 'vscode-debugprotocol/lib/debugProtocol';
+import { DISABLED_CLASS } from '@theia/core/lib/browser';
+import { EditorWidget, Range, Position, EditorOpenerOptions } from '@theia/editor/lib/browser';
+import { DebugProtocol } from '@vscode/debugprotocol/lib/debugProtocol.js';
 import { TreeElement } from '@theia/core/lib/browser/source-tree';
-import { DebugScope } from '../console/debug-console-items';
-import { DebugSource } from './debug-source';
+import { DebugScope } from '../console/debug-console-items.js';
+import { DebugSource } from './debug-source.js';
 import { RecursivePartial } from '@theia/core';
-import { DebugSession } from '../debug-session';
-import { DebugThread } from './debug-thread';
+import { DebugSession } from '../debug-session.js';
+import { DebugThread } from './debug-thread.js';
+import * as monaco from '@theia/monaco-editor-core';
+import { stringHash } from '@theia/core/lib/common/hash';
+import { nls } from '@theia/core/lib/common/nls';
 
 export class DebugStackFrameData {
     readonly raw: DebugProtocol.StackFrame;
@@ -39,13 +42,17 @@ export class DebugStackFrame extends DebugStackFrameData implements TreeElement 
 
     constructor(
         readonly thread: DebugThread,
-        readonly session: DebugSession
+        readonly session: DebugSession,
+        readonly id: string
     ) {
         super();
     }
 
-    get id(): string {
-        return this.session.id + ':' + this.thread.id + ':' + this.raw.id;
+    /**
+     * Returns the frame identifier from the debug protocol.
+     */
+    get frameId(): number {
+        return this.raw.id;
     }
 
     protected _source: DebugSource | undefined;
@@ -57,32 +64,61 @@ export class DebugStackFrame extends DebugStackFrameData implements TreeElement 
         this._source = this.raw.source && this.session.getSource(this.raw.source);
     }
 
+    /**
+     * Whether the debug adapter supports restarting frames at all.
+     */
+    get supportsRestartFrame(): boolean {
+        return !!this.session.capabilities.supportsRestartFrame;
+    }
+
+    /**
+     * Whether this frame can be restarted. Per the debug protocol, `canRestart` defaults to `true` if the adapter supports restarting frames.
+     */
+    get isRestartable(): boolean {
+        return this.supportsRestartFrame && this.raw.canRestart !== false;
+    }
+
+    /**
+     * Restarts this frame. As in VS Code, rejects if the debug adapter does not support restarting frames,
+     * and leaves it to the debug adapter to reject frames that cannot be restarted, see {@link isRestartable}.
+     */
     async restart(): Promise<void> {
+        if (!this.supportsRestartFrame) {
+            throw new Error(nls.localize('theia/debug/restartFrameNotSupported', 'The debug adapter does not support restarting frames.'));
+        }
         await this.session.sendRequest('restartFrame', this.toArgs({
             threadId: this.thread.id
         }));
     }
 
-    async open(options: WidgetOpenerOptions = {
-        mode: 'reveal'
-    }): Promise<EditorWidget | undefined> {
+    async open(options?: EditorOpenerOptions): Promise<EditorWidget | undefined> {
         if (!this.source) {
             return undefined;
         }
         const { line, column, endLine, endColumn } = this.raw;
         const selection: RecursivePartial<Range> = {
-            start: Position.create(line - 1, column - 1)
+            start: Position.create(this.clampPositive(line - 1), this.clampPositive(column - 1))
         };
         if (typeof endLine === 'number') {
             selection.end = {
-                line: endLine - 1,
-                character: typeof endColumn === 'number' ? endColumn - 1 : undefined
+                line: this.clampPositive(endLine - 1),
+                character: typeof endColumn === 'number' ? this.clampPositive(endColumn - 1) : undefined
             };
         }
         this.source.open({
+            mode: 'reveal',
             ...options,
             selection
         });
+    }
+
+    /**
+     * Debugger can send `column: 0` value despite of initializing the debug session with `columnsStartAt1: true`.
+     * This method can be used to ensure that neither `column` nor `column` are negative numbers.
+     * See https://github.com/microsoft/vscode-mock-debug/issues/85.
+     */
+    protected clampPositive(value: number): number {
+        return Math.max(value, 0);
     }
 
     protected scopes: Promise<DebugScope[]> | undefined;
@@ -99,7 +135,16 @@ export class DebugStackFrame extends DebugStackFrameData implements TreeElement 
         if (!response) {
             return [];
         }
-        return response.body.scopes.map(raw => new DebugScope(raw, () => this.session));
+        const scopeIds = new Set<number>();
+        return response.body.scopes.map(raw => {
+            // just as in VS Code, the id is based on the name and location to retain expansion state across multiple pauses
+            let id = 0;
+            do {
+                id = stringHash(`${raw.name}:${raw.line}:${raw.column}`, id);
+            } while (scopeIds.has(id));
+            scopeIds.add(id);
+            return new DebugScope(raw, () => this.session, id);
+        });
     }
 
     // https://github.com/theia-ide/vscode/blob/standalone/0.19.x/src/vs/workbench/contrib/debug/common/debugModel.ts#L324-L335

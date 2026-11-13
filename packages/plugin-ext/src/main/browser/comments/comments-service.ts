@@ -1,20 +1,20 @@
-/********************************************************************************
- * Copyright (C) 2020 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable } from '@theia/core/shared/inversify';
+import { injectable, inject, named } from '@theia/core/shared/inversify';
 import { URI } from '@theia/core/shared/vscode-uri';
 import { Event, Emitter } from '@theia/core/lib/common/event';
 import {
@@ -24,9 +24,10 @@ import {
     CommentThread,
     CommentThreadChangedEvent,
     CommentThreadChangedEventMain
-} from '../../../common/plugin-api-rpc-model';
-import { CommentController } from './comments-main';
+} from '../../../common/plugin-api-rpc-model.js';
+import { CommentController } from './comments-main.js';
 import { CancellationToken } from '@theia/core/lib/common/cancellation';
+import { ILogger } from '@theia/core';
 
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
@@ -89,6 +90,9 @@ export interface CommentsService {
 
 @injectable()
 export class PluginCommentService implements CommentsService {
+
+    @inject(ILogger) @named('plugin-ext:PluginCommentService')
+    protected readonly logger: ILogger;
 
     private readonly onDidSetDataProviderEmitter: Emitter<void> = new Emitter<void>();
     readonly onDidSetDataProvider: Event<void> = this.onDidSetDataProviderEmitter.event;
@@ -181,7 +185,7 @@ export class PluginCommentService implements CommentsService {
         this.commentControls.forEach(control => {
             commentControlResult.push(control.getDocumentComments(resource, CancellationToken.None)
                 .catch(e => {
-                    console.log(e);
+                    this.logger.info(e);
                     return null;
                 }));
         });
@@ -190,15 +194,17 @@ export class PluginCommentService implements CommentsService {
     }
 
     async getCommentingRanges(resource: URI): Promise<Range[]> {
-        const commentControlResult: Promise<Range[]>[] = [];
+        const commentControlResult: Promise<{ ranges: Range[]; fileComments: boolean } | undefined>[] = [];
 
         this.commentControls.forEach(control => {
             commentControlResult.push(control.getCommentingRanges(resource, CancellationToken.None));
         });
 
         const ret = await Promise.all(commentControlResult);
-        return ret.reduce((prev, curr) => {
-            prev.push(...curr);
+        return ret.reduce<Range[]>((prev, curr) => {
+            if (curr) {
+                prev.push(...curr.ranges);
+            }
             return prev;
         }, []);
     }

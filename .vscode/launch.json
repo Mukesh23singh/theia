@@ -5,6 +5,17 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Playwright Tests",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/@playwright/test/cli.js",
+      "cwd": "${workspaceFolder}/examples/playwright",
+      "args": [
+        "test",
+        "--config=./configs/playwright.config.ts"
+      ]
+    },
+    {
       "type": "node",
       "request": "attach",
       "name": "Attach by Process ID",
@@ -20,32 +31,33 @@
       "type": "node",
       "request": "launch",
       "name": "Launch Electron Backend",
-      "runtimeExecutable": "${workspaceRoot}/node_modules/.bin/electron",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron",
       "windows": {
-        "runtimeExecutable": "${workspaceRoot}/node_modules/.bin/electron.cmd"
+        "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron.cmd"
       },
-      "cwd": "${workspaceRoot}/examples/electron",
-      "protocol": "inspector",
+      "cwd": "${workspaceFolder}/examples/electron",
       "args": [
         ".",
         "--log-level=debug",
         "--hostname=localhost",
         "--no-cluster",
-        "--app-project-path=${workspaceRoot}/examples/electron",
+        "--app-project-path=${workspaceFolder}/examples/electron",
         "--remote-debugging-port=9222",
         "--no-app-auto-install",
-        "--plugins=local-dir:../../plugins"
+        "--plugins=local-dir:../../plugins",
+        "--ovsx-router-config=${workspaceFolder}/examples/ovsx-router-config.json"
       ],
       "env": {
         "NODE_ENV": "development"
       },
       "sourceMaps": true,
       "outFiles": [
-        "${workspaceRoot}/examples/electron/src-gen/frontend/electron-main.js",
-        "${workspaceRoot}/examples/electron/src-gen/backend/main.js",
-        "${workspaceRoot}/examples/electron/lib/**/*.js",
-        "${workspaceRoot}/packages/*/lib/**/*.js",
-        "${workspaceRoot}/dev-packages/*/lib/**/*.js"
+        "${workspaceFolder}/examples/electron/lib/backend/electron-main.js",
+        "${workspaceFolder}/examples/electron/lib/backend/main.js",
+        "${workspaceFolder}/examples/electron/lib/**/*.js",
+        "${workspaceFolder}/examples/api-samples/lib/**/*.js",
+        "${workspaceFolder}/packages/*/lib/**/*.js",
+        "${workspaceFolder}/dev-packages/*/lib/**/*.js"
       ],
       "smartStep": true,
       "internalConsoleOptions": "openOnSessionStart",
@@ -54,25 +66,40 @@
     {
       "type": "node",
       "request": "launch",
+      "name": "Start Theia Default (Browser backend, no debug)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "start:browser"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "node",
+      "request": "launch",
       "name": "Launch Browser Backend",
-      "program": "${workspaceRoot}/examples/browser/src-gen/backend/main.js",
+      "program": "${workspaceFolder}/examples/browser/lib/backend/main.js",
+      "cwd": "${workspaceFolder}/examples/browser",
       "args": [
         "--hostname=0.0.0.0",
         "--port=3000",
         "--no-cluster",
-        "--app-project-path=${workspaceRoot}/examples/browser",
-        "--plugins=local-dir:plugins",
-        "--hosted-plugin-inspect=9339"
+        "--app-project-path=${workspaceFolder}/examples/browser",
+        "--plugins=local-dir:../../plugins",
+        "--hosted-plugin-inspect=9339",
+        "--ovsx-router-config=${workspaceFolder}/examples/ovsx-router-config.json"
       ],
       "env": {
         "NODE_ENV": "development"
       },
       "sourceMaps": true,
       "outFiles": [
-        "${workspaceRoot}/examples/browser/src-gen/backend/*.js",
-        "${workspaceRoot}/examples/browser/lib/**/*.js",
-        "${workspaceRoot}/packages/*/lib/**/*.js",
-        "${workspaceRoot}/dev-packages/*/lib/**/*.js"
+        "${workspaceFolder}/examples/browser/src-gen/backend/*.js",
+        "${workspaceFolder}/examples/browser/lib/**/*.js",
+        "${workspaceFolder}/examples/api-samples/lib/**/*.js",
+        "${workspaceFolder}/packages/*/lib/**/*.js",
+        "${workspaceFolder}/dev-packages/*/lib/**/*.js"
       ],
       "smartStep": true,
       "internalConsoleOptions": "openOnSessionStart",
@@ -84,57 +111,26 @@
       "name": "Attach to Plugin Host",
       "port": 9339,
       "timeout": 60000,
-      "stopOnEntry": false,
       "smartStep": true,
       "sourceMaps": true,
       "internalConsoleOptions": "openOnSessionStart",
       "outFiles": [
-        "${workspaceRoot}/packages/plugin-ext/lib/**/*.js",
-        "${workspaceRoot}/plugins/**/*.js"
+        "${workspaceFolder}/packages/plugin-ext/lib/**/*.js",
+        "${workspaceFolder}/plugins/**/*.js"
       ]
     },
     {
       "type": "node",
       "request": "launch",
-      "name": "Launch Browser Backend (eclipse.jdt.ls)",
-      "program": "${workspaceRoot}/examples/browser/src-gen/backend/main.js",
-      "args": [
-        "--log-level=debug",
-        "--root-dir=${workspaceRoot}/../eclipse.jdt.ls/org.eclipse.jdt.ls.core",
-        "--port=3000",
-        "--no-cluster",
-        "--no-app-auto-install"
-      ],
-      "env": {
-        "NODE_ENV": "development"
-      },
-      "sourceMaps": true,
-      "outFiles": [
-        "${workspaceRoot}/examples/browser/src-gen/backend/*.js",
-        "${workspaceRoot}/examples/browser/lib/**/*.js",
-        "${workspaceRoot}/packages/*/lib/**/*.js",
-        "${workspaceRoot}/dev-packages/*/lib/**/*.js"
-      ],
-      "smartStep": true,
-      "internalConsoleOptions": "openOnSessionStart",
-      "outputCapture": "std"
-    },
-    {
-      "type": "node",
-      "request": "launch",
-      "protocol": "inspector",
       "name": "Run Mocha Tests",
-      "program": "${workspaceRoot}/node_modules/mocha/bin/_mocha",
+      "program": "${workspaceFolder}/node_modules/mocha/bin/_mocha",
       "args": [
         "--no-timeouts",
         "--colors",
-        "--opts",
-        "${workspaceRoot}/configs/mocha.opts",
+        "--config",
+        "${workspaceFolder}/configs/mocharc.yml",
         "**/${fileBasenameNoExtension}.js"
       ],
-      "env": {
-        "TS_NODE_PROJECT": "${workspaceRoot}/tsconfig.json"
-      },
       "sourceMaps": true,
       "smartStep": true,
       "internalConsoleOptions": "openOnSessionStart",
@@ -144,40 +140,13 @@
       "name": "Launch Browser Frontend",
       "type": "chrome",
       "request": "launch",
-      "url": "http://localhost:3000/",
-      "webRoot": "${workspaceRoot}"
+      "url": "http://localhost:3000/"
     },
     {
       "type": "chrome",
       "request": "attach",
       "name": "Attach to Electron Frontend",
-      "port": 9222,
-      "sourceMapPathOverrides": {
-        "webpack://@theia/example-electron/*": "${workspaceFolder}/examples/electron/*"
-      }
-    },
-    {
-      "name": "Launch VS Code Tests",
-      "type": "node",
-      "request": "launch",
-      "args": [
-        "${workspaceFolder}/examples/browser/src-gen/backend/main.js",
-        "${workspaceFolder}/plugins/vscode-api-tests/testWorkspace",
-        "--port",
-        "3030",
-        "--hostname",
-        "0.0.0.0",
-        "--extensionTestsPath=${workspaceFolder}/plugins/vscode-api-tests/out/singlefolder-tests",
-        "--hosted-plugin-inspect=9339"
-      ],
-      "env": {
-        "THEIA_DEFAULT_PLUGINS": "local-dir:${workspaceFolder}/plugins"
-      },
-      "stopOnEntry": false,
-      "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/../.js"
-      ]
+      "port": 9222
     }
   ],
   "compounds": [
@@ -185,8 +154,19 @@
       "name": "Launch Electron Backend & Frontend",
       "configurations": [
         "Launch Electron Backend",
+        "Attach to Plugin Host",
         "Attach to Electron Frontend"
-      ]
+      ],
+      "stopAll": true
+    },
+    {
+      "name": "Launch Browser Backend & Frontend",
+      "configurations": [
+        "Launch Browser Backend",
+        "Attach to Plugin Host",
+        "Launch Browser Frontend"
+      ],
+      "stopAll": true
     }
   ]
 }

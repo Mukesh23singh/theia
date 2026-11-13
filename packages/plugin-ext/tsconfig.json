@@ -15,6 +15,12 @@
   ],
   "references": [
     {
+      "path": "../ai-core"
+    },
+    {
+      "path": "../ai-mcp"
+    },
+    {
       "path": "../bulk-edit"
     },
     {
@@ -31,6 +37,9 @@
     },
     {
       "path": "../editor"
+    },
+    {
+      "path": "../editor-preview"
     },
     {
       "path": "../file-search"
@@ -51,10 +60,16 @@
       "path": "../navigator"
     },
     {
+      "path": "../notebook"
+    },
+    {
       "path": "../output"
     },
     {
       "path": "../plugin"
+    },
+    {
+      "path": "../plugin-utils"
     },
     {
       "path": "../preferences"
@@ -69,10 +84,22 @@
       "path": "../task"
     },
     {
+      "path": "../telemetry"
+    },
+    {
       "path": "../terminal"
     },
     {
+      "path": "../test"
+    },
+    {
       "path": "../timeline"
+    },
+    {
+      "path": "../typehierarchy"
+    },
+    {
+      "path": "../variable-resolver"
     },
     {
       "path": "../workspace"

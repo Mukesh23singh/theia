@@ -1,11 +1,11 @@
 {
   "name": "@theia/application-manager",
-  "version": "1.18.0",
+  "version": "1.77.0",
   "description": "Theia application manager API.",
   "publishConfig": {
     "access": "public"
   },
-  "license": "EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0",
+  "license": "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/eclipse-theia/theia.git"
@@ -20,6 +20,15 @@
   ],
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json",
+    "./lib/generator": "./lib/generator/index.js",
+    "./lib/*.json": "./lib/*.json",
+    "./lib/*.js": "./lib/*.js",
+    "./lib/*": "./lib/*.js",
+    "./*": "./*"
+  },
   "scripts": {
     "build": "theiaext build",
     "clean": "theiaext clean",
@@ -29,37 +38,35 @@
     "watch": "theiaext watch"
   },
   "dependencies": {
-    "@babel/core": "^7.10.0",
-    "@babel/plugin-transform-classes": "^7.10.0",
-    "@babel/plugin-transform-runtime": "^7.10.0",
-    "@babel/preset-env": "^7.10.0",
-    "@theia/application-package": "1.18.0",
-    "@theia/compression-webpack-plugin": "^3.0.0",
-    "@types/fs-extra": "^4.0.2",
-    "babel-loader": "^8.2.2",
-    "buffer": "^6.0.3",
-    "circular-dependency-plugin": "^5.2.2",
-    "copy-webpack-plugin": "^8.1.1",
-    "css-loader": "^6.2.0",
-    "electron-rebuild": "^1.8.6",
-    "font-awesome-webpack": "0.0.5-beta.2",
-    "fs-extra": "^4.0.2",
-    "ignore-loader": "^0.1.2",
-    "less": "^3.0.3",
-    "setimmediate": "^1.0.5",
-    "source-map-loader": "^2.0.1",
-    "source-map-support": "^0.5.19",
-    "style-loader": "^2.0.0",
-    "umd-compat-loader": "^2.1.2",
-    "webpack": "^5.48.0",
-    "webpack-cli": "4.7.0",
-    "worker-loader": "^3.0.8",
-    "yargs": "^15.3.1"
+    "@electron/rebuild": "^4.2.1",
+    "@theia/application-package": "1.77.0",
+    "@theia/bundle-plugin": "1.77.0",
+    "@theia/ffmpeg": "1.77.0",
+    "@theia/plugin-utils": "1.77.0",
+    "@types/fs-extra": "^4.0.15",
+    "@types/semver": "^7.8.0",
+    "esbuild": "^0.28.2",
+    "esbuild-plugin-copy": "^2.1.1",
+    "esbuild-plugins-node-modules-polyfill": "^1.8.3",
+    "fs-extra": "^4.0.3",
+    "http-server": "^14.1.1",
+    "semver": "^7.8.5",
+    "tslib": "^2.8.1",
+    "yargs": "^17.7.3"
+  },
+  "peerDependencies": {
+    "@theia/electron": "*"
+  },
+  "peerDependenciesMeta": {
+    "@theia/electron": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@theia/ext-scripts": "1.18.0"
+    "@theia/ext-scripts": "1.77.0"
   },
   "nyc": {
     "extends": "../../configs/nyc.json"
-  }
+  },
+  "gitHead": "21358137e41342742707f660b8e222f940a27652"
 }

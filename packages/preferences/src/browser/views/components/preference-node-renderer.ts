@@ -1,29 +1,34 @@
-/********************************************************************************
- * Copyright (C) 2020 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
-import { PreferenceService, ContextMenuRenderer, PreferenceInspection, PreferenceScope, PreferenceProvider } from '@theia/core/lib/browser';
-import { Preference, PreferenceMenus } from '../../util/preference-types';
-import { PreferenceTreeLabelProvider } from '../../util/preference-tree-label-provider';
-import { PreferencesScopeTabBar } from '../preference-scope-tabbar-widget';
-import { Disposable } from '@theia/core/lib/common';
-import { JSONValue } from '@theia/core/shared/@phosphor/coreutils';
-import debounce = require('@theia/core/shared/lodash.debounce');
-import { PreferenceTreeModel } from '../../preference-tree-model';
-import { PreferencesSearchbarWidget } from '../preference-searchbar-widget';
+import {
+    ContextMenuRenderer, codicon, OpenerService, open
+} from '@theia/core/lib/browser';
+import { Preference, PreferenceMenus } from '../../util/preference-types.js';
+import { PreferenceTreeLabelProvider } from '../../util/preference-tree-label-provider.js';
+import { PreferencesScopeTabBar } from '../preference-scope-tabbar-widget.js';
+import { Disposable, nls, PreferenceDataProperty, PreferenceInspection, PreferenceScope, PreferenceService } from '@theia/core/lib/common';
+import { JSONValue } from '@theia/core/shared/@lumino/coreutils';
+import debounce from '@theia/core/shared/lodash.debounce';
+import { PreferenceTreeModel } from '../../preference-tree-model.js';
+import { PreferencesSearchbarWidget } from '../preference-searchbar-widget.js';
+import * as DOMPurify from '@theia/core/shared/dompurify';
+import URI from '@theia/core/lib/common/uri';
+import { PreferenceMarkdownRenderer } from './preference-markdown-renderer.js';
 
 export const PreferenceNodeRendererFactory = Symbol('PreferenceNodeRendererFactory');
 export type PreferenceNodeRendererFactory = (node: Preference.TreeNode) => PreferenceNodeRenderer;
@@ -33,6 +38,7 @@ export const SUBHEADER_CLASS = 'settings-section-subcategory-title';
 export interface GeneralPreferenceNodeRenderer extends Disposable {
     node: HTMLElement;
     id: string;
+    schema?: PreferenceDataProperty;
     group: string;
     nodeId: string;
     visible: boolean;
@@ -95,6 +101,10 @@ export abstract class PreferenceNodeRenderer implements Disposable, GeneralPrefe
 
     protected abstract createDomNode(): HTMLElement;
 
+    protected getAdditionalNodeClassnames(): Iterable<string> {
+        return [];
+    }
+
     insertBefore(nextSibling: HTMLElement): void {
         nextSibling.insertAdjacentElement('beforebegin', this.domNode);
         this.attached = true;
@@ -145,21 +155,27 @@ export class PreferenceHeaderRenderer extends PreferenceNodeRenderer {
 export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, InteractableType extends HTMLElement>
     extends PreferenceNodeRenderer
     implements Required<GeneralPreferenceNodeRenderer> {
-    @inject(Preference.Node) protected readonly preferenceNode: Preference.LeafNode;
+    @inject(Preference.Node) protected override readonly preferenceNode: Preference.LeafNode;
     @inject(PreferenceService) protected readonly preferenceService: PreferenceService;
     @inject(ContextMenuRenderer) protected readonly menuRenderer: ContextMenuRenderer;
     @inject(PreferencesScopeTabBar) protected readonly scopeTracker: PreferencesScopeTabBar;
     @inject(PreferenceTreeModel) protected readonly model: PreferenceTreeModel;
     @inject(PreferencesSearchbarWidget) protected readonly searchbar: PreferencesSearchbarWidget;
+    @inject(OpenerService) protected readonly openerService: OpenerService;
+    @inject(PreferenceMarkdownRenderer) protected readonly markdownRenderer: PreferenceMarkdownRenderer;
 
     protected headlineWrapper: HTMLDivElement;
     protected gutter: HTMLDivElement;
     protected interactable: InteractableType;
     protected inspection: PreferenceInspection<ValueType> | undefined;
-    protected isModifiedFromDefault = false;
+    protected isSet = false;
+
+    get schema(): PreferenceDataProperty {
+        return this.preferenceNode.preference.data;
+    }
 
     @postConstruct()
-    protected init(): void {
+    protected override init(): void {
         this.setId();
         this.updateInspection();
         this.domNode = this.createDomNode();
@@ -170,10 +186,23 @@ export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, In
         this.inspection = this.preferenceService.inspect<ValueType>(this.id, this.scopeTracker.currentScope.uri);
     }
 
+    protected openLink(event: MouseEvent): void {
+        if (event.target instanceof HTMLAnchorElement) {
+            event.preventDefault();
+            event.stopPropagation();
+            // Exclude right click
+            if (event.button < 2) {
+                const uri = new URI(event.target.href);
+                open(this.openerService, uri);
+            }
+        }
+    }
+
     protected createDomNode(): HTMLLIElement {
         const wrapper = document.createElement('li');
         wrapper.classList.add('single-pref');
         wrapper.id = `${this.id}-editor`;
+        wrapper.tabIndex = 0;
         wrapper.setAttribute('data-pref-id', this.id);
         wrapper.setAttribute('data-node-id', this.preferenceNode.id);
 
@@ -191,25 +220,33 @@ export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, In
         wrapper.appendChild(gutter);
 
         const cog = document.createElement('i');
-        cog.className = 'codicon codicon-settings-gear settings-context-menu-btn';
+        cog.className = `${codicon('settings-gear', true)} settings-context-menu-btn`;
         cog.setAttribute('aria-label', 'Open Context Menu');
         cog.setAttribute('role', 'button');
         cog.onclick = this.handleCogAction.bind(this);
         cog.onkeydown = this.handleCogAction.bind(this);
-        cog.title = 'More actions...';
+        cog.title = nls.localizeByDefault('More Actions...');
         gutter.appendChild(cog);
 
-        const activeType = Array.isArray(this.preferenceNode.preference.data.type) ? this.preferenceNode.preference.data.type[0] : this.preferenceNode.preference.data.type;
         const contentWrapper = document.createElement('div');
-        contentWrapper.classList.add('pref-content-container', activeType ?? 'open-json');
+        contentWrapper.classList.add('pref-content-container', ...this.getAdditionalNodeClassnames());
         wrapper.appendChild(contentWrapper);
 
         const { description, markdownDescription } = this.preferenceNode.preference.data;
-        const descriptionToUse = markdownDescription || description;
-        if (descriptionToUse) {
+        if (markdownDescription || description) {
             const descriptionWrapper = document.createElement('div');
             descriptionWrapper.classList.add('pref-description');
-            descriptionWrapper.textContent = descriptionToUse;
+            if (markdownDescription) {
+                const renderedDescription = this.markdownRenderer.render(markdownDescription);
+                descriptionWrapper.onauxclick = this.openLink.bind(this);
+                descriptionWrapper.onclick = this.openLink.bind(this);
+                descriptionWrapper.oncontextmenu = () => false;
+                descriptionWrapper.innerHTML = DOMPurify.sanitize(renderedDescription, {
+                    ALLOW_UNKNOWN_PROTOCOLS: true
+                });
+            } else if (description) {
+                descriptionWrapper.textContent = description;
+            }
             contentWrapper.appendChild(descriptionWrapper);
         }
 
@@ -222,7 +259,7 @@ export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, In
     }
 
     protected handleCogAction({ currentTarget }: KeyboardEvent | MouseEvent): void {
-        const value = Preference.getValueInScope(this.inspection, this.scopeTracker.currentScope.scope) ?? this.inspection?.defaultValue;
+        const value = Preference.getValueInScope(this.inspection, this.scopeTracker.currentScope.scope) ?? this.getDefaultValue();
         const target = currentTarget as HTMLElement | undefined;
         if (target && value !== undefined) {
             this.showCog();
@@ -231,6 +268,7 @@ export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, In
                 menuPath: PreferenceMenus.PREFERENCE_EDITOR_CONTEXT_MENU,
                 anchor: { x: domRect.left, y: domRect.bottom },
                 args: [{ id: this.id, value }],
+                context: target,
                 onHide: () => this.hideCog()
             });
         }
@@ -252,13 +290,13 @@ export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, In
         this.gutter.classList.remove('show-cog');
     }
 
-    protected updateModificationStatus(knownCurrentValue?: JSONValue): void {
-        const wasModified = this.isModifiedFromDefault;
+    protected updateModificationStatus(): void {
+        const wasSet = this.isSet;
         const { inspection } = this;
-        const valueInCurrentScope = knownCurrentValue ?? Preference.getValueInScope(inspection, this.scopeTracker.currentScope.scope);
-        this.isModifiedFromDefault = valueInCurrentScope !== undefined && !PreferenceProvider.deepEqual(valueInCurrentScope, inspection?.defaultValue);
-        if (wasModified !== this.isModifiedFromDefault) {
-            this.gutter.classList.toggle('theia-mod-item-modified', this.isModifiedFromDefault);
+        const valueInCurrentScope = Preference.getValueInScope(inspection, this.scopeTracker.currentScope.scope);
+        this.isSet = valueInCurrentScope !== undefined;
+        if (wasSet !== this.isSet) {
+            this.gutter.classList.toggle('theia-mod-item-modified', this.isSet);
         }
     }
 
@@ -270,6 +308,29 @@ export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, In
             nameWrapper.classList.add('preference-leaf-headline-name');
             nameWrapper.textContent = name;
             headlineWrapper.appendChild(nameWrapper);
+
+            const tags = this.schema.tags;
+            if (tags && tags.length > 0) {
+                const tagsWrapper = document.createElement('span');
+                tagsWrapper.classList.add('preference-leaf-headline-tags');
+                const PREVIEW_INDICATOR_DESCRIPTION = nls.localizeByDefault(
+                    'Preview setting: this setting controls a new feature that is still under refinement yet ready to use. Feedback is welcome.');
+                const EXPERIMENTAL_INDICATOR_DESCRIPTION = nls.localizeByDefault(
+                    'Experimental setting: this setting controls a new feature that is actively being developed and may be unstable. It is subject to change or removal.');
+
+                tags.forEach(tag => {
+                    const tagElement = document.createElement('span');
+                    const isExperimentalSetting = tag === 'experimental';
+                    const isPreviewSetting = tag === 'preview';
+                    tagElement.classList.add('preference-tag');
+                    tagElement.textContent = isExperimentalSetting ? nls.localizeByDefault('Experimental') :
+                        isPreviewSetting ? nls.localizeByDefault('Preview') : tag;
+                    tagElement.title = isExperimentalSetting ? EXPERIMENTAL_INDICATOR_DESCRIPTION :
+                        isPreviewSetting ? PREVIEW_INDICATOR_DESCRIPTION : tag;
+                    tagsWrapper.appendChild(tagElement);
+                });
+                headlineWrapper.appendChild(tagsWrapper);
+            }
         }
         const prefix = this.labelProvider.getPrefix(this.preferenceNode, filtered);
         const currentFirstChild = headlineWrapper.children[0];
@@ -288,11 +349,38 @@ export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, In
             headlineWrapper.removeChild(currentFirstChild);
         }
 
-        const currentLastChild = headlineWrapper.lastChild as HTMLElement;
-        if (currentLastChild.classList.contains('preference-leaf-headline-suffix')) {
-            this.compareOtherModifiedScopes(headlineWrapper, currentLastChild);
+        const existingModifiedScopes = headlineWrapper.querySelector('.preference-modified-scopes-suffix') as HTMLElement | null;
+        if (existingModifiedScopes) {
+            this.compareOtherModifiedScopes(headlineWrapper, existingModifiedScopes);
         } else {
             this.createOtherModifiedScopes(headlineWrapper);
+        }
+        this.updateSessionOverrideState();
+    }
+
+    /**
+     * Adds (or removes) a subtle "Overridden by session" suffix in the headline when a
+     * session override (set via `--session-preference`) is active for this preference.
+     * Styled like the existing "Modified in:" suffix so it reads as a hint, not a warning.
+     * Editing remains enabled; writing a new value clears the session override via
+     * `PreferenceServiceImpl.evictSessionOverride`.
+     */
+    protected updateSessionOverrideState(): void {
+        const { headlineWrapper } = this;
+        // Defensive: remove any leftover marker from earlier prominent styling.
+        headlineWrapper.querySelector('.preference-session-override-marker')?.remove();
+
+        const hasSessionOverride = this.inspection?.sessionValue !== undefined;
+        const existingSuffix = headlineWrapper.querySelector('.preference-session-suffix') as HTMLElement | null;
+        if (hasSessionOverride && !existingSuffix) {
+            const suffix = document.createElement('i');
+            suffix.classList.add('preference-leaf-headline-suffix', 'preference-session-suffix');
+            suffix.textContent = nls.localize('theia/preferences/sessionOverride/suffix', 'Overridden by session');
+            suffix.title = nls.localize('theia/preferences/sessionOverride/suffixTooltip',
+                'This preference has a session value set via --session-preference. Editing it here clears the session override for the rest of this session.');
+            headlineWrapper.appendChild(suffix);
+        } else if (!hasSessionOverride && existingSuffix) {
+            existingSuffix.remove();
         }
     }
 
@@ -328,8 +416,14 @@ export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, In
         const modifiedScopes = this.getModifiedScopesAsStrings();
         if (modifiedScopes.length !== 0) {
             const wrapper = document.createElement('i');
-            wrapper.classList.add('preference-leaf-headline-suffix');
-            headlineWrapper.appendChild(wrapper);
+            wrapper.classList.add('preference-leaf-headline-suffix', 'preference-modified-scopes-suffix');
+            // The session suffix, if present, is always inserted after the modified-scopes suffix.
+            const sessionSuffix = headlineWrapper.querySelector('.preference-session-suffix');
+            if (sessionSuffix) {
+                headlineWrapper.insertBefore(wrapper, sessionSuffix);
+            } else {
+                headlineWrapper.appendChild(wrapper);
+            }
 
             const messagePrefix = this.getModifiedMessagePrefix();
             const messageWrapper = document.createElement('span');
@@ -356,7 +450,7 @@ export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, In
     }
 
     protected getModifiedMessagePrefix(): string {
-        return this.isModifiedFromDefault ? 'Also modified in: ' : 'Modified in: ';
+        return (this.isSet ? nls.localizeByDefault('Also modified in') : nls.localizeByDefault('Modified in')) + ': ';
     }
 
     protected addEventHandlerToModifiedScope(scope: PreferenceScope, scopeWrapper: HTMLElement): void {
@@ -383,7 +477,7 @@ export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, In
             for (const otherScope of [PreferenceScope.User, PreferenceScope.Workspace]) {
                 if (otherScope !== currentScopeInView) {
                     const valueInOtherScope = Preference.getValueInScope(inspection, otherScope);
-                    if (valueInOtherScope !== undefined && !PreferenceProvider.deepEqual(valueInOtherScope, inspection.defaultValue)) {
+                    if (valueInOtherScope !== undefined) {
                         modifiedScopes.push(otherScope);
                     }
                 }
@@ -392,18 +486,20 @@ export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, In
         return modifiedScopes;
     }
 
-    protected getValue(): ValueType {
+    // Many preferences allow `null` and even use it as a default regardless of the declared type.
+    protected getValue(): ValueType | null {
         let currentValue = Preference.getValueInScope(this.inspection, this.scopeTracker.currentScope.scope);
         if (currentValue === undefined) {
-            currentValue = this.inspection?.defaultValue;
+            currentValue = this.getDefaultValue();
         }
-        return currentValue ?? this.getFallbackValue();
+        return currentValue;
     }
 
     protected setPreferenceWithDebounce = debounce(this.setPreferenceImmediately.bind(this), 500, { leading: false, trailing: true });
 
     protected setPreferenceImmediately(value: ValueType | undefined): Promise<void> {
-        return this.preferenceService.set(this.id, value, this.scopeTracker.currentScope.scope, this.scopeTracker.currentScope.uri);
+        return this.preferenceService.set(this.id, value, this.scopeTracker.currentScope.scope, this.scopeTracker.currentScope.uri)
+            .catch(() => this.handleValueChange());
     }
 
     handleSearchChange(isFiltered = this.model.isFiltered): void {
@@ -420,7 +516,26 @@ export abstract class PreferenceLeafNodeRenderer<ValueType extends JSONValue, In
         this.updateHeadline();
     }
 
+    /**
+     * Returns the default value for this preference.
+     * @returns The default value from the inspection or the fallback value if no default is specified.
+     */
+    protected getDefaultValue(): ValueType {
+        return this.inspection?.defaultValue ?? this.getFallbackValue();
+    }
+
+    /**
+     * Should create an HTML element that the user can interact with to change the value of the preference.
+     * @param container the parent element for the interactable. This method is responsible for adding the new element to its parent.
+     */
     protected abstract createInteractable(container: HTMLElement): void;
+    /**
+     * @returns a fallback default value for a preference of the type implemented by a concrete leaf renderer
+     * This function is only called if the default value for a given preference is not specified in its schema.
+     */
     protected abstract getFallbackValue(): ValueType;
+    /**
+     * This function is responsible for reconciling the display of the preference value with the value reported by the PreferenceService.
+     */
     protected abstract doHandleValueChange(): void;
 }

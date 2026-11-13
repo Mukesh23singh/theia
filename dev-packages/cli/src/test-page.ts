@@ -1,23 +1,23 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import * as puppeteer from 'puppeteer';
-const collectFiles: (options: TestFileOptions) => string[] = require('mocha/lib/cli/collect-files');
+import * as puppeteer from 'puppeteer-core';
+const collectFiles: (options: TestFileOptions) => { files: string[] } = require('mocha/lib/cli/collect-files');
 
 export interface TestFileOptions {
     ignore: string[]
@@ -81,7 +81,7 @@ export default async function newTestPage(options: TestPageOptions): Promise<pup
         }
         console.log('loading mocha...');
         // replace console.log by theia logger for mocha
-        await page.waitForFunction(() => !!(window as any)['theia']['@theia/core/lib/common/logger'].logger, {
+        await page.waitForFunction(() => !!(window as any)['theia']?.['@theia/core/lib/common/logger']?.logger, {
             timeout: 30 * 1000
         });
         await page.addScriptTag({ path: require.resolve('mocha/mocha.js') });
@@ -90,7 +90,7 @@ export default async function newTestPage(options: TestPageOptions): Promise<pup
         console.log('loading Theia...');
         await page.evaluate(() => {
             const { FrontendApplicationStateService } = (window as any)['theia']['@theia/core/lib/browser/frontend-application-state'];
-            const { PreferenceService } = (window as any)['theia']['@theia/core/lib/browser/preferences/preference-service'];
+            const { PreferenceService } = (window as any)['theia']['@theia/core/lib/common/preferences/preference-service'];
             const { WorkspaceService } = (window as any)['theia']['@theia/workspace/lib/browser/workspace-service'];
 
             const container = (window as any)['theia'].container;
@@ -112,16 +112,17 @@ export default async function newTestPage(options: TestPageOptions): Promise<pup
             mocha.setup({
                 reporter: 'spec',
                 ui: 'bdd',
-                useColors: true,
-                retries: 5
-            } as MochaSetupOptions);
+                color: true,
+                retries: 0,
+                timeout: 10000
+            });
         });
 
         if (onWillRun) {
             await onWillRun();
         }
 
-        for (const file of files) {
+        for (const file of files.files) {
             await page.addScriptTag({ path: file });
         }
 

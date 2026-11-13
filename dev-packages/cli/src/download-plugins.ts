@@ -1,45 +1,30 @@
-/********************************************************************************
- * Copyright (C) 2020 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-declare global {
-    interface Array<T> {
-        // Supported since Node >=11.0
-        flat(depth?: number): any
-    }
-}
-
-import { OVSXClient } from '@theia/ovsx-client/lib/ovsx-client';
-import { green, red, yellow } from 'colors/safe';
-import * as decompress from 'decompress';
-import { createWriteStream, existsSync, promises as fs } from 'fs';
-import { HttpsProxyAgent } from 'https-proxy-agent';
-import fetch, { RequestInit, Response } from 'node-fetch';
+import { OVSXApiFilterImpl, OVSXClient, VSXTargetPlatform } from '@theia/ovsx-client';
+import chalk from 'chalk';
+import { promises as fs } from 'fs';
 import * as path from 'path';
-import { getProxyForUrl } from 'proxy-from-env';
-import * as stream from 'stream';
-import * as temp from 'temp';
-import { promisify } from 'util';
-
-const pipelineAsPromised = promisify(stream.pipeline);
-
-temp.track();
-
-export const extensionPackCacheName = '.packs';
+import { DEFAULT_SUPPORTED_API_VERSION } from '@theia/application-package/lib/api';
+import { RequestContext, RequestService } from '@theia/request';
+import { RateLimiter } from 'limiter';
+import escapeStringRegexp = require('escape-string-regexp');
+import { extractArchive, readArchiveFiles } from './extract-archive';
 
 /**
  * Available options when downloading.
@@ -64,18 +49,31 @@ export interface DownloadPluginsOptions {
     apiVersion?: string;
 
     /**
-     * The open-vsx registry API url.
+     * Fetch plugins in parallel
      */
-    apiUrl?: string;
+    parallel?: boolean;
 }
 
-export default async function downloadPlugins(options: DownloadPluginsOptions = {}): Promise<void> {
+interface PluginDownload {
+    id: string,
+    downloadUrl: string,
+    version?: string | undefined
+}
+
+export default async function downloadPlugins(
+    ovsxClient: OVSXClient,
+    rateLimiter: RateLimiter,
+    requestService: RequestService,
+    options: DownloadPluginsOptions = {}
+): Promise<void> {
     const {
         packed = false,
         ignoreErrors = false,
-        apiVersion = '1.50.0',
-        apiUrl = 'https://open-vsx.org/api'
+        apiVersion = DEFAULT_SUPPORTED_API_VERSION,
+        parallel = true
     } = options;
+
+    const apiFilter = new OVSXApiFilterImpl(ovsxClient, apiVersion);
 
     // Collect the list of failures to be appended at the end of the script.
     const failures: string[] = [];
@@ -89,52 +87,77 @@ export default async function downloadPlugins(options: DownloadPluginsOptions = 
     // Excluded extension ids.
     const excludedIds = new Set<string>(pck.theiaPluginsExcludeIds || []);
 
+    const parallelOrSequence = async (tasks: (() => unknown)[]) => {
+        if (parallel) {
+            await Promise.all(tasks.map(task => task()));
+        } else {
+            for (const task of tasks) {
+                await task();
+            }
+        }
+    };
+
+    // Downloader wrapper
+    const downloadPlugin = async (plugin: PluginDownload): Promise<void> => {
+        await downloadPluginAsync(requestService, rateLimiter, failures, plugin.id, plugin.downloadUrl, pluginsDir, packed, excludedIds, plugin.version);
+    };
+
+    const downloader = async (plugins: PluginDownload[]) => {
+        await parallelOrSequence(plugins.map(plugin => () => downloadPlugin(plugin)));
+    };
+
     await fs.mkdir(pluginsDir, { recursive: true });
 
     if (!pck.theiaPlugins) {
-        console.log(red('error: missing mandatory \'theiaPlugins\' property.'));
+        console.log(chalk.red('error: missing mandatory \'theiaPlugins\' property.'));
         return;
     }
-    try {
-        // Retrieve the cached extension-packs in order to not re-download them.
-        const extensionPackCachePath = path.resolve(pluginsDir, extensionPackCacheName);
-        const cachedExtensionPacks = new Set<string>(
-            existsSync(extensionPackCachePath)
-                ? await fs.readdir(extensionPackCachePath)
-                : []
-        );
-        console.warn('--- downloading plugins ---');
-        // Download the raw plugins defined by the `theiaPlugins` property.
-        // This will include both "normal" plugins as well as "extension packs".
-        const downloads = [];
-        for (const [plugin, pluginUrl] of Object.entries(pck.theiaPlugins)) {
-            // Skip extension packs that were moved to `.packs`:
-            if (cachedExtensionPacks.has(plugin) || typeof pluginUrl !== 'string') {
-                continue;
-            }
-            downloads.push(downloadPluginAsync(failures, plugin, pluginUrl, pluginsDir, packed));
-        }
-        await Promise.all(downloads);
-        console.warn('--- collecting extension-packs ---');
-        const extensionPacks = await collectExtensionPacks(pluginsDir, excludedIds);
-        if (extensionPacks.size > 0) {
-            console.warn(`--- found ${extensionPacks.size} extension-packs ---`);
-            // Move extension-packs to `.packs`
-            await cacheExtensionPacks(pluginsDir, extensionPacks);
-            console.warn('--- resolving extension-packs ---');
-            const client = new OVSXClient({ apiVersion, apiUrl });
-            // De-duplicate extension ids to only download each once:
-            const ids = new Set<string>(Array.from(extensionPacks.values()).flat());
-            await Promise.all(Array.from(ids, async id => {
-                const extension = await client.getLatestCompatibleExtensionVersion(id);
+    console.warn('--- downloading plugins ---');
+    // Download the raw plugins defined by the `theiaPlugins` property.
+    // This will include both "normal" plugins as well as "extension packs".
+    const pluginsToDownload = Object.entries(pck.theiaPlugins)
+        .filter((entry: [string, unknown]): entry is [string, string] => typeof entry[1] === 'string')
+        .map(([id, url]) => ({ id, downloadUrl: resolveDownloadUrlPlaceholders(url) }));
+    await downloader(pluginsToDownload);
+
+    const handleDependencyList = async (dependencies: (string | string[])[]) => {
+        // De-duplicate extension ids to only download each once:
+        const ids = new Set<string>(dependencies.flat());
+        await parallelOrSequence(Array.from(ids, id => async () => {
+            try {
+                await rateLimiter.removeTokens(1);
+                const extension = await apiFilter.findLatestCompatibleExtension({
+                    extensionId: id,
+                    includeAllVersions: true,
+                    targetPlatform
+                });
+                const version = extension?.version;
                 const downloadUrl = extension?.files.download;
                 if (downloadUrl) {
-                    await downloadPluginAsync(failures, id, downloadUrl, pluginsDir, packed);
+                    await rateLimiter.removeTokens(1);
+                    await downloadPlugin({ id, downloadUrl, version });
+                } else {
+                    failures.push(`No download url for extension pack ${id} (${version})`);
                 }
-            }));
-        }
-    } finally {
-        temp.cleanupSync();
+            } catch (err) {
+                console.error(err);
+                failures.push(err.message);
+            }
+        }));
+    };
+
+    console.warn('--- collecting extension-packs ---');
+    const extensionPacks = await collectExtensionPacks(pluginsDir, excludedIds);
+    if (extensionPacks.size > 0) {
+        console.warn(`--- resolving ${extensionPacks.size} extension-packs ---`);
+        await handleDependencyList(Array.from(extensionPacks.values()));
+    }
+
+    console.warn('--- collecting extension dependencies ---');
+    const pluginDependencies = await collectPluginDependencies(pluginsDir, excludedIds);
+    if (pluginDependencies.length > 0) {
+        console.warn(`--- resolving ${pluginDependencies.length} extension dependencies ---`);
+        await handleDependencyList(pluginDependencies);
     }
     for (const failure of failures) {
         console.error(failure);
@@ -144,16 +167,38 @@ export default async function downloadPlugins(options: DownloadPluginsOptions = 
     }
 }
 
+const targetPlatform = `${process.platform}-${process.arch}` as VSXTargetPlatform;
+
+const placeholders: Record<string, string> = {
+    targetPlatform
+};
+function resolveDownloadUrlPlaceholders(url: string): string {
+    for (const [name, value] of Object.entries(placeholders)) {
+        url = url.replace(new RegExp(escapeStringRegexp(`\${${name}}`), 'g'), value);
+    }
+    return url;
+}
+
 /**
  * Downloads a plugin, will make multiple attempts before actually failing.
+ * @param requestService
  * @param failures reference to an array storing all failures.
  * @param plugin plugin short name.
  * @param pluginUrl url to download the plugin at.
  * @param target where to download the plugin in.
  * @param packed whether to decompress or not.
- * @param cachedExtensionPacks the list of cached extension packs already downloaded.
  */
-async function downloadPluginAsync(failures: string[], plugin: string, pluginUrl: string, pluginsDir: string, packed: boolean): Promise<void> {
+async function downloadPluginAsync(
+    requestService: RequestService,
+    rateLimiter: RateLimiter,
+    failures: string[],
+    plugin: string,
+    pluginUrl: string,
+    pluginsDir: string,
+    packed: boolean,
+    excludedIds: Set<string>,
+    version?: string
+): Promise<void> {
     if (!plugin) {
         return;
     }
@@ -165,7 +210,7 @@ async function downloadPluginAsync(failures: string[], plugin: string, pluginUrl
     } else if (pluginUrl.endsWith('theia')) {
         fileExt = '.theia'; // theia plugins.
     } else {
-        failures.push(red(`error: '${plugin}' has an unsupported file type: '${pluginUrl}'`));
+        failures.push(chalk.red(`error: '${plugin}' has an unsupported file type: '${pluginUrl}'`));
         return;
     }
     const targetPath = path.resolve(pluginsDir, `${plugin}${packed === true ? fileExt : ''}`);
@@ -181,7 +226,7 @@ async function downloadPluginAsync(failures: string[], plugin: string, pluginUrl
 
     let attempts: number;
     let lastError: Error | undefined;
-    let response: Response | undefined;
+    let response: RequestContext | undefined;
 
     for (attempts = 0; attempts < maxAttempts; attempts++) {
         if (attempts > 0) {
@@ -189,41 +234,92 @@ async function downloadPluginAsync(failures: string[], plugin: string, pluginUrl
         }
         lastError = undefined;
         try {
-            response = await xfetch(pluginUrl);
+            await rateLimiter.removeTokens(1);
+            response = await requestService.request({
+                url: pluginUrl
+            });
         } catch (error) {
             lastError = error;
             continue;
         }
-        const retry = response.status === 439 || response.status >= 500;
+        const status = response.res.statusCode;
+        const retry = status && (status === 429 || status === 439 || status >= 500);
         if (!retry) {
             break;
         }
     }
     if (lastError) {
-        failures.push(red(`x ${plugin}: failed to download, last error:\n ${lastError}`));
+        failures.push(chalk.red(`x ${plugin}: failed to download, last error:\n ${lastError}`));
         return;
     }
     if (typeof response === 'undefined') {
-        failures.push(red(`x ${plugin}: failed to download (unknown reason)`));
+        failures.push(chalk.red(`x ${plugin}: failed to download (unknown reason)`));
         return;
     }
-    if (response.status !== 200) {
-        failures.push(red(`x ${plugin}: failed to download with: ${response.status} ${response.statusText}`));
+    if (response.res.statusCode !== 200) {
+        failures.push(chalk.red(`x ${plugin}: failed to download with: ${response.res.statusCode}`));
         return;
     }
+    // The buffer is only a string after a transfer to the frontend, which does not happen here.
+    const content = response.buffer as Uint8Array;
 
-    if ((fileExt === '.vsix' || fileExt === '.theia') && packed === true) {
-        // Download .vsix without decompressing.
-        const file = createWriteStream(targetPath);
-        await pipelineAsPromised(response.body, file);
-    } else {
-        await fs.mkdir(targetPath, { recursive: true });
-        const tempFile = temp.createWriteStream('theia-plugin-download');
-        await pipelineAsPromised(response.body, tempFile);
-        await decompress(tempFile.path, targetPath);
+    if ((fileExt === '.vsix' || fileExt === '.theia')) {
+        if (packed) {
+            // Download .vsix without decompressing.
+            await fs.writeFile(targetPath, content);
+        } else {
+            await decompressVsix(targetPath, content);
+        }
+        console.warn(chalk.green(`+ ${plugin}${version ? `@${version}` : ''}: downloaded successfully ${attempts > 1 ? `(after ${attempts} attempts)` : ''}`));
+    } else if (fileExt === '.tar.gz') {
+        // Read the archive contents to determine the handling strategy.
+        const files = await readArchiveFiles(content, 'tgz');
+        // Check if the archive is a bundle containing only .vsix files.
+        const allVsix = files.length > 0 && files.every(file => file.path.endsWith('.vsix'));
+
+        if (allVsix) {
+            // Handle pure vsix bundle: process each vsix individually.
+            for (const file of files) {
+                const vsixName = path.basename(file.path);
+                const pluginId = vsixName.replace(/\.vsix$/, '');
+                if (excludedIds.has(pluginId)) {
+                    console.log(chalk.yellow(`'${pluginId}' referred to by '${plugin}' (tar.gz) is excluded because of 'theiaPluginsExcludeIds'`));
+                    continue;
+                }
+                const vsixTargetPath = packed
+                    ? path.join(pluginsDir, vsixName)
+                    : path.join(pluginsDir, pluginId);
+                if (await isDownloaded(vsixTargetPath)) {
+                    console.warn('- ' + pluginId + ': already downloaded - skipping');
+                    continue;
+                }
+                if (packed) {
+                    // Download .vsix without decompressing.
+                    await fs.writeFile(vsixTargetPath, file.data);
+                } else {
+                    await decompressVsix(vsixTargetPath, file.data);
+                }
+
+                console.warn(chalk.green(`+ ${pluginId}: downloaded successfully ${attempts > 1 ? `(after ${attempts} attempts)` : ''}`));
+            }
+        } else {
+            // Handle regular tar.gz: decompress directly to target directory.
+            await extractArchive(content, targetPath, 'tgz');
+            console.warn(chalk.green(`+ ${plugin}${version ? `@${version}` : ''}: downloaded successfully ${attempts > 1 ? `(after ${attempts} attempts)` : ''}`));
+        }
     }
+}
 
-    console.warn(green(`+ ${plugin}: downloaded successfully ${attempts > 1 ? `(after ${attempts} attempts)` : ''}`));
+/**
+ * Decompresses a VSIX plugin archive to a target directory.
+ *
+ * Creates the target directory if it doesn't exist and extracts the archive contents to the target path.
+ *
+ * @param targetPath the directory path where the VSIX contents will be extracted.
+ * @param buffer the VSIX file content.
+ */
+async function decompressVsix(targetPath: string, buffer: Uint8Array): Promise<void> {
+    await extractArchive(buffer, targetPath, 'zip');
 }
 
 /**
@@ -237,18 +333,6 @@ async function isDownloaded(filePath: string): Promise<boolean> {
 }
 
 /**
- * Follow HTTP(S)_PROXY, ALL_PROXY and NO_PROXY environment variables.
- */
-export function xfetch(url: string, options?: RequestInit): Promise<Response> {
-    const proxiedOptions: RequestInit = { ...options };
-    const proxy = getProxyForUrl(url);
-    if (!proxiedOptions.agent && proxy !== '') {
-        proxiedOptions.agent = new HttpsProxyAgent(proxy);
-    }
-    return fetch(url, proxiedOptions);
-}
-
-/**
  * Walk the plugin directory and collect available extension paths.
  * @param pluginDir the plugin directory.
  * @returns the list of all available extension paths.
@@ -259,8 +343,7 @@ async function collectPackageJsonPaths(pluginDir: string): Promise<string[]> {
     // Recursively fetch the list of extension `package.json` files.
     for (const file of files) {
         const filePath = path.join(pluginDir, file);
-        // Exclude the `.packs` folder used to store extension-packs after being resolved.
-        if (!filePath.startsWith(extensionPackCacheName) && (await fs.stat(filePath)).isDirectory()) {
+        if ((await fs.stat(filePath)).isDirectory()) {
             packageJsonPathList.push(...await collectPackageJsonPaths(filePath));
         } else if (path.basename(filePath) === 'package.json' && !path.dirname(filePath).includes('node_modules')) {
             packageJsonPathList.push(filePath);
@@ -282,10 +365,10 @@ async function collectExtensionPacks(pluginDir: string, excludedIds: Set<string>
     await Promise.all(packageJsonPaths.map(async packageJsonPath => {
         const json = JSON.parse(await fs.readFile(packageJsonPath, 'utf8'));
         const extensionPack: unknown = json.extensionPack;
-        if (extensionPack && Array.isArray(extensionPack)) {
+        if (Array.isArray(extensionPack)) {
             extensionPackPaths.set(packageJsonPath, extensionPack.filter(id => {
                 if (excludedIds.has(id)) {
-                    console.log(yellow(`'${id}' referenced by '${json.name}' (ext pack) is excluded because of 'theiaPluginsExcludeIds'`));
+                    console.log(chalk.yellow(`'${id}' referred to by '${json.name}' (ext pack) is excluded because of 'theiaPluginsExcludeIds'`));
                     return false; // remove
                 }
                 return true; // keep
@@ -296,50 +379,27 @@ async function collectExtensionPacks(pluginDir: string, excludedIds: Set<string>
 }
 
 /**
- * Move extension-packs downloaded from `pluginsDir/x` to `pluginsDir/.packs/x`.
- *
- * The issue we are trying to solve is the following:
- * We may skip some extensions declared in a pack due to the `theiaPluginsExcludeIds` list. But once we start
- * a Theia application the plugin system will detect the pack and install the missing extensions.
- *
- * By moving the packs to a subdirectory it should make it invisible to the plugin system, only leaving
- * the plugins that were installed under `pluginsDir` directly.
- *
- * @param extensionPacksPaths the list of extension-pack paths.
+ * Get the mapping of  paths and their included plugin ids.
+ * - If an extension-pack references an explicitly excluded `id` the `id` will be omitted.
+ * @param pluginDir the plugin directory.
+ * @param excludedIds the list of plugin ids to exclude.
+ * @returns the mapping of extension-pack paths and their included plugin ids.
  */
-async function cacheExtensionPacks(pluginsDir: string, extensionPacks: Map<string, unknown>): Promise<void> {
-    const packsFolderPath = path.resolve(pluginsDir, extensionPackCacheName);
-    await fs.mkdir(packsFolderPath, { recursive: true });
-    await Promise.all(Array.from(extensionPacks.entries(), async ([extensionPackPath, value]) => {
-        extensionPackPath = path.resolve(extensionPackPath);
-        // Skip entries found in `.packs`
-        if (extensionPackPath.startsWith(packsFolderPath)) {
-            return; // skip
-        }
-        try {
-            const oldPath = getExtensionRoot(pluginsDir, extensionPackPath);
-            const newPath = path.resolve(packsFolderPath, path.basename(oldPath));
-            if (!existsSync(newPath)) {
-                await fs.rename(oldPath, newPath);
+async function collectPluginDependencies(pluginDir: string, excludedIds: Set<string>): Promise<string[]> {
+    const dependencyIds: string[] = [];
+    const packageJsonPaths = await collectPackageJsonPaths(pluginDir);
+    await Promise.all(packageJsonPaths.map(async packageJsonPath => {
+        const json = JSON.parse(await fs.readFile(packageJsonPath, 'utf8'));
+        const extensionDependencies: unknown = json.extensionDependencies;
+        if (Array.isArray(extensionDependencies)) {
+            for (const dependency of extensionDependencies) {
+                if (excludedIds.has(dependency)) {
+                    console.log(chalk.yellow(`'${dependency}' referred to by '${json.name}' is excluded because of 'theiaPluginsExcludeIds'`));
+                } else {
+                    dependencyIds.push(dependency);
+                }
             }
-        } catch (error) {
-            console.error(error);
         }
     }));
-}
-
-/**
- * Walk back to the root of an extension starting from its `package.json`. e.g.
- *
- * ```ts
- * getExtensionRoot('/a/b/c', '/a/b/c/EXT/d/e/f/package.json') === '/a/b/c/EXT'
- * ```
- */
-function getExtensionRoot(root: string, packageJsonPath: string): string {
-    root = path.resolve(root);
-    packageJsonPath = path.resolve(packageJsonPath);
-    if (!packageJsonPath.startsWith(root)) {
-        throw new Error(`unexpected paths:\n root: ${root}\n package.json: ${packageJsonPath}`);
-    }
-    return packageJsonPath.substr(0, packageJsonPath.indexOf(path.sep, root.length + 1));
+    return dependencyIds;
 }

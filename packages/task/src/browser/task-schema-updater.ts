@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2019 Red Hat, Inc. and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Red Hat, Inc. and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 // This file is inspired by VSCode and partially copied from https://github.com/Microsoft/vscode/blob/1.33.1/src/vs/workbench/contrib/tasks/common/problemMatcher.ts
 // 'problemMatcher.ts' copyright:
 /*---------------------------------------------------------------------------------------------
@@ -20,27 +20,27 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as Ajv from 'ajv';
-import debounce = require('p-debounce');
+import Ajv from '@theia/core/shared/ajv';
+import debounce from 'p-debounce';
 import { postConstruct, injectable, inject } from '@theia/core/shared/inversify';
-import { JsonSchemaContribution, JsonSchemaRegisterContext } from '@theia/core/lib/browser/json-schema-store';
-import { InMemoryResources, deepClone, Emitter } from '@theia/core/lib/common';
+import { JsonSchemaContribution, JsonSchemaDataStore, JsonSchemaRegisterContext } from '@theia/core/lib/browser/json-schema-store';
+import { deepClone, Emitter, nls } from '@theia/core/lib/common';
 import { IJSONSchema } from '@theia/core/lib/common/json-schema';
 import { inputsSchema } from '@theia/variable-resolver/lib/browser/variable-input-schema';
 import URI from '@theia/core/lib/common/uri';
-import { ProblemMatcherRegistry } from './task-problem-matcher-registry';
-import { TaskDefinitionRegistry } from './task-definition-registry';
-import { TaskServer } from '../common';
+import { ProblemMatcherRegistry } from './task-problem-matcher-registry.js';
+import { TaskDefinitionRegistry } from './task-definition-registry.js';
+import { TaskServer, asVariableName } from '../common/index.js';
 import { UserStorageUri } from '@theia/userstorage/lib/browser';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
-
-export const taskSchemaId = 'vscode://schemas/tasks';
+import { JSONObject } from '@theia/core/shared/@lumino/coreutils';
+import { taskSchemaId } from '../common/task-preferences.js';
 
 @injectable()
 export class TaskSchemaUpdater implements JsonSchemaContribution {
 
-    @inject(InMemoryResources)
-    protected readonly inmemoryResources: InMemoryResources;
+    @inject(JsonSchemaDataStore)
+    protected readonly jsonSchemaData: JsonSchemaDataStore;
 
     @inject(ProblemMatcherRegistry)
     protected readonly problemMatcherRegistry: ProblemMatcherRegistry;
@@ -61,12 +61,7 @@ export class TaskSchemaUpdater implements JsonSchemaContribution {
 
     @postConstruct()
     protected init(): void {
-        const resource = this.inmemoryResources.add(this.uri, '');
-        if (resource.onDidChangeContents) {
-            resource.onDidChangeContents(() => {
-                this.onDidChangeTaskSchemaEmitter.fire(undefined);
-            });
-        }
+        this.jsonSchemaData.setSchema(this.uri, '');
         this.updateProblemMatcherNames();
         this.updateSupportedTaskTypes();
         // update problem matcher names in the task schema every time a problem matcher is added or disposed
@@ -90,8 +85,8 @@ export class TaskSchemaUpdater implements JsonSchemaContribution {
 
         const schema = this.getTaskSchema();
         this.doValidate = new Ajv().compile(schema);
-        const schemaContent = JSON.stringify(schema);
-        this.inmemoryResources.update(this.uri, schemaContent);
+        this.jsonSchemaData.setSchema(this.uri, schema);
+        this.onDidChangeTaskSchemaEmitter.fire(undefined);
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -156,16 +151,16 @@ export class TaskSchemaUpdater implements JsonSchemaContribution {
         customizedDetectedTasks.length = 0;
         const definitions = this.taskDefinitionRegistry.getAll();
         definitions.forEach(def => {
-            const customizedDetectedTask = {
+            const customizedDetectedTask: IJSONSchema = {
                 type: 'object',
                 required: ['type'],
                 properties: {}
-            } as IJSONSchema;
+            };
             const taskType = {
                 ...defaultTaskType,
                 enum: [def.taskType],
                 default: def.taskType,
-                description: 'The task type to customize'
+                description: nls.localizeByDefault('The task type to customize')
             };
             customizedDetectedTask.properties!.type = taskType;
             const required = def.properties.required || [];
@@ -187,30 +182,34 @@ export class TaskSchemaUpdater implements JsonSchemaContribution {
     }
 
     /** Returns the task's JSON schema */
-    getTaskSchema(): IJSONSchema {
+    getTaskSchema(): IJSONSchema & { default: JSONObject } {
         return {
             type: 'object',
             default: { version: '2.0.0', tasks: [] },
             properties: {
                 version: {
                     type: 'string',
-                    default: '2.0.0'
+                    default: '2.0.0',
+                    description: nls.localizeByDefault("The config's version number.")
                 },
                 tasks: {
                     type: 'array',
                     items: {
                         ...deepClone(taskConfigurationSchema)
-                    }
+                    },
+                    description: nls.localizeByDefault('The task configurations. Usually these are enrichments of task already defined in the external task runner.')
                 },
                 inputs: inputsSchema.definitions!.inputs
             },
-            additionalProperties: false
+            additionalProperties: false,
+            allowComments: true,
+            allowTrailingCommas: true,
         };
     }
 
     /** Gets the most up-to-date names of problem matchers from the registry and update the task schema */
     private updateProblemMatcherNames(): void {
-        const matcherNames = this.problemMatcherRegistry.getAll().map(m => m.name.startsWith('$') ? m.name : `$${m.name}`);
+        const matcherNames = this.problemMatcherRegistry.getAll().map(m => asVariableName(m.name));
         problemMatcherNames.length = 0;
         problemMatcherNames.push(...matcherNames);
         this.update();
@@ -224,12 +223,12 @@ export class TaskSchemaUpdater implements JsonSchemaContribution {
 
 const commandSchema: IJSONSchema = {
     type: 'string',
-    description: 'The actual command or script to execute'
+    description: nls.localizeByDefault('The command to be executed. Can be an external program or a shell command.')
 };
 
 const commandArgSchema: IJSONSchema = {
     type: 'array',
-    description: 'A list of strings, each one being one argument to pass to the command',
+    description: nls.localizeByDefault('Arguments passed to the command when this task is invoked.'),
     items: {
         type: 'string'
     }
@@ -237,29 +236,29 @@ const commandArgSchema: IJSONSchema = {
 
 const commandOptionsSchema: IJSONSchema = {
     type: 'object',
-    description: 'The command options used when the command is executed',
+    description: nls.localizeByDefault('Additional command options'),
     properties: {
         cwd: {
             type: 'string',
-            description: 'The directory in which the command will be executed',
+            description: nls.localize('theia/task/schema/commandOptions/cwd',
+                "The current working directory of the executed program or script. If omitted Theia's current workspace root is used."),
             default: '${workspaceFolder}'
         },
         env: {
             type: 'object',
-            description: 'The environment of the executed program or shell. If omitted the parent process\' environment is used'
+            description: nls.localizeByDefault("The environment of the executed program or shell. If omitted the parent process' environment is used.")
         },
         shell: {
             type: 'object',
-            description: 'Configuration of the shell when task type is `shell`',
+            description: nls.localizeByDefault('Configures the shell to be used.'),
             properties: {
                 executable: {
                     type: 'string',
-                    description: 'The shell to use'
+                    description: nls.localizeByDefault('The shell to be used.')
                 },
                 args: {
                     type: 'array',
-                    description: `The arguments to be passed to the shell executable to run in command mode
-                        (e.g ['-c'] for bash or ['/S', '/C'] for cmd.exe)`,
+                    description: nls.localizeByDefault('The shell arguments.'),
                     items: {
                         type: 'string'
                     }
@@ -272,26 +271,32 @@ const commandOptionsSchema: IJSONSchema = {
 const problemMatcherNames: string[] = [];
 const defaultTaskTypes = ['shell', 'process'];
 const supportedTaskTypes = [...defaultTaskTypes];
-const taskLabel = {
+const taskLabel: IJSONSchema = {
     type: 'string',
-    description: 'A unique string that identifies the task that is also used as task\'s user interface label'
+    description: nls.localizeByDefault("The task's user interface label")
 };
-const defaultTaskType = {
+const defaultTaskType: IJSONSchema = {
     type: 'string',
     enum: supportedTaskTypes,
     default: defaultTaskTypes[0],
-    description: 'Determines what type of process will be used to execute the task. Only shell types will have output shown on the user interface'
-};
+    description: nls.localizeByDefault('Defines whether the task is run as a process or as a command inside a shell.')
+} as const;
 const commandAndArgs = {
     command: commandSchema,
     args: commandArgSchema,
     options: commandOptionsSchema
 };
 
-const group = {
+const group: IJSONSchema = {
     oneOf: [
         {
-            type: 'string'
+            type: 'string',
+            enum: ['build', 'test', 'none'],
+            enumDescriptions: [
+                nls.localizeByDefault("Marks the task as a build task accessible through the 'Run Build Task' command."),
+                nls.localizeByDefault("Marks the task as a test task accessible through the 'Run Test Task' command."),
+                nls.localizeByDefault('Assigns the task to no group')
+            ]
         },
         {
             type: 'object',
@@ -299,32 +304,24 @@ const group = {
                 kind: {
                     type: 'string',
                     default: 'none',
-                    description: 'The task\'s execution group.'
+                    description: nls.localizeByDefault("The task's execution group."),
+                    enum: ['build', 'test', 'none'],
+                    enumDescriptions: [
+                        nls.localizeByDefault("Marks the task as a build task accessible through the 'Run Build Task' command."),
+                        nls.localizeByDefault("Marks the task as a test task accessible through the 'Run Test Task' command."),
+                        nls.localizeByDefault('Assigns the task to no group')
+                    ]
                 },
                 isDefault: {
                     type: 'boolean',
                     default: false,
-                    description: 'Defines if this task is the default task in the group.'
+                    description: nls.localizeByDefault('Defines if this task is the default task in the group, or a glob to match the file which should trigger this task.')
                 }
             }
         }
     ],
-    enum: [
-        { kind: 'build', isDefault: true },
-        { kind: 'test', isDefault: true },
-        'build',
-        'test',
-        'none'
-    ],
-    enumDescriptions: [
-        'Marks the task as the default build task.',
-        'Marks the task as the default test task.',
-        'Marks the task as a build task accessible through the \'Run Build Task\' command.',
-        'Marks the task as a test task accessible through the \'Run Test Task\' command.',
-        'Assigns the task to no group'
-    ],
-    // eslint-disable-next-line max-len
-    description: 'Defines to which execution group this task belongs to. It supports "build" to add it to the build group and "test" to add it to the test group.'
+    description: nls.localizeByDefault(
+        'Defines to which execution group this task belongs to. It supports "build" to add it to the build group and "test" to add it to the test group.')
 };
 
 const problemPattern: IJSONSchema = {
@@ -338,53 +335,53 @@ const problemPattern: IJSONSchema = {
     properties: {
         regexp: {
             type: 'string',
-            description: 'The regular expression to find an error, warning or info in the output.'
+            description: nls.localizeByDefault('The regular expression to find an error, warning or info in the output.')
         },
         kind: {
             type: 'string',
-            description: 'whether the pattern matches a location (file and line) or only a file.'
+            description: nls.localizeByDefault('whether the pattern matches a location (file and line) or only a file.')
         },
         file: {
             type: 'integer',
-            description: 'The match group index of the filename. If omitted 1 is used.'
+            description: nls.localizeByDefault('The match group index of the filename. If omitted 1 is used.')
         },
         location: {
             type: 'integer',
             // eslint-disable-next-line max-len
-            description: 'The match group index of the problem\'s location. Valid location patterns are: (line), (line,column) and (startLine,startColumn,endLine,endColumn). If omitted (line,column) is assumed.'
+            description: nls.localizeByDefault("The match group index of the problem's location. Valid location patterns are: (line), (line,column) and (startLine,startColumn,endLine,endColumn). If omitted (line,column) is assumed.")
         },
         line: {
             type: 'integer',
-            description: 'The match group index of the problem\'s line. Defaults to 2'
+            description: nls.localizeByDefault("The match group index of the problem's line. Defaults to 2")
         },
         column: {
             type: 'integer',
-            description: 'The match group index of the problem\'s line character. Defaults to 3'
+            description: nls.localizeByDefault("The match group index of the problem's line character. Defaults to 3")
         },
         endLine: {
             type: 'integer',
-            description: 'The match group index of the problem\'s end line. Defaults to undefined'
+            description: nls.localizeByDefault("The match group index of the problem's end line. Defaults to undefined")
         },
         endColumn: {
             type: 'integer',
-            description: 'The match group index of the problem\'s end line character. Defaults to undefined'
+            description: nls.localizeByDefault("The match group index of the problem's end line character. Defaults to undefined")
         },
         severity: {
             type: 'integer',
-            description: 'The match group index of the problem\'s severity. Defaults to undefined'
+            description: nls.localizeByDefault("The match group index of the problem's severity. Defaults to undefined")
         },
         code: {
             type: 'integer',
-            description: 'The match group index of the problem\'s code. Defaults to undefined'
+            description: nls.localizeByDefault("The match group index of the problem's code. Defaults to undefined")
         },
         message: {
             type: 'integer',
-            description: 'The match group index of the message. If omitted it defaults to 4 if location is specified. Otherwise it defaults to 5.'
+            description: nls.localizeByDefault('The match group index of the message. If omitted it defaults to 4 if location is specified. Otherwise it defaults to 5.')
         },
         loop: {
             type: 'boolean',
             // eslint-disable-next-line max-len
-            description: 'In a multi line matcher loop indicated whether this pattern is executed in a loop as long as it matches. Can only specified on a last pattern in a multi line pattern.'
+            description: nls.localizeByDefault('In a multi line matcher loop indicated whether this pattern is executed in a loop as long as it matches. Can only specified on a last pattern in a multi line pattern.')
         }
     }
 };
@@ -400,11 +397,11 @@ const watchingPattern: IJSONSchema = {
     properties: {
         regexp: {
             type: 'string',
-            description: 'The regular expression to detect the begin or end of a background task.'
+            description: nls.localizeByDefault('The regular expression to detect the begin or end of a background task.')
         },
         file: {
             type: 'integer',
-            description: 'The match group index of the filename. Can be omitted.'
+            description: nls.localizeByDefault('The match group index of the filename. Can be omitted.')
         },
     }
 };
@@ -413,12 +410,12 @@ const patternType: IJSONSchema = {
     anyOf: [
         {
             type: 'string',
-            description: 'The name of a contributed or predefined pattern'
+            description: nls.localizeByDefault('The name of a contributed or predefined pattern')
         },
         problemPattern,
         multiLineProblemPattern
     ],
-    description: 'A problem pattern or the name of a contributed or predefined problem pattern. Can be omitted if base is specified.'
+    description: nls.localizeByDefault('A problem pattern or the name of a contributed or predefined problem pattern. Can be omitted if base is specified.')
 };
 
 const problemMatcherObject: IJSONSchema = {
@@ -427,25 +424,26 @@ const problemMatcherObject: IJSONSchema = {
         base: {
             type: 'string',
             enum: problemMatcherNames,
-            description: 'The name of a base problem matcher to use.'
+            description: nls.localizeByDefault('The name of a base problem matcher to use.')
         },
         owner: {
             type: 'string',
-            description: 'The owner of the problem inside Code. Can be omitted if base is specified. Defaults to \'external\' if omitted and base is not specified.'
+            description: nls.localize('theia/task/schema/problemMatcherObject/owner',
+                "The owner of the problem inside Theia. Can be omitted if base is specified. Defaults to 'external' if omitted and base is not specified.")
         },
         source: {
             type: 'string',
-            description: 'A human-readable string describing the source of this diagnostic, e.g. \'typescript\' or \'super lint\'.'
+            description: nls.localizeByDefault("A human-readable string describing the source of this diagnostic, e.g. 'typescript' or 'super lint'.")
         },
         severity: {
             type: 'string',
             enum: ['error', 'warning', 'info'],
-            description: 'The default severity for captures problems. Is used if the pattern doesn\'t define a match group for severity.'
+            description: nls.localizeByDefault("The default severity for captures problems. Is used if the pattern doesn't define a match group for severity.")
         },
         applyTo: {
             type: 'string',
             enum: ['allDocuments', 'openDocuments', 'closedDocuments'],
-            description: 'Controls if a problem reported on a text document is applied only to open, closed or all documents.'
+            description: nls.localizeByDefault('Controls if a problem reported on a text document is applied only to open, closed or all documents.')
         },
         pattern: patternType,
         fileLocation: {
@@ -461,16 +459,18 @@ const problemMatcherObject: IJSONSchema = {
                     }
                 }
             ],
-            description: 'Defines how file names reported in a problem pattern should be interpreted.'
+            // eslint-disable-next-line max-len
+            description: nls.localizeByDefault('Defines how file names reported in a problem pattern should be interpreted. A relative fileLocation may be an array, where the second element of the array is the path of the relative file location. The search fileLocation mode, performs a deep (and, possibly, heavy) file system search within the directories specified by the include/exclude properties of the second element (or the current workspace directory if not specified).')
         },
         background: {
             type: 'object',
             additionalProperties: false,
-            description: 'Patterns to track the begin and end of a matcher active on a background task.',
+            description: nls.localizeByDefault('Patterns to track the begin and end of a matcher active on a background task.'),
             properties: {
                 activeOnStart: {
                     type: 'boolean',
-                    description: 'If set to true the background monitor is in active mode when the task starts. This is equals of issuing a line that matches the beginsPattern'
+                    description: nls.localizeByDefault(
+                        'If set to true the background monitor starts in active mode. This is the same as outputting a line that matches beginsPattern when the task starts.')
                 },
                 beginsPattern: {
                     oneOf: [
@@ -479,7 +479,7 @@ const problemMatcherObject: IJSONSchema = {
                         },
                         watchingPattern
                     ],
-                    description: 'If matched in the output the start of a background task is signaled.'
+                    description: nls.localizeByDefault('If matched in the output the start of a background task is signaled.')
                 },
                 endsPattern: {
                     oneOf: [
@@ -488,19 +488,20 @@ const problemMatcherObject: IJSONSchema = {
                         },
                         watchingPattern
                     ],
-                    description: 'If matched in the output the end of a background task is signaled.'
+                    description: nls.localizeByDefault('If matched in the output the end of a background task is signaled.')
                 }
             }
         },
         watching: {
             type: 'object',
             additionalProperties: false,
-            deprecationMessage: 'The watching property is deprecated. Use background instead.',
-            description: 'Patterns to track the begin and end of a watching matcher.',
+            deprecationMessage: nls.localizeByDefault('The watching property is deprecated. Use background instead.'),
+            description: nls.localizeByDefault('Patterns to track the begin and end of a watching matcher.'),
             properties: {
                 activeOnStart: {
                     type: 'boolean',
-                    description: 'If set to true the watcher is in active mode when the task starts. This is equals of issuing a line that matches the beginPattern'
+                    description: nls.localizeByDefault(
+                        'If set to true the watcher starts in active mode. This is the same as outputting a line that matches beginsPattern when the task starts.')
                 },
                 beginsPattern: {
                     oneOf: [
@@ -509,7 +510,7 @@ const problemMatcherObject: IJSONSchema = {
                         },
                         watchingPattern
                     ],
-                    description: 'If matched in the output the start of a watching task is signaled.'
+                    description: nls.localizeByDefault('If matched in the output the start of a watching task is signaled.')
                 },
                 endsPattern: {
                     oneOf: [
@@ -518,23 +519,21 @@ const problemMatcherObject: IJSONSchema = {
                         },
                         watchingPattern
                     ],
-                    description: 'If matched in the output the end of a watching task is signaled.'
+                    description: nls.localizeByDefault('If matched in the output the end of a watching task is signaled.')
                 }
             }
         }
     }
 };
 
-const problemMatcher = {
+const problemMatcher: IJSONSchema = {
     anyOf: [
         {
             type: 'string',
-            description: 'Name of the problem matcher to parse the output of the task',
             enum: problemMatcherNames
         },
         {
             type: 'array',
-            description: 'Name(s) of the problem matcher(s) to parse the output of the task',
             items: {
                 type: 'string',
                 enum: problemMatcherNames
@@ -543,10 +542,10 @@ const problemMatcher = {
         problemMatcherObject,
         {
             type: 'array',
-            description: 'User defined problem matcher(s) to parse the output of the task',
             items: problemMatcherObject
         }
-    ]
+    ],
+    description: nls.localizeByDefault('The problem matcher(s) to use. Can either be a string or a problem matcher definition or an array of strings and problem matchers.')
 };
 
 const presentation: IJSONSchema = {
@@ -559,58 +558,59 @@ const presentation: IJSONSchema = {
         showReuseMessage: true,
         clear: false
     },
-    description: 'Configures the panel that is used to present the task\'s output and reads its input.',
+    description: nls.localizeByDefault("Configures the panel that is used to present the task's output and reads its input."),
     additionalProperties: true,
     properties: {
         echo: {
             type: 'boolean',
             default: true,
-            description: 'Controls whether the executed command is echoed to the panel. Default is true.'
+            description: nls.localizeByDefault('Controls whether the executed command is echoed to the panel. Default is true.')
         },
         focus: {
             type: 'boolean',
             default: false,
-            description: 'Controls whether the panel takes focus. Default is false. If set to true the panel is revealed as well.'
+            description: nls.localizeByDefault('Controls whether the panel takes focus. Default is false. If set to true the panel is revealed as well.')
         },
         reveal: {
             type: 'string',
             enum: ['always', 'silent', 'never'],
             enumDescriptions: [
-                'Always reveals the terminal when this task is executed.',
-                'Only reveals the terminal if the task exits with an error or the problem matcher finds an error.',
-                'Never reveals the terminal when this task is executed.'
+                nls.localizeByDefault('Always reveals the terminal when this task is executed.'),
+                nls.localizeByDefault('Only reveals the terminal if the task exits with an error or the problem matcher finds an error.'),
+                nls.localizeByDefault('Never reveals the terminal when this task is executed.')
             ],
             default: 'always',
-            description: 'Controls whether the terminal running the task is revealed or not. May be overridden by option \"revealProblems\". Default is \"always\".'
+            description: nls.localizeByDefault(
+                'Controls whether the terminal running the task is revealed or not. May be overridden by option "revealProblems". Default is "always".')
         },
         panel: {
             type: 'string',
             enum: ['shared', 'dedicated', 'new'],
             enumDescriptions: [
-                'The terminal is shared and the output of other task runs are added to the same terminal.',
+                nls.localize('theia/task/schema/presentation/panel/shared', 'The terminal is shared and the output of other task runs are added to the same terminal.'),
                 // eslint-disable-next-line max-len
-                'The terminal is dedicated to a specific task. If that task is executed again, the terminal is reused. However, the output of a different task is presented in a different terminal.',
-                'Every execution of that task is using a new clean terminal.'
+                nls.localize('theia/task/schema/presentation/panel/dedicated', 'The terminal is dedicated to a specific task. If that task is executed again, the terminal is reused. However, the output of a different task is presented in a different terminal.'),
+                nls.localize('theia/task/schema/presentation/panel/new', 'Every execution of that task is using a new clean terminal.')
             ],
             default: 'shared',
-            description: 'Controls if the panel is shared between tasks, dedicated to this task or a new one is created on every run.'
+            description: nls.localizeByDefault('Controls if the panel is shared between tasks, dedicated to this task or a new one is created on every run.')
         },
         showReuseMessage: {
             type: 'boolean',
             default: true,
-            description: 'Controls whether to show the "Terminal will be reused by tasks" message.'
+            description: nls.localize('theia/task/schema/presentation/showReuseMessage', 'Controls whether to show the "Terminal will be reused by tasks" message.')
         },
         clear: {
             type: 'boolean',
             default: false,
-            description: 'Controls whether the terminal is cleared before this task is run.'
+            description: nls.localizeByDefault('Controls whether the terminal is cleared before executing the task.')
         }
     }
 };
 
 const detail: IJSONSchema = {
     type: 'string',
-    description: 'An optional description of a task that shows in the Run Task quick pick as a detail.'
+    description: nls.localizeByDefault('An optional description of a task that shows in the Run Task quick pick as a detail.')
 };
 
 const taskIdentifier: IJSONSchema = {
@@ -619,7 +619,7 @@ const taskIdentifier: IJSONSchema = {
     properties: {
         type: {
             type: 'string',
-            description: 'The task identifier.'
+            description: nls.localizeByDefault('The task identifier.')
         }
     }
 };
@@ -634,18 +634,18 @@ const processTaskConfigurationSchema: IJSONSchema = {
         isBackground: {
             type: 'boolean',
             default: false,
-            description: 'Whether the executed task is kept alive and is running in the background.'
+            description: nls.localizeByDefault('Whether the executed task is kept alive and is running in the background.')
         },
         dependsOn: {
             anyOf: [
                 {
                     type: 'string',
-                    description: 'Another task this task depends on.'
+                    description: nls.localizeByDefault('Another task this task depends on.')
                 },
                 taskIdentifier,
                 {
                     type: 'array',
-                    description: 'The other tasks this task depends on.',
+                    description: nls.localizeByDefault('The other tasks this task depends on.'),
                     items: {
                         anyOf: [
                             {
@@ -656,31 +656,31 @@ const processTaskConfigurationSchema: IJSONSchema = {
                     }
                 }
             ],
-            description: 'Either a string representing another task or an array of other tasks that this task depends on.'
+            description: nls.localizeByDefault('Either a string representing another task or an array of other tasks that this task depends on.')
         },
         dependsOrder: {
             type: 'string',
             enum: ['parallel', 'sequence'],
             enumDescriptions: [
-                'Run all dependsOn tasks in parallel.',
-                'Run all dependsOn tasks in sequence.'
+                nls.localizeByDefault('Run all dependsOn tasks in parallel.'),
+                nls.localizeByDefault('Run all dependsOn tasks in sequence.')
             ],
             default: 'parallel',
-            description: 'Determines the order of the dependsOn tasks for this task. Note that this property is not recursive.'
+            description: nls.localizeByDefault('Determines the order of the dependsOn tasks for this task. Note that this property is not recursive.')
         },
         windows: {
             type: 'object',
-            description: 'Windows specific command configuration that overrides the command, args, and options',
+            description: nls.localizeByDefault('Windows specific command configuration'),
             properties: commandAndArgs
         },
         osx: {
             type: 'object',
-            description: 'MacOS specific command configuration that overrides the command, args, and options',
+            description: nls.localizeByDefault('Mac specific command configuration'),
             properties: commandAndArgs
         },
         linux: {
             type: 'object',
-            description: 'Linux specific command configuration that overrides the default command, args, and options',
+            description: nls.localizeByDefault('Linux specific command configuration'),
             properties: commandAndArgs
         },
         group,

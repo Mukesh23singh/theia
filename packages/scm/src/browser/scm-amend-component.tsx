@@ -1,28 +1,29 @@
-/********************************************************************************
- * Copyright (C) 2019 Arm and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Arm and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 import '../../src/browser/style/scm-amend-component.css';
 
 import * as React from '@theia/core/shared/react';
-import { ScmAvatarService } from './scm-avatar-service';
+import { ScmAvatarService } from './scm-avatar-service.js';
 import { codicon, StorageService } from '@theia/core/lib/browser';
 import { Disposable, DisposableCollection } from '@theia/core';
 
-import { ScmRepository } from './scm-repository';
-import { ScmAmendSupport, ScmCommit } from './scm-provider';
+import { ScmRepository } from './scm-repository.js';
+import { ScmAmendSupport, ScmCommit } from './scm-provider.js';
+import { nls } from '@theia/core/lib/common/nls';
 
 export interface ScmAmendComponentProps {
     style: React.CSSProperties | undefined,
@@ -90,7 +91,7 @@ export class ScmAmendComponent extends React.Component<ScmAmendComponentProps, S
 
     protected readonly toDisposeOnUnmount = new DisposableCollection();
 
-    async componentDidMount(): Promise<void> {
+    override async componentDidMount(): Promise<void> {
         this.toDisposeOnUnmount.push(Disposable.create(() => { /* mark as mounted */ }));
 
         const lastCommit = await this.getLastCommit();
@@ -104,7 +105,7 @@ export class ScmAmendComponent extends React.Component<ScmAmendComponentProps, S
         );
     }
 
-    componentWillUnmount(): void {
+    override componentWillUnmount(): void {
         this.toDisposeOnUnmount.dispose();
     }
 
@@ -272,7 +273,7 @@ export class ScmAmendComponent extends React.Component<ScmAmendComponentProps, S
         this.props.setCommitMessage(message);
     }
 
-    render(): JSX.Element {
+    override render(): React.JSX.Element {
         const neverShrink = this.state.amendingCommits.length <= 3;
 
         const style: React.CSSProperties = neverShrink
@@ -298,7 +299,7 @@ export class ScmAmendComponent extends React.Component<ScmAmendComponentProps, S
                         <div>
                             <div id='lastCommit' className='theia-scm-amend'>
                                 <div className='theia-header scm-theia-header'>
-                                    HEAD Commit
+                                    {nls.localize('theia/scm/amendHeadCommit', 'HEAD Commit')}
                                 </div>
                                 {this.renderLastCommit()}
                             </div>
@@ -375,8 +376,8 @@ export class ScmAmendComponent extends React.Component<ScmAmendComponentProps, S
             {
                 canAmend
                     ? <div className={ScmAmendComponent.Styles.FLEX_CENTER}>
-                        <button className='theia-button' title='Amend last commit' onClick={this.amend}>
-                            Amend
+                        <button className='theia-button' title={nls.localize('theia/scm/amendLastCommit', 'Amend last commit')} onClick={this.amend}>
+                            {nls.localize('theia/scm/amend', 'Amend')}
                         </button>
                     </div>
                     : ''
@@ -438,7 +439,7 @@ export class ScmAmendComponent extends React.Component<ScmAmendComponentProps, S
         </div>;
     }
 
-    protected renderCommitBeingAmended(commitData: { commit: ScmCommit, avatar: string }, isOldestAmendCommit: boolean): JSX.Element {
+    protected renderCommitBeingAmended(commitData: { commit: ScmCommit, avatar: string }, isOldestAmendCommit: boolean): React.JSX.Element {
         if (isOldestAmendCommit && this.state.transition.state !== 'none' && this.state.transition.direction === 'up') {
             return <div className={ScmAmendComponent.Styles.COMMIT_AVATAR_AND_TEXT} style={{ flexGrow: 0, flexShrink: 0 }} key={commitData.commit.id}>
                 <div className='fixed-height-commit-container'>
@@ -451,8 +452,8 @@ export class ScmAmendComponent extends React.Component<ScmAmendComponentProps, S
                 {
                     isOldestAmendCommit
                         ? <div className={ScmAmendComponent.Styles.FLEX_CENTER}>
-                            <button className='theia-button' title='Unamend commit' onClick={this.unamend}>
-                                Unamend
+                            <button className='theia-button' title={nls.localize('theia/scm/unamendCommit', 'Unamend commit')} onClick={this.unamend}>
+                                {nls.localize('theia/scm/unamend', 'Unamend')}
                             </button>
                         </div>
                         : ''

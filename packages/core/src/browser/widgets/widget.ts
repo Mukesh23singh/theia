@@ -1,36 +1,38 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { injectable, decorate, unmanaged } from 'inversify';
-import { Widget } from '@phosphor/widgets';
-import { Message, MessageLoop } from '@phosphor/messaging';
-import { Emitter, Event, Disposable, DisposableCollection, MaybePromise } from '../../common';
-import { KeyCode, KeysOrKeyCodes } from '../keyboard/keys';
+import { Title, Widget } from '@lumino/widgets';
+import { Message, MessageLoop } from '@lumino/messaging';
+import { Emitter, Event, Disposable, DisposableCollection, MaybePromise, isObject } from '../../common/index.js';
+import { KeyCode, KeysOrKeyCodes } from '../keyboard/keys.js';
 
-import PerfectScrollbar from 'perfect-scrollbar';
+import { PerfectScrollbar } from './perfect-scrollbar.js';
+import { PreviewableWidget } from '../widgets/previewable-widget.js';
+import { Slot } from '@lumino/signaling';
 
 decorate(injectable(), Widget);
 decorate(unmanaged(), Widget, 0);
 
-export * from '@phosphor/widgets';
-export * from '@phosphor/messaging';
+export * from '@lumino/widgets';
+export * from '@lumino/messaging';
 
-export const ACTION_ITEM = 'action-item';
+export const ACTION_ITEM = 'action-label';
 
 export function codiconArray(name: string, actionItem = false): string[] {
     const array = ['codicon', `codicon-${name}`];
@@ -52,14 +54,16 @@ export const BUSY_CLASS = 'theia-mod-busy';
 export const CODICON_LOADING_CLASSES = codiconArray('loading');
 export const SELECTED_CLASS = 'theia-mod-selected';
 export const FOCUS_CLASS = 'theia-mod-focus';
+export const PINNED_CLASS = 'theia-mod-pinned';
+export const LOCKED_CLASS = 'theia-mod-locked';
 export const DEFAULT_SCROLL_OPTIONS: PerfectScrollbar.Options = {
     suppressScrollX: true,
     minScrollbarLength: 35,
 };
 
 /**
- * At a number of places in the code, we have effectively reimplemented Phosphor's Widget.attach and Widget.detach,
- * but omitted the checks that Phosphor expects to be performed for those operations. That is a bad idea, because it
+ * At a number of places in the code, we have effectively reimplemented Lumino's Widget.attach and Widget.detach,
+ * but omitted the checks that Lumino expects to be performed for those operations. That is a bad idea, because it
  * means that we are telling widgets that they are attached or detached when not all the conditions that should apply
  * do apply. We should explicitly mark those locations so that we know where we should go fix them later.
  */
@@ -91,7 +95,7 @@ export namespace UnsafeWidgetUtilities {
 }
 
 @injectable()
-export class BaseWidget extends Widget {
+export class BaseWidget extends Widget implements PreviewableWidget {
 
     protected readonly onScrollYReachEndEmitter = new Emitter<void>();
     readonly onScrollYReachEnd: Event<void> = this.onScrollYReachEndEmitter.event;
@@ -105,6 +109,7 @@ export class BaseWidget extends Widget {
     protected readonly toDispose = new DisposableCollection(
         this.onDidDisposeEmitter,
         Disposable.create(() => this.onDidDisposeEmitter.fire()),
+        Disposable.create(() => this.toDisposeOnDetach.dispose()),
         this.onScrollYReachEndEmitter,
         this.onScrollUpEmitter,
         this.onDidChangeVisibilityEmitter
@@ -113,7 +118,17 @@ export class BaseWidget extends Widget {
     protected scrollBar?: PerfectScrollbar;
     protected scrollOptions?: PerfectScrollbar.Options;
 
-    dispose(): void {
+    constructor(@unmanaged() options?: Widget.IOptions) {
+        super(options);
+    }
+
+    override get isVisible(): boolean {
+        // Reverted to @lumino/widgets pre-2.7.0 behavior using the IsVisible flag instead of the recursive parent check.
+        // Theia relies on this flag-based implementation and we need to transition to the new behavior in a follow-up (GH-16585)
+        return this.testFlag(Widget.Flag.IsVisible);
+    }
+
+    override dispose(): void {
         if (this.isDisposed) {
             return;
         }
@@ -121,31 +136,31 @@ export class BaseWidget extends Widget {
         this.toDispose.dispose();
     }
 
-    protected onCloseRequest(msg: Message): void {
+    protected override onCloseRequest(msg: Message): void {
         super.onCloseRequest(msg);
         this.dispose();
     }
 
-    protected onBeforeAttach(msg: Message): void {
+    protected override onBeforeAttach(msg: Message): void {
         if (this.title.iconClass === '') {
             this.title.iconClass = 'no-icon';
         }
         super.onBeforeAttach(msg);
     }
 
-    protected onAfterDetach(msg: Message): void {
+    protected override onAfterDetach(msg: Message): void {
         if (this.title.iconClass === 'no-icon') {
             this.title.iconClass = '';
         }
         super.onAfterDetach(msg);
     }
 
-    protected onBeforeDetach(msg: Message): void {
+    protected override onBeforeDetach(msg: Message): void {
         this.toDisposeOnDetach.dispose();
         super.onBeforeDetach(msg);
     }
 
-    protected onAfterAttach(msg: Message): void {
+    protected override onAfterAttach(msg: Message): void {
         super.onAfterAttach(msg);
         if (this.scrollOptions) {
             (async () => {
@@ -181,7 +196,7 @@ export class BaseWidget extends Widget {
         }
     }
 
-    protected onUpdateRequest(msg: Message): void {
+    protected override onUpdateRequest(msg: Message): void {
         super.onUpdateRequest(msg);
         if (this.scrollBar) {
             this.scrollBar.update();
@@ -199,10 +214,11 @@ export class BaseWidget extends Widget {
         this.toDisposeOnDetach.push(addEventListener(element, type, listener, useCapture));
     }
 
-    protected addKeyListener<K extends keyof HTMLElementEventMap>(
+    protected addKeyListener<K extends keyof HTMLElementEventMap = never>(
         element: HTMLElement,
         keysOrKeyCodes: KeyCode.Predicate | KeysOrKeyCodes,
-        action: (event: KeyboardEvent) => boolean | void | Object, ...additionalEventTypes: K[]): void {
+        action: EventHandler<K | 'keydown'>,
+        ...additionalEventTypes: K[]): void {
         this.toDisposeOnDetach.push(addKeyListener(element, keysOrKeyCodes, action, ...additionalEventTypes));
     }
 
@@ -210,17 +226,27 @@ export class BaseWidget extends Widget {
         this.toDisposeOnDetach.push(addClipboardListener(element, type, listener));
     }
 
-    setFlag(flag: Widget.Flag): void {
+    getPreviewNode(): Node | undefined {
+        return this.node;
+    }
+
+    override setFlag(flag: Widget.Flag): void {
         super.setFlag(flag);
         if (flag === Widget.Flag.IsVisible) {
-            this.onDidChangeVisibilityEmitter.fire(this.isVisible);
+            this.handleVisiblityChanged(this.isVisible);
         }
     }
 
-    clearFlag(flag: Widget.Flag): void {
+    protected handleVisiblityChanged(isNowVisible: boolean): void {
+        this.onDidChangeVisibilityEmitter.fire(isNowVisible);
+    }
+
+    override clearFlag(flag: Widget.Flag): void {
+        const wasVisible = this.isVisible;
         super.clearFlag(flag);
-        if (flag === Widget.Flag.IsVisible) {
-            this.onDidChangeVisibilityEmitter.fire(this.isVisible);
+        const isVisible = this.isVisible;
+        if (isVisible !== wasVisible) {
+            this.handleVisiblityChanged(isVisible);
         }
     }
 }
@@ -241,13 +267,14 @@ export function createIconButton(...classNames: string[]): HTMLSpanElement {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type EventListener<K extends keyof HTMLElementEventMap> = (this: HTMLElement, event: HTMLElementEventMap[K]) => any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type EventHandler<K extends keyof HTMLElementEventMap> = (event: HTMLElementEventMap[K]) => any;
 export interface EventListenerObject<K extends keyof HTMLElementEventMap> {
     handleEvent(evt: HTMLElementEventMap[K]): void;
 }
 export namespace EventListenerObject {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    export function is<K extends keyof HTMLElementEventMap>(listener: any | undefined): listener is EventListenerObject<K> {
-        return !!listener && 'handleEvent' in listener;
+    export function is<K extends keyof HTMLElementEventMap>(listener: unknown): listener is EventListenerObject<K> {
+        return isObject(listener) && 'handleEvent' in listener;
     }
 }
 export type EventListenerOrEventListenerObject<K extends keyof HTMLElementEventMap> = EventListener<K> | EventListenerObject<K>;
@@ -260,10 +287,12 @@ export function addEventListener<K extends keyof HTMLElementEventMap>(
     );
 }
 
-export function addKeyListener<K extends keyof HTMLElementEventMap>(
+export function addKeyListener<K extends keyof HTMLElementEventMap = never>(
     element: HTMLElement,
     keysOrKeyCodes: KeyCode.Predicate | KeysOrKeyCodes,
-    action: (event: KeyboardEvent) => boolean | void | Object, ...additionalEventTypes: K[]): Disposable {
+    action: EventHandler<K | 'keydown'>,
+    ...additionalEventTypes: K[]): Disposable {
+    type HandledEvent = Parameters<typeof action>[0];
 
     const toDispose = new DisposableCollection();
     const keyCodePredicate = (() => {
@@ -273,10 +302,11 @@ export function addKeyListener<K extends keyof HTMLElementEventMap>(
             return (actual: KeyCode) => KeysOrKeyCodes.toKeyCodes(keysOrKeyCodes).some(k => k.equals(actual));
         }
     })();
+
     toDispose.push(addEventListener(element, 'keydown', e => {
         const kc = KeyCode.createKeyCode(e);
         if (keyCodePredicate(kc)) {
-            const result = action(e);
+            const result = action(e as HandledEvent);
             if (typeof result !== 'boolean' || result) {
                 e.stopPropagation();
                 e.preventDefault();
@@ -285,9 +315,7 @@ export function addKeyListener<K extends keyof HTMLElementEventMap>(
     }));
     for (const type of additionalEventTypes) {
         toDispose.push(addEventListener(element, type, e => {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const event = (type as any)['keydown'];
-            const result = action(event);
+            const result = action(e as HandledEvent);
             if (typeof result !== 'boolean' || result) {
                 e.stopPropagation();
                 e.preventDefault();
@@ -332,24 +360,79 @@ export function waitForRevealed(widget: Widget): Promise<void> {
  * Resolves when the given widget is hidden regardless of attachment.
  */
 export function waitForHidden(widget: Widget): Promise<void> {
-    return waitForVisible(widget, true);
+    return waitForVisible(widget, false);
 }
 
 function waitForVisible(widget: Widget, visible: boolean, attached?: boolean): Promise<void> {
     if ((typeof attached !== 'boolean' || widget.isAttached === attached) &&
         (widget.isVisible === visible || (widget.node.style.visibility !== 'hidden') === visible)
     ) {
-        return new Promise(resolve => window.requestAnimationFrame(() => resolve()));
+        return new Promise(resolve => setTimeout(() => resolve(), 0));
     }
     return new Promise(resolve => {
-        const waitFor = () => window.requestAnimationFrame(() => {
+        const waitFor = () => setTimeout(() => {
             if ((typeof attached !== 'boolean' || widget.isAttached === attached) &&
                 (widget.isVisible === visible || (widget.node.style.visibility !== 'hidden') === visible)) {
-                window.requestAnimationFrame(() => resolve());
+                setTimeout(() => resolve(), 0);
             } else {
                 waitFor();
             }
-        });
+        }, 0);
         waitFor();
     });
+}
+
+const pinnedTitles = new Map<Title<Widget>, [boolean, Slot<Widget, void>]>();
+
+export function isPinned(title: Title<Widget>): boolean {
+    const pinnedState = !title.closable && title.className.includes(PINNED_CLASS);
+    return pinnedState;
+}
+
+export function pin(title: Title<Widget>): void {
+    const l = () => {
+        pinnedTitles.delete(title);
+    };
+    pinnedTitles.set(title, [title.closable, l]);
+    title.owner.disposed.connect(l);
+    title.closable = false;
+    if (!title.className.includes(PINNED_CLASS)) {
+        title.className += ` ${PINNED_CLASS}`;
+    }
+}
+
+export function unpin(title: Title<Widget>): void {
+    const entry = pinnedTitles.get(title);
+    if (entry) {
+        title.owner.disposed.disconnect(entry[1]);
+        title.closable = entry[0];
+        pinnedTitles.delete(title);
+    } else {
+        title.closable = true;
+    }
+    title.className = title.className.replace(PINNED_CLASS, '').trim();
+}
+
+export function isLocked(title: Title<Widget>): boolean {
+    return title.className.includes(LOCKED_CLASS);
+}
+
+export function lock(title: Title<Widget>): void {
+    if (!title.className.includes(LOCKED_CLASS)) {
+        title.className += ` ${LOCKED_CLASS}`;
+    }
+}
+
+export function unlock(title: Title<Widget>): void {
+    title.className = title.className.replace(LOCKED_CLASS, '').trim();
+}
+
+export function togglePinned(title?: Title<Widget>): void {
+    if (title) {
+        if (isPinned(title)) {
+            unpin(title);
+        } else {
+            pin(title);
+        }
+    }
 }

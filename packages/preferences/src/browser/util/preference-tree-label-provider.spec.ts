@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2020 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -20,17 +20,15 @@ import { enableJSDOM } from '@theia/core/lib/browser/test/jsdom';
 const disableJSDOM = enableJSDOM();
 
 import { FrontendApplicationConfigProvider } from '@theia/core/lib/browser/frontend-application-config-provider';
-import { ApplicationProps } from '@theia/application-package/lib/application-props';
-FrontendApplicationConfigProvider.set({
-    ...ApplicationProps.DEFAULT.frontend.config
-});
+FrontendApplicationConfigProvider.set({});
 
 import { expect } from 'chai';
 import { Container } from '@theia/core/shared/inversify';
-import { PreferenceTreeGenerator } from './preference-tree-generator';
-import { PreferenceTreeLabelProvider } from './preference-tree-label-provider';
-import { Preference } from './preference-types';
+import { PreferenceTreeGenerator } from './preference-tree-generator.js';
+import { PreferenceTreeLabelProvider } from './preference-tree-label-provider.js';
+import { Preference } from './preference-types.js';
 import { SelectableTreeNode } from '@theia/core/lib/browser';
+import { PreferenceLayoutProvider } from './preference-layout.js';
 
 disableJSDOM();
 
@@ -40,6 +38,7 @@ describe('preference-tree-label-provider', () => {
 
     beforeEach(() => {
         const container = new Container();
+        container.bind(PreferenceLayoutProvider).toSelf().inSingletonScope();
         container.bind<any>(PreferenceTreeGenerator).toConstantValue({ getCustomLabelFor: () => { } });
         preferenceTreeLabelProvider = container.resolve(PreferenceTreeLabelProvider);
     });
@@ -100,6 +99,7 @@ describe('preference-tree-label-provider', () => {
                 visible: true,
                 selected: false,
                 depth: 2,
+                preferenceId: property,
                 preference: { data: {} }
             };
 

@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2020 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2020 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -21,9 +21,10 @@
 
 /* eslint-disable no-null/no-null */
 
-import { Buffer as SaferBuffer } from 'safer-buffer';
-import * as iconv from 'iconv-lite';
-import * as streams from './stream';
+// CommonJS modules whose exports cannot be detected statically, so they are imported as a whole.
+import saferBuffer from 'safer-buffer';
+import iconv from 'iconv-lite';
+import * as streams from './stream.js';
 
 const hasBuffer = (typeof Buffer !== 'undefined');
 const hasTextEncoder = (typeof TextEncoder !== 'undefined');
@@ -100,7 +101,7 @@ export class BinaryBuffer {
             }
             return textDecoder.decode(this.buffer);
         } else {
-            return iconv.decode(SaferBuffer.from(this.buffer), 'utf8');
+            return iconv.decode(saferBuffer.Buffer.from(this.buffer), 'utf8');
         }
     }
 

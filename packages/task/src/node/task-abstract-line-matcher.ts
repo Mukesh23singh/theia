@@ -1,36 +1,36 @@
-/********************************************************************************
- * Copyright (C) 2019 Ericsson and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2019 Ericsson and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { isWindows } from '@theia/core/lib/common/os';
-import { Diagnostic, DiagnosticSeverity, Range } from '@theia/core/shared/vscode-languageserver-types';
+import { EOL } from '@theia/core/lib/common/os';
+import { Diagnostic, DiagnosticSeverity, Range } from '@theia/core/shared/vscode-languageserver-protocol';
 import {
     FileLocationKind, ProblemMatcher, ProblemPattern,
     ProblemMatch, ProblemMatchData, ProblemLocationKind
-} from '../common/problem-matcher-protocol';
+} from '../common/problem-matcher-protocol.js';
 import URI from '@theia/core/lib/common/uri';
-// TODO use only URI from '@theia/core'
-import { URI as vscodeURI } from '@theia/core/shared/vscode-uri';
 import { Severity } from '@theia/core/lib/common/severity';
+import { MAX_SAFE_INTEGER } from '@theia/core/lib/common/numbers';
+import { join } from 'path';
 
-const endOfLine: string = isWindows ? '\r\n' : '\n';
+const endOfLine: string = EOL;
 
 export interface ProblemData {
     kind?: ProblemLocationKind;
@@ -44,6 +44,8 @@ export interface ProblemData {
     severity?: string;
     code?: string;
 }
+
+type ProblemDataStringKeys = keyof { [K in keyof ProblemData as string extends ProblemData[K] ? K : never]: unknown };
 
 export abstract class AbstractLineMatcher {
 
@@ -103,7 +105,7 @@ export abstract class AbstractLineMatcher {
         return false;
     }
 
-    private appendProperty(data: ProblemData, property: keyof ProblemData, pattern: ProblemPattern, matches: RegExpExecArray, trim: boolean = false): void {
+    private appendProperty(data: ProblemData, property: ProblemDataStringKeys, pattern: ProblemPattern, matches: RegExpExecArray, trim: boolean = false): void {
         const patternProperty = pattern[property];
         if (data[property] === undefined) {
             this.fillProperty(data, property, pattern, matches, trim);
@@ -112,11 +114,11 @@ export abstract class AbstractLineMatcher {
             if (trim) {
                 value = value.trim();
             }
-            (data[property] as string) += endOfLine + value;
+            data[property] = data[property] + endOfLine + value;
         }
     }
 
-    private fillProperty(data: ProblemData, property: keyof ProblemData, pattern: ProblemPattern, matches: RegExpExecArray, trim: boolean = false): void {
+    private fillProperty(data: ProblemData, property: ProblemDataStringKeys, pattern: ProblemPattern, matches: RegExpExecArray, trim: boolean = false): void {
         const patternAtProperty = pattern[property];
         if (data[property] === undefined && patternAtProperty !== undefined && patternAtProperty < matches.length) {
             let value = matches[patternAtProperty];
@@ -124,7 +126,7 @@ export abstract class AbstractLineMatcher {
                 if (trim) {
                     value = value.trim();
                 }
-                (data[property] as string) = value;
+                data[property] = value;
             }
         }
     }
@@ -201,7 +203,7 @@ export abstract class AbstractLineMatcher {
                 range = Range.create(startLine, startColumn, startLine, startColumn);
             }
         } else {
-            range = Range.create(startLine, 1, startLine, Number.MAX_VALUE);
+            range = Range.create(startLine, 1, startLine, MAX_SAFE_INTEGER);
         }
 
         // range indexes should be zero-based
@@ -246,7 +248,7 @@ export abstract class AbstractLineMatcher {
         return Severity.toDiagnosticSeverity(result);
     }
 
-    private getResource(filename: string, matcher: ProblemMatcher): vscodeURI {
+    private getResource(filename: string, matcher: ProblemMatcher): URI {
         const kind = matcher.fileLocation;
         let fullPath: string | undefined;
         if (kind === FileLocationKind.Absolute) {
@@ -256,19 +258,15 @@ export abstract class AbstractLineMatcher {
             if (relativeFileName.startsWith('./')) {
                 relativeFileName = relativeFileName.slice(2);
             }
-            fullPath = new URI(matcher.filePrefix).resolve(relativeFileName).path.toString();
+            fullPath = join(matcher.filePrefix, relativeFileName);
         }
         if (fullPath === undefined) {
             throw new Error('FileLocationKind is not actionable. Does the matcher have a filePrefix? This should never happen.');
         }
-        fullPath = fullPath.replace(/\\/g, '/');
-        if (fullPath[0] !== '/') {
-            fullPath = '/' + fullPath;
-        }
         if (matcher.uriProvider !== undefined) {
             return matcher.uriProvider(fullPath);
         } else {
-            return vscodeURI.file(fullPath);
+            return URI.fromFilePath(fullPath);
         }
     }
 
@@ -294,9 +292,7 @@ export abstract class AbstractLineMatcher {
             const regexp = new RegExp(this.activePattern.regexp);
             const regexMatches = regexp.exec(line);
             if (regexMatches) {
-                if (this.activePattern.kind !== undefined && this.cachedProblemData.kind !== undefined) {
-                    this.cachedProblemData.kind = this.activePattern.kind;
-                }
+                this.cachedProblemData.kind ??= this.activePattern.kind;
                 return this.fillProblemData(this.cachedProblemData, this.activePattern, regexMatches);
             }
         }

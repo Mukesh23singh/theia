@@ -1,24 +1,24 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
-import { injectable, inject } from 'inversify';
-import { Disposable, MaybePromise, CancellationTokenSource } from '../common';
-import { Key } from './keyboard/keys';
-import { Widget, BaseWidget, Message, addKeyListener, codiconArray } from './widgets';
-import { FrontendApplicationContribution } from './frontend-application';
+import { injectable, inject, unmanaged } from 'inversify';
+import { Disposable, MaybePromise, CancellationTokenSource, nls } from '../common/index.js';
+import { Key } from './keyboard/keys.js';
+import { Widget, BaseWidget, Message, addKeyListener, codiconArray } from './widgets/widget.js';
+import { FrontendApplicationContribution } from './frontend-application-contribution.js';
 
 @injectable()
 export class DialogProps {
@@ -37,6 +37,13 @@ export class DialogProps {
      * Default value is undefined, which would result in the css property 'word-wrap' not being applied to the dialog.
      */
     wordWrap?: 'normal' | 'break-word' | 'initial' | 'inherit';
+    /**
+     * The window in which the dialog should be opened.
+     * When set, the dialog's root node is created in the target window's document,
+     * ensuring the dialog appears in the correct window (e.g. a secondary window).
+     * If not set, the dialog opens in the main window.
+     */
+    targetWindow?: Window;
 }
 
 export type DialogMode = 'open' | 'preview';
@@ -66,6 +73,13 @@ export namespace DialogError {
     }
 }
 
+export namespace Dialog {
+    export const YES = nls.localizeByDefault('Yes');
+    export const NO = nls.localizeByDefault('No');
+    export const OK = nls.localizeByDefault('OK');
+    export const CANCEL = nls.localizeByDefault('Cancel');
+}
+
 @injectable()
 export class DialogOverlayService implements FrontendApplicationContribution {
 
@@ -77,10 +91,9 @@ export class DialogOverlayService implements FrontendApplicationContribution {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     protected readonly dialogs: AbstractDialog<any>[] = [];
+    protected readonly documents: Document[] = [];
 
     constructor() {
-        addKeyListener(document.body, Key.ENTER, e => this.handleEnter(e));
-        addKeyListener(document.body, Key.ESCAPE, e => this.handleEscape(e));
     }
 
     initialize(): void {
@@ -94,6 +107,7 @@ export class DialogOverlayService implements FrontendApplicationContribution {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     push(dialog: AbstractDialog<any>): Disposable {
+        this.ensureKeyListeners(dialog.node.ownerDocument);
         this.dialogs.unshift(dialog);
         return Disposable.create(() => {
             const index = this.dialogs.indexOf(dialog);
@@ -101,6 +115,15 @@ export class DialogOverlayService implements FrontendApplicationContribution {
                 this.dialogs.splice(index, 1);
             }
         });
+    }
+
+    /** Add the key listeners for `ownerDocument`, unless they are there already. */
+    protected ensureKeyListeners(ownerDocument: Document): void {
+        if (this.documents.indexOf(ownerDocument) < 0) {
+            addKeyListener(ownerDocument.body, Key.ENTER, e => this.handleEnter(e));
+            addKeyListener(ownerDocument.body, Key.ESCAPE, e => this.handleEscape(e));
+            this.documents.push(ownerDocument);
+        }
     }
 
     protected handleEscape(event: KeyboardEvent): boolean | void {
@@ -140,9 +163,13 @@ export abstract class AbstractDialog<T> extends BaseWidget {
     protected activeElement: HTMLElement | undefined;
 
     constructor(
-        @inject(DialogProps) protected readonly props: DialogProps
+        @unmanaged() protected readonly props: DialogProps,
+        @unmanaged() options?: Widget.IOptions
     ) {
-        super();
+        if (props.targetWindow && !options?.node) {
+            options = { ...options, node: props.targetWindow.document.createElement('div') };
+        }
+        super(options);
         this.id = 'theia-dialog-shell';
         this.addClass('dialogOverlay');
         this.toDispose.push(Disposable.create(() => {
@@ -150,40 +177,42 @@ export abstract class AbstractDialog<T> extends BaseWidget {
                 Widget.detach(this);
             }
         }));
-        const container = document.createElement('div');
+        const container = this.node.ownerDocument.createElement('div');
         container.classList.add('dialogBlock');
         if (props.maxWidth === undefined) {
             container.setAttribute('style', 'max-width: none');
-        } else {
+        } else if (props.maxWidth < 400) {
             container.setAttribute('style', `max-width: ${props.maxWidth}px; min-width: 0px`);
+        } else {
+            container.setAttribute('style', `max-width: ${props.maxWidth}px`);
         }
         this.node.appendChild(container);
 
-        const titleContentNode = document.createElement('div');
+        const titleContentNode = this.node.ownerDocument.createElement('div');
         titleContentNode.classList.add('dialogTitle');
         container.appendChild(titleContentNode);
 
-        this.titleNode = document.createElement('div');
+        this.titleNode = this.node.ownerDocument.createElement('div');
         this.titleNode.textContent = props.title;
         titleContentNode.appendChild(this.titleNode);
 
-        this.closeCrossNode = document.createElement('i');
-        this.closeCrossNode.classList.add(...codiconArray('close'));
+        this.closeCrossNode = this.node.ownerDocument.createElement('i');
+        this.closeCrossNode.classList.add(...codiconArray('close', true));
         this.closeCrossNode.classList.add('closeButton');
         titleContentNode.appendChild(this.closeCrossNode);
 
-        this.contentNode = document.createElement('div');
+        this.contentNode = this.node.ownerDocument.createElement('div');
         this.contentNode.classList.add('dialogContent');
         if (props.wordWrap !== undefined) {
             this.contentNode.setAttribute('style', `word-wrap: ${props.wordWrap}`);
         }
         container.appendChild(this.contentNode);
 
-        this.controlPanel = document.createElement('div');
+        this.controlPanel = this.node.ownerDocument.createElement('div');
         this.controlPanel.classList.add('dialogControl');
         container.appendChild(this.controlPanel);
 
-        this.errorMessageNode = document.createElement('div');
+        this.errorMessageNode = this.node.ownerDocument.createElement('div');
         this.errorMessageNode.classList.add('error');
         this.errorMessageNode.setAttribute('style', 'flex: 2');
         this.controlPanel.appendChild(this.errorMessageNode);
@@ -191,28 +220,29 @@ export abstract class AbstractDialog<T> extends BaseWidget {
         this.update();
     }
 
-    protected appendCloseButton(text: string = 'Cancel'): HTMLButtonElement {
-        this.closeButton = this.createButton(text);
-        this.controlPanel.appendChild(this.closeButton);
-        this.closeButton.classList.add('secondary');
-        return this.closeButton;
+    protected appendCloseButton(text: string = Dialog.CANCEL): HTMLButtonElement {
+        return this.closeButton = this.appendButton(text, false);
     }
 
-    protected appendAcceptButton(text: string = 'OK'): HTMLButtonElement {
-        this.acceptButton = this.createButton(text);
-        this.controlPanel.appendChild(this.acceptButton);
-        this.acceptButton.classList.add('main');
-        return this.acceptButton;
+    protected appendAcceptButton(text: string = Dialog.OK): HTMLButtonElement {
+        return this.acceptButton = this.appendButton(text, true);
+    }
+
+    protected appendButton(text: string, primary: boolean): HTMLButtonElement {
+        const button = this.createButton(text);
+        this.controlPanel.appendChild(button);
+        button.classList.add(primary ? 'main' : 'secondary');
+        return button;
     }
 
     protected createButton(text: string): HTMLButtonElement {
-        const button = document.createElement('button');
+        const button = this.node.ownerDocument.createElement('button');
         button.classList.add('theia-button');
         button.textContent = text;
         return button;
     }
 
-    protected onAfterAttach(msg: Message): void {
+    protected override onAfterAttach(msg: Message): void {
         super.onAfterAttach(msg);
         if (this.closeButton) {
             this.addCloseAction(this.closeButton, 'click');
@@ -221,8 +251,23 @@ export abstract class AbstractDialog<T> extends BaseWidget {
             this.addAcceptAction(this.acceptButton, 'click');
         }
         this.addCloseAction(this.closeCrossNode, 'click');
+        this.toDisposeOnDetach.push(this.preventTabbingOutsideDialog());
         // TODO: use DI always to create dialog instances
         this.toDisposeOnDetach.push(DialogOverlayService.get().push(this));
+    }
+
+    /**
+     * This prevents tabbing outside the dialog by marking elements as inert, i.e., non-clickable and non-focussable.
+     *
+     * @param elements the elements for which we disable tabbing. By default all elements within the body element are considered.
+     * Please note that this may also include other popups such as the suggestion overlay, the notification center or quick picks.
+     * @returns a disposable that will restore the previous tabbing behavior
+     */
+    protected preventTabbingOutsideDialog(elements = Array.from(this.node.ownerDocument.body.children)): Disposable { //
+        const inertBlacklist = ['select-component-container']; // IDs of elements that should remain interactive
+        const nonInertElements = elements.filter(child => child !== this.node && !(child.hasAttribute('inert')) && !inertBlacklist.includes(child.id));
+        nonInertElements.forEach(child => child.setAttribute('inert', ''));
+        return Disposable.create(() => nonInertElements.forEach(child => child.removeAttribute('inert')));
     }
 
     protected handleEscape(event: KeyboardEvent): boolean | void {
@@ -236,32 +281,48 @@ export abstract class AbstractDialog<T> extends BaseWidget {
         this.accept();
     }
 
-    protected onActivateRequest(msg: Message): void {
+    protected override onActivateRequest(msg: Message): void {
         super.onActivateRequest(msg);
         if (this.acceptButton) {
             this.acceptButton.focus();
         }
     }
 
-    open(): Promise<T | undefined> {
+    open(disposeOnResolve: boolean = true): Promise<T | undefined> {
         if (this.resolve) {
             return Promise.reject(new Error('The dialog is already opened.'));
         }
-        this.activeElement = window.document.activeElement as HTMLElement;
+        this.activeElement = this.node.ownerDocument.activeElement as HTMLElement;
         return new Promise<T | undefined>((resolve, reject) => {
-            this.resolve = resolve;
+            this.resolve = value => {
+                resolve(value);
+            };
             this.reject = reject;
             this.toDisposeOnDetach.push(Disposable.create(() => {
                 this.resolve = undefined;
                 this.reject = undefined;
             }));
 
-            Widget.attach(this, document.body);
+            Widget.attach(this, this.node.ownerDocument.body);
             this.activate();
+        }).finally(() => {
+            if (disposeOnResolve) {
+                this.dispose();
+            }
         });
     }
 
-    close(): void {
+    protected override onCloseRequest(msg: Message): void {
+        // super.onCloseRequest() would automatically dispose the dialog, which we don't want because we're reusing it
+        if (this.parent) {
+            // eslint-disable-next-line no-null/no-null
+            this.parent = null;
+        } else if (this.isAttached) {
+            Widget.detach(this);
+        }
+    }
+
+    override close(): void {
         if (this.resolve) {
             if (this.activeElement) {
                 this.activeElement.focus({ preventScroll: true });
@@ -271,7 +332,7 @@ export abstract class AbstractDialog<T> extends BaseWidget {
         this.activeElement = undefined;
         super.close();
     }
-    protected onUpdateRequest(msg: Message): void {
+    protected override onUpdateRequest(msg: Message): void {
         super.onUpdateRequest(msg);
         this.validate();
     }
@@ -329,19 +390,27 @@ export abstract class AbstractDialog<T> extends BaseWidget {
         this.errorMessageNode.innerText = DialogError.getMessage(error);
     }
 
+    protected addAction<K extends keyof HTMLElementEventMap>(element: HTMLElement, callback: () => void, ...additionalEventTypes: K[]): void {
+        this.addKeyListener(element, Key.ENTER, callback, ...additionalEventTypes);
+    }
+
     protected addCloseAction<K extends keyof HTMLElementEventMap>(element: HTMLElement, ...additionalEventTypes: K[]): void {
-        this.addKeyListener(element, Key.ENTER, () => this.close(), ...additionalEventTypes);
+        this.addAction(element, () => this.close(), ...additionalEventTypes);
     }
 
     protected addAcceptAction<K extends keyof HTMLElementEventMap>(element: HTMLElement, ...additionalEventTypes: K[]): void {
-        this.addKeyListener(element, Key.ENTER, () => this.accept(), ...additionalEventTypes);
+        this.addAction(element, () => this.accept(), ...additionalEventTypes);
     }
 
 }
 
 @injectable()
-export class ConfirmDialogProps extends DialogProps {
+export class MessageDialogProps extends DialogProps {
     readonly msg: string | HTMLElement;
+}
+
+@injectable()
+export class ConfirmDialogProps extends MessageDialogProps {
     readonly cancel?: string;
     readonly ok?: string;
 }
@@ -351,16 +420,17 @@ export class ConfirmDialog extends AbstractDialog<boolean> {
     protected confirmed = true;
 
     constructor(
-        @inject(ConfirmDialogProps) protected readonly props: ConfirmDialogProps
+        @inject(ConfirmDialogProps) protected override readonly props: ConfirmDialogProps,
+        @unmanaged() options?: Widget.IOptions
     ) {
-        super(props);
+        super(props, options);
 
         this.contentNode.appendChild(this.createMessageNode(this.props.msg));
         this.appendCloseButton(props.cancel);
         this.appendAcceptButton(props.ok);
     }
 
-    protected onCloseRequest(msg: Message): void {
+    protected override onCloseRequest(msg: Message): void {
         super.onCloseRequest(msg);
         this.confirmed = false;
         this.accept();
@@ -372,11 +442,65 @@ export class ConfirmDialog extends AbstractDialog<boolean> {
 
     protected createMessageNode(msg: string | HTMLElement): HTMLElement {
         if (typeof msg === 'string') {
-            const messageNode = document.createElement('div');
+            const messageNode = this.node.ownerDocument.createElement('div');
             messageNode.textContent = msg;
             return messageNode;
         }
         return msg;
+    }
+}
+
+export async function confirmExit(): Promise<boolean> {
+    const safeToExit = await new ConfirmDialog({
+        title: nls.localizeByDefault('Are you sure you want to quit?'),
+        msg: nls.localize('theia/core/quitMessage', 'Any unsaved changes will not be saved.'),
+        ok: Dialog.YES,
+        cancel: Dialog.NO,
+    }).open();
+    return safeToExit === true;
+}
+
+export class ConfirmSaveDialogProps extends MessageDialogProps {
+    readonly cancel: string;
+    readonly dontSave: string;
+    readonly save: string;
+}
+
+// Dialog prompting the user to confirm whether they wish to save changes or not
+export class ConfirmSaveDialog extends AbstractDialog<boolean | undefined> {
+    protected result?: boolean = false;
+
+    constructor(
+        @inject(ConfirmSaveDialogProps) protected override readonly props: ConfirmSaveDialogProps
+    ) {
+        super(props);
+        // Append message and buttons to the dialog
+        this.contentNode.appendChild(this.createMessageNode(this.props.msg));
+        this.closeButton = this.appendButtonAndSetResult(props.cancel, false);
+        this.appendButtonAndSetResult(props.dontSave, false, false);
+        this.acceptButton = this.appendButtonAndSetResult(props.save, true, true);
+    }
+
+    get value(): boolean | undefined {
+        return this.result;
+    }
+
+    protected createMessageNode(msg: string | HTMLElement): HTMLElement {
+        if (typeof msg === 'string') {
+            const messageNode = this.node.ownerDocument.createElement('div');
+            messageNode.textContent = msg;
+            return messageNode;
+        }
+        return msg;
+    }
+
+    protected appendButtonAndSetResult(text: string, primary: boolean, result?: boolean): HTMLButtonElement {
+        const button = this.appendButton(text, primary);
+        button.addEventListener('click', () => {
+            this.result = result;
+            this.accept();
+        });
+        return button;
     }
 
 }
@@ -385,6 +509,7 @@ export class ConfirmDialog extends AbstractDialog<boolean> {
 export class SingleTextInputDialogProps extends DialogProps {
     readonly confirmButtonLabel?: string;
     readonly initialValue?: string;
+    readonly placeholder?: string;
     readonly initialSelectionRange?: {
         start: number
         end: number
@@ -398,15 +523,16 @@ export class SingleTextInputDialog extends AbstractDialog<string> {
     protected readonly inputField: HTMLInputElement;
 
     constructor(
-        @inject(SingleTextInputDialogProps) protected readonly props: SingleTextInputDialogProps
+        @inject(SingleTextInputDialogProps) protected override props: SingleTextInputDialogProps
     ) {
         super(props);
 
-        this.inputField = document.createElement('input');
+        this.inputField = this.node.ownerDocument.createElement('input');
         this.inputField.type = 'text';
         this.inputField.className = 'theia-input';
         this.inputField.spellcheck = false;
         this.inputField.setAttribute('style', 'flex: 0;');
+        this.inputField.placeholder = props.placeholder || '';
         this.inputField.value = props.initialValue || '';
         if (props.initialSelectionRange) {
             this.inputField.setSelectionRange(
@@ -417,7 +543,10 @@ export class SingleTextInputDialog extends AbstractDialog<string> {
         } else {
             this.inputField.select();
         }
+
         this.contentNode.appendChild(this.inputField);
+        this.controlPanel.removeChild(this.errorMessageNode);
+        this.contentNode.appendChild(this.errorMessageNode);
 
         this.appendAcceptButton(props.confirmButtonLabel);
     }
@@ -426,23 +555,23 @@ export class SingleTextInputDialog extends AbstractDialog<string> {
         return this.inputField.value;
     }
 
-    protected isValid(value: string, mode: DialogMode): MaybePromise<DialogError> {
+    protected override isValid(value: string, mode: DialogMode): MaybePromise<DialogError> {
         if (this.props.validate) {
             return this.props.validate(value, mode);
         }
         return super.isValid(value, mode);
     }
 
-    protected onAfterAttach(msg: Message): void {
+    protected override onAfterAttach(msg: Message): void {
         super.onAfterAttach(msg);
         this.addUpdateListener(this.inputField, 'input');
     }
 
-    protected onActivateRequest(msg: Message): void {
+    protected override onActivateRequest(msg: Message): void {
         this.inputField.focus();
     }
 
-    protected handleEnter(event: KeyboardEvent): boolean | void {
+    protected override handleEnter(event: KeyboardEvent): boolean | void {
         if (event.target instanceof HTMLInputElement) {
             return super.handleEnter(event);
         }

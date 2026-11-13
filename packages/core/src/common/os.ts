@@ -1,18 +1,18 @@
-/********************************************************************************
- * Copyright (C) 2017 TypeFox and others.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v. 2.0 which is available at
- * http://www.eclipse.org/legal/epl-2.0.
- *
- * This Source Code may also be made available under the following Secondary
- * Licenses when the conditions for such availability set forth in the Eclipse
- * Public License v. 2.0 are satisfied: GNU General Public License, version 2
- * with the GNU Classpath Exception which is available at
- * https://www.gnu.org/software/classpath/license.html.
- *
- * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
- ********************************************************************************/
+// *****************************************************************************
+// Copyright (C) 2017 TypeFox and others.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Eclipse Public License v. 2.0 which is available at
+// http://www.eclipse.org/legal/epl-2.0.
+//
+// This Source Code may also be made available under the following Secondary
+// Licenses when the conditions for such availability set forth in the Eclipse
+// Public License v. 2.0 are satisfied: GNU General Public License, version 2
+// with the GNU Classpath Exception which is available at
+// https://www.gnu.org/software/classpath/license.html.
+//
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0
+// *****************************************************************************
 
 function is(userAgent: string, platform: string): boolean {
     if (typeof navigator !== 'undefined') {
@@ -26,8 +26,11 @@ function is(userAgent: string, platform: string): boolean {
     return false;
 }
 
-export const isWindows = is('Windows', 'win32');
-export const isOSX = is('Mac', 'darwin');
+// `let` so that tests can override them with `OS.override`, as the exports of ES modules cannot be stubbed.
+export let isWindows = is('Windows', 'win32');
+export let isOSX = is('Mac', 'darwin');
+
+export const EOL = isWindows ? '\r\n' : '\n';
 
 export type CMD = [string, string[]];
 export function cmd(command: string, ...args: string[]): CMD {
@@ -62,4 +65,31 @@ export namespace OS {
         return Type.Linux;
     }
 
+    export const backend = {
+        type,
+        isWindows,
+        isOSX,
+        EOL
+    };
+
+    /**
+     * Overrides the detected value of `isWindows` or `isOSX`, e.g. to test platform specific behavior.
+     * The exports of ES modules cannot be replaced by test doubles, so tests use this function instead.
+     */
+    export function override(property: 'isWindows' | 'isOSX', value: boolean): void {
+        if (property === 'isWindows') {
+            isWindows = value;
+        } else {
+            isOSX = value;
+        }
+    }
+
+}
+
+export const OSBackendProviderPath = '/os';
+
+export const OSBackendProvider = Symbol('OSBackendProvider');
+
+export interface OSBackendProvider {
+    getBackendOS(): Promise<OS.Type>;
 }
